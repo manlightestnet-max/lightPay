@@ -4,8 +4,13 @@ import { walletRoutes } from './routes/wallets.js';
 import { paymentRoutes } from './routes/payments.js';
 import { externalMoneyRoutes } from './routes/external.js';
 import { adminRoutes } from './routes/admin.js';
+import { gatewayRoutes } from './routes/gateways.js';
+import { sdkDistributionRoutes } from './routes/sdk.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
+import { timingSafeCompare } from './middleware/app-auth.js';
+import crypto from 'crypto';
+import { query } from './db/pool.js';
 
 const server = Fastify({
   logger: {
@@ -13,17 +18,17 @@ const server = Fastify({
   },
 });
 
-// Healthcheck pour Fly.io et monitoring
+// 1. Healthcheck probe (Indispensable pour Render / Cloudflare / Uptime)
 server.get('/health', async () => {
   return {
     status: 'healthy',
-    service: 'LightWallet Core Engine',
+    service: 'LightPay Core Engine',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   };
 });
 
-// En-têtes CORS & Prévol pour permettre l'accès depuis l'Explorer Web et vos applications clientes
+// 2. En-têtes CORS & Prévol pour les applications clientes
 server.addHook('onRequest', async (request, reply) => {
   reply.header('Access-Control-Allow-Origin', '*');
   reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
@@ -33,67 +38,96 @@ server.addHook('onRequest', async (request, reply) => {
   }
 });
 
-// En-têtes de sécurité HTTP standards
+// 3. En-têtes de sécurité HTTP standards
 server.addHook('onSend', async (request, reply) => {
   reply.header('X-Content-Type-Options', 'nosniff');
   reply.header('X-Frame-Options', 'DENY');
   reply.header('X-XSS-Protection', '1; mode=block');
 });
 
-import fs from 'fs';
-import path from 'path';
-import { explorerApiRoutes } from './routes/explorer-api.js';
-import { gatewayRoutes } from './routes/gateways.js';
-import { sdkDistributionRoutes } from './routes/sdk.js';
+// 4. ⛔ VERROU GLOBAL D'AUTHENTIFICATION (AUCUNE ENTRÉE SANS BEARER OU CLÉ OFFICIELLE)
+server.addHook('onRequest', async (request, reply) => {
+  const url = request.url.split('?')[0];
 
-// Enregistrement des modules API
+  // Exceptions publiques strictes :
+  // - /health pour le monitoring du container
+  // - /v1/gateways/webhook/* pour les notifications certifiées des agrégateurs externes
+  if (url === '/health' || url.startsWith('/v1/gateways/webhook')) {
+    return;
+  }
+
+  const authHeader = request.headers['authorization'];
+  let bearerToken = '';
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    bearerToken = authHeader.substring(7).trim();
+  }
+
+  const masterKey = (request.headers['x-master-key'] as string) || (bearerToken === config.masterAdminKey ? bearerToken : '');
+
+  // A. Vérification Master Key
+  if (masterKey && timingSafeCompare(masterKey, config.masterAdminKey)) {
+    return;
+  }
+
+  // B. Vérification Bearer Token (API Key application)
+  if (bearerToken) {
+    const keyHash = crypto.createHash('sha256').update(bearerToken).digest('hex');
+    const apps = await query(
+      'SELECT id FROM apps WHERE (api_key_hash = $1 OR test_api_key_hash = $1) AND is_active = TRUE',
+      [keyHash]
+    );
+    if (apps.length > 0) {
+      return;
+    }
+  }
+
+  // C. Vérification Headers X-App-Id + X-Api-Key
+  const appId = request.headers['x-app-id'] as string;
+  const apiKey = request.headers['x-api-key'] as string;
+  if (appId && apiKey) {
+    const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
+    const apps = await query(
+      'SELECT id, api_key_hash, test_api_key_hash, is_active FROM apps WHERE id = $1',
+      [appId]
+    );
+    if (apps.length > 0 && apps[0].is_active) {
+      const isLiveMatch = timingSafeCompare(apps[0].api_key_hash || '', keyHash);
+      const isTestMatch = timingSafeCompare(apps[0].test_api_key_hash || '', keyHash);
+      if (isLiveMatch || isTestMatch) {
+        return;
+      }
+    }
+  }
+
+  // ⛔ REFUS SYSTÉMATIQUE — AUCUN ACCÈS EN CLAIR
+  return reply.status(401).send({
+    error: 'Access Denied',
+    message: 'Authentication required. Provide a valid Bearer token (Authorization: Bearer <key>) or API credentials.',
+  });
+});
+
+// 5. Racine '/' sécurisée (Accessible UNIQUEMENT avec authentification)
+server.get('/', async (request, reply) => {
+  return {
+    service: 'LightPay Core Engine',
+    status: 'operational',
+    version: '1.0.0',
+    mode: 'headless_api_only',
+    authenticated: true,
+  };
+});
+
+// 6. Enregistrement des modules API Core Engine (100% JSON)
 server.register(walletRoutes, { prefix: '/v1/wallets' });
 server.register(paymentRoutes, { prefix: '/v1/payments' });
 server.register(externalMoneyRoutes, { prefix: '/v1' });
 server.register(adminRoutes, { prefix: '/v1/admin' });
-server.register(explorerApiRoutes, { prefix: '/v1/explorer' });
-server.register(sdkDistributionRoutes, { prefix: '/v1/sdk' });
 server.register(gatewayRoutes, { prefix: '/v1/gateways' });
-server.register(miniAppRoutes, { prefix: '/v1/mini-app' });
-
-// ==========================================================
-// LIGHTWALLET MINI-APP, EXPLORER & MAINAPP TREASURY
-// ==========================================================
-import { getExplorerHtml } from './explorer/index.js';
-import { getMiniAppHtml, miniAppRoutes } from './mini-app/index.js';
-
-// Redirection de la racine vers l'Application
-server.get('/', async (request, reply) => {
-  return reply.redirect('/app');
-});
-
-// Interface utilisateur de démonstration Mini-App (Gestion Utilisateurs, Dépôts, Envois)
-server.get('/app', async (request, reply) => {
-  reply.type('text/html; charset=utf-8');
-  return getMiniAppHtml();
-});
-
-// Interface interactive de l'Explorer Comptable (100% Read-Only)
-server.get('/explorer', async (request, reply) => {
-  reply.type('text/html; charset=utf-8');
-  return getExplorerHtml();
-});
-
-// Interface Super-Admin Trésorerie : MainApp (100% Backed Reserve & Distribution)
-server.get('/mainapp', async (request, reply) => {
-  reply.type('text/html; charset=utf-8');
-  const mainAppPath = path.resolve(process.cwd(), 'public/mainapp.html');
-  if (fs.existsSync(mainAppPath)) {
-    return fs.readFileSync(mainAppPath, 'utf8');
-  }
-  return '<h1>MainApp</h1><p>public/mainapp.html introuvable</p>';
-});
+server.register(sdkDistributionRoutes, { prefix: '/v1/sdk' });
 
 async function start() {
   try {
-    console.log('[STARTUP] Initializing LightWallet...');
-
-    // Application du schéma PostgreSQL au démarrage
+    console.log('[STARTUP] Initializing LightPay Headless Core Engine...');
     await runMigrations();
 
     await server.listen({
@@ -101,14 +135,13 @@ async function start() {
       host: config.host,
     });
 
-    console.log(`[READY] LightWallet Engine listening on http://${config.host}:${config.port}`);
+    console.log(`[READY] LightPay Engine listening on http://${config.host}:${config.port}`);
   } catch (err) {
     server.log.error(err);
     process.exit(1);
   }
 }
 
-// Gestion de l'arrêt propre (Graceful shutdown)
 const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
 signals.forEach((signal) => {
   process.on(signal, async () => {

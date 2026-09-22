@@ -9,6 +9,7 @@ export type TransactionType =
   | 'PAYMENT'
   | 'TRANSFER'
   | 'DISBURSEMENT'
+  | 'PAYOUT'
   | 'REFUND'
   | 'HOLD_CAPTURE'
   | 'HOLD_RELEASE';
