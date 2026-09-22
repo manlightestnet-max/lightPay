@@ -1,0 +1,47 @@
+{
+  "name": "lightwallet",
+  "version": "1.0.0",
+  "description": "Universal Multi-Tenant Closed-Loop Core Wallet Engine",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/sdk/client.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./sdk": {
+      "import": "./dist/sdk/client.js",
+      "types": "./dist/sdk/client.d.ts"
+    }
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "migrate": "tsx src/db/migrate.ts",
+    "test": "tsx test/e2e-sandbox-live.ts",
+    "audit:security": "tsx test/security.audit.ts"
+  },
+  "keywords": [
+    "wallet",
+    "fintech",
+    "double-entry",
+    "ledger",
+    "multi-tenant",
+    "payments",
+    "mobile-money",
+    "fastify"
+  ],
+  "author": "Lidia & Mariana Lda",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "pg": "^8.13.3",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "@types/pg": "^8.11.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

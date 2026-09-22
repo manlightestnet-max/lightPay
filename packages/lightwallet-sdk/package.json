@@ -1,0 +1,32 @@
+{
+  "name": "lightwallet-sdk",
+  "version": "1.0.0",
+  "description": "Universal TypeScript/JavaScript Client SDK for LightWallet Core Engine",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "lightwallet",
+    "wallet",
+    "fintech",
+    "credits",
+    "ledger",
+    "double-entry",
+    "sdk"
+  ],
+  "author": "LightWallet Team",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}

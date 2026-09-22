@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LightWallet Explorer - Journal des Transactions</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body {
+      background-color: #f8fafc;
+      color: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+
+  <!-- HEADER SIMPLE & PROPRE (LIGHT THEME) -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 px-6 py-3.5">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div class="flex items-center space-x-3">
+        <div class="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-sm">
+          LW
+        </div>
+        <div>
+          <h1 class="text-base font-bold text-slate-900 leading-tight">LightWallet Explorer</h1>
+          <p class="text-xs text-slate-500">Journal d'audit des transactions internes (Crédits)</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <a href="/mainapp" class="text-xs text-indigo-600 hover:text-indigo-900 font-bold flex items-center gap-1">
+          <i class="fa-solid fa-vault"></i> MainApp
+        </a>
+        <a href="/app" class="text-xs text-slate-600 hover:text-slate-900 font-medium flex items-center gap-1">
+          <i class="fa-solid fa-wallet"></i> Portefeuille
+        </a>
+        <a href="/v1/sdk/info" target="_blank" class="text-xs text-slate-600 hover:text-slate-900 font-medium flex items-center gap-1">
+          <i class="fa-solid fa-cloud"></i> SDK Cloud
+        </a>
+        <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Ledger En Ligne</span>
+        </div>
+
+        <button onclick="loadTransactions()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-md border border-slate-300 font-medium transition flex items-center gap-1.5">
+          <i class="fa-solid fa-rotate-right text-slate-500"></i> Actualiser
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTENU PRINCIPAL -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-5">
+
+    <!-- BARRE DE RECHERCHE PRINCIPALE (RECHERCHE PAR ID DU WALLET) -->
+    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+      <div class="relative flex items-center">
+        <i class="fa-solid fa-magnifying-glass absolute left-3.5 text-slate-400 text-sm"></i>
+        <input 
+          type="text" 
+          id="searchInput" 
+          oninput="handleSearch(this.value)"
+          placeholder="Rechercher par ID de Wallet (ex: 18ad22ab-...), ID de Transaction ou Référence..." 
+          class="w-full pl-10 pr-24 py-2.5 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-transparent transition"
+        />
+        <button 
+          id="clearSearchBtn" 
+          onclick="clearSearch()" 
+          class="absolute right-3 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2.5 py-1 rounded font-medium hidden">
+          Effacer
+        </button>
+      </div>
+      <div class="flex items-center justify-between text-xs text-slate-500 mt-2 px-1">
+        <span id="searchResultCount">Chargement du journal...</span>
+        <span class="text-slate-400">Unité comptable interne : <b>CREDITS</b></span>
+      </div>
+    </div>
+
+    <!-- TABLEAU DU JOURNAL DES TRANSACTIONS -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
+              <th class="py-3 px-4">Date & Heure</th>
+              <th class="py-3 px-4">Type</th>
+              <th class="py-3 px-4">Montant</th>
+              <th class="py-3 px-4">Flux (Comptes / Wallets)</th>
+              <th class="py-3 px-4">Référence</th>
+              <th class="py-3 px-4">Statut</th>
+              <th class="py-3 px-4 text-right">Détails</th>
+            </tr>
+          </thead>
+          <tbody id="txTableBody" class="divide-y divide-slate-100 text-slate-700">
+            <tr>
+              <td colspan="7" class="py-12 text-center text-slate-400">
+                <i class="fa-solid fa-spinner fa-spin mr-2"></i> Chargement des transactions...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- MODAL / DRAWER DÉTAILS DE LA TRANSACTION & ÉCRITURES (GRAND LIVRE) -->
+  <div id="txModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white max-w-2xl w-full rounded-xl shadow-xl border border-slate-200 overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+        <div>
+          <h3 class="text-base font-bold text-slate-900">Détail de la Transaction</h3>
+          <p class="text-xs text-slate-500 mono" id="modalTxId">-</p>
+        </div>
+        <button onclick="closeTxModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg">
+          <i class="fa-solid fa-xmark text-base"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-5">
+        <!-- METADONNEES CLES -->
+        <div class="grid grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-lg border border-slate-200 text-xs">
+          <div>
+            <span class="text-slate-500 block">Type</span>
+            <span class="font-bold text-slate-800" id="modalTxType">-</span>
+          </div>
+          <div>
+            <span class="text-slate-500 block">Montant Total</span>
+            <span class="font-bold text-slate-900 text-sm" id="modalTxAmount">-</span>
+          </div>
+          <div>
+            <span class="text-slate-500 block">Statut</span>
+            <span class="font-semibold" id="modalTxStatus">-</span>
+          </div>
+        </div>
+
+        <!-- ECRITURES COMPTABLES EN PARTIE DOUBLE -->
+        <div>
+          <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
+            Écritures Grand Livre (Double-Entry Postings)
+          </h4>
+          <div class="border border-slate-200 rounded-lg overflow-hidden">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                <tr>
+                  <th class="py-2.5 px-3">Sens</th>
+                  <th class="py-2.5 px-3">Wallet ID</th>
+                  <th class="py-2.5 px-3">Compte</th>
+                  <th class="py-2.5 px-3 text-right">Montant</th>
+                </tr>
+              </thead>
+              <tbody id="modalPostingsBody" class="divide-y divide-slate-100 text-slate-700">
+                <!-- Rempli en JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="flex justify-end pt-2">
+          <button onclick="closeTxModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition">
+            Fermer
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allTransactions = [];
+    let searchTimeout = null;
+
+    async function loadTransactions() {
+      const q = document.getElementById('searchInput').value.trim();
+      let url = '/v1/explorer/transactions?limit=100';
+      if (q) {
+        url += '&q=' + encodeURIComponent(q);
+      }
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (data.status === 'success') {
+          allTransactions = data.transactions || [];
+          renderTransactions(allTransactions);
+        }
+      } catch (err) {
+        console.error('Erreur chargement transactions:', err);
+        document.getElementById('txTableBody').innerHTML = `
+          <tr><td colspan="7" class="py-8 text-center text-rose-500 text-xs">Erreur de connexion au serveur</td></tr>
+        `;
+      }
+    }
+
+    function renderTransactions(txs) {
+      const tbody = document.getElementById('txTableBody');
+      const countEl = document.getElementById('searchResultCount');
+
+      countEl.innerText = `${txs.length} transaction(s) trouvée(s)`;
+
+      if (txs.length === 0) {
+        tbody.innerHTML = `
+          <tr><td colspan="7" class="py-12 text-center text-slate-400 text-xs">Aucune transaction correspondante</td></tr>
+        `;
+        return;
+      }
+
+      let html = '';
+      for (const tx of txs) {
+        const dateStr = new Date(tx.created_at).toLocaleString('fr-FR', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+
+        // Résolution flux Débit -> Crédit
+        const postings = tx.postings || [];
+        const debit = postings.find(p => p.direction === 'DEBIT');
+        const credit = postings.find(p => p.direction === 'CREDIT');
+
+        const fromLabel = debit ? (debit.account_id || debit.wallet_id.substring(0, 8) + '...') : '-';
+        const toLabel = credit ? (credit.account_id || credit.wallet_id.substring(0, 8) + '...') : '-';
+
+        const amountFormatted = Number(tx.amount).toLocaleString('fr-FR') + ' CREDITS';
+
+        // Badge Statut
+        let statusBadge = '<span class="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">SUCCÈS</span>';
+        if (tx.status === 'PENDING') {
+          statusBadge = '<span class="px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800">EN ATTENTE</span>';
+        } else if (tx.status === 'FAILED') {
+          statusBadge = '<span class="px-2 py-0.5 rounded text-xs font-semibold bg-rose-100 text-rose-800">ÉCHEC</span>';
+        }
+
+        // Badge Type
+        let typeBadge = '<span class="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">' + tx.type + '</span>';
+        if (tx.type === 'TRANSFER') typeBadge = '<span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">VIREMENT</span>';
+        if (tx.type === 'COLLECTION') typeBadge = '<span class="px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">DÉPÔT</span>';
+
+        html += `
+          <tr class="hover:bg-slate-50/80 transition">
+            <td class="py-3 px-4 text-xs text-slate-500 whitespace-nowrap">${dateStr}</td>
+            <td class="py-3 px-4">${typeBadge}</td>
+            <td class="py-3 px-4 font-bold text-slate-900">${amountFormatted}</td>
+            <td class="py-3 px-4 text-xs">
+              <span class="text-slate-700 font-medium">${escapeHtml(fromLabel)}</span>
+              <i class="fa-solid fa-arrow-right text-[10px] text-slate-400 mx-1.5"></i>
+              <span class="text-slate-700 font-medium">${escapeHtml(toLabel)}</span>
+            </td>
+            <td class="py-3 px-4 text-xs text-slate-500 max-w-[180px] truncate" title="${escapeHtml(tx.reference || '')}">
+              ${escapeHtml(tx.reference || '-')}
+            </td>
+            <td class="py-3 px-4">${statusBadge}</td>
+            <td class="py-3 px-4 text-right">
+              <button onclick="openTxDetails('${tx.id}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-medium transition">
+                Voir
+              </button>
+            </td>
+          </tr>
+        `;
+      }
+
+      tbody.innerHTML = html;
+    }
+
+    function handleSearch(val) {
+      document.getElementById('clearSearchBtn').classList.toggle('hidden', !val);
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        loadTransactions();
+      }, 250);
+    }
+
+    function clearSearch() {
+      document.getElementById('searchInput').value = '';
+      document.getElementById('clearSearchBtn').classList.add('hidden');
+      loadTransactions();
+    }
+
+    function openTxDetails(id) {
+      const tx = allTransactions.find(t => t.id === id);
+      if (!tx) return;
+
+      document.getElementById('modalTxId').innerText = tx.id;
+      document.getElementById('modalTxType').innerText = tx.type;
+      document.getElementById('modalTxAmount').innerText = Number(tx.amount).toLocaleString('fr-FR') + ' CREDITS';
+      document.getElementById('modalTxStatus').innerText = tx.status;
+      document.getElementById('modalTxStatus').className = tx.status === 'SUCCESS' ? 'font-semibold text-emerald-600' : 'font-semibold text-rose-600';
+
+      const postings = tx.postings || [];
+      let postHtml = '';
+      for (const p of postings) {
+        const isDebit = p.direction === 'DEBIT';
+        const sensBadge = isDebit 
+          ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800">DÉBIT (-)</span>'
+          : '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">CRÉDIT (+)</span>';
+
+        postHtml += `
+          <tr>
+            <td class="py-2 px-3">${sensBadge}</td>
+            <td class="py-2 px-3 mono text-slate-600 text-[11px]" title="${p.wallet_id}">${p.wallet_id}</td>
+            <td class="py-2 px-3 font-medium text-slate-800">${escapeHtml(p.account_id || '-')} (${p.account_type || 'USER'})</td>
+            <td class="py-2 px-3 text-right font-mono font-bold ${isDebit ? 'text-rose-600' : 'text-emerald-600'}">
+              ${isDebit ? '-' : '+'}${Number(p.amount).toLocaleString('fr-FR')} CREDITS
+            </td>
+          </tr>
+        `;
+      }
+      document.getElementById('modalPostingsBody').innerHTML = postHtml;
+      document.getElementById('txModal').classList.remove('hidden');
+    }
+
+    function closeTxModal() {
+      document.getElementById('txModal').classList.add('hidden');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+      });
+    }
+
+    // Chargement initial
+    loadTransactions();
+
+    // Rafraîchissement automatique toutes les 5 secondes
+    setInterval(() => {
+      loadTransactions();
+    }, 5000);
+  </script>
+</body>
+</html>

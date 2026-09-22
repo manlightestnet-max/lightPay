@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment variables & Sensitive Credentials
+.env
+.env.production
+.env.staging
+.env.local
+.env.*.local
+data/*.json
+test/payout_congo/config.json
+
+# Production build output
+dist/
+build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
