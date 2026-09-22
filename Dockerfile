@@ -22,7 +22,6 @@ RUN npm ci --only=production
 
 COPY --from=builder /app/dist ./dist
 COPY src/db/migrations ./src/db/migrations
-COPY public ./public
 
 EXPOSE 8080
 
