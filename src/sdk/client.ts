@@ -6,29 +6,51 @@ export interface LightWalletConfig {
   apiKey: string;
 }
 
-export interface WalletRecord {
-  id: string;
+export interface MerchantBalanceRecord {
+  status: string;
   app_id: string;
-  account_id: string;
-  account_type: 'USER' | 'MERCHANT' | 'PLATFORM' | 'SYSTEM';
   environment: Environment;
+  wallet_id: string;
   currency: string;
-  available_balance: string | number;
-  locked_balance: string | number;
-  status: 'ACTIVE' | 'FROZEN' | 'CLOSED';
-  created_at: string;
-  updated_at?: string;
+  available_balance: string;
+  locked_balance: string;
+  account_type: 'MERCHANT';
+  status_label: 'ACTIVE' | 'FROZEN' | 'CLOSED';
 }
 
-export interface DepositParams {
-  accountId?: string;
-  walletId?: string;
+export interface ChargeUserParams {
+  userAccountId: string;
   amount: number | bigint | string;
   currency?: string;
-  method?: string;
   reference?: string;
+  description?: string;
   metadata?: Record<string, any>;
   idempotencyKey?: string;
+}
+
+export interface RequestPayoutParams {
+  amount: number | bigint | string;
+  phone: string;
+  network?: string;
+  name?: string;
+  currency?: string;
+  country?: string;
+  description?: string;
+}
+
+export interface LedgerEntryItem {
+  id: string;
+  transaction_id: string;
+  direction: 'DEBIT' | 'CREDIT';
+  category: 'COLLECTION' | 'DISBURSEMENT';
+  amount: string;
+  balance_before: string;
+  balance_after: string;
+  description: string;
+  created_at: string;
+  transaction_type: string;
+  reference: string;
+  metadata?: Record<string, any>;
 }
 
 export interface TransferParams {
@@ -41,21 +63,6 @@ export interface TransferParams {
   note?: string;
   metadata?: Record<string, any>;
   idempotencyKey?: string;
-}
-
-export interface LedgerEntryItem {
-  id: string;
-  transaction_id: string;
-  wallet_id: string;
-  direction: 'DEBIT' | 'CREDIT';
-  environment: Environment;
-  amount: string;
-  balance_before: string;
-  balance_after: string;
-  description: string;
-  created_at: string;
-  transaction_type: string;
-  reference: string;
 }
 
 /**
@@ -74,7 +81,7 @@ function universalUUID(): string {
 
 /**
  * LightWalletClient
- * SDK Client universel pour interagir avec le moteur comptable LightWallet.
+ * SDK Client universel pour Marchands Grossistes LightPay.
  * Détecte automatiquement l'environnement (Sandbox vs Production) à partir de la clé d'API.
  */
 export class LightWalletClient {
@@ -135,6 +142,7 @@ export class LightWalletClient {
       'Content-Type': 'application/json',
       'X-App-Id': this.appId,
       'X-Api-Key': this.apiKey,
+      'Authorization': `Bearer ${this.apiKey}`,
       'X-Environment': this.environment,
       ...(options.customHeaders || {}),
     };
@@ -171,68 +179,82 @@ export class LightWalletClient {
   }
 
   /**
-   * Créer ou récupérer le portefeuille d'un compte utilisateur (Upsert)
+   * 1. Consulter le solde marchand de l'application (Son Solde)
    */
-  public async getOrCreateWallet(params: {
-    accountId: string;
-    accountType?: 'USER' | 'MERCHANT' | 'PLATFORM';
-    currency?: string;
-    metadata?: Record<string, any>;
-  }): Promise<WalletRecord> {
-    const res = await this.request<{ status: string; wallet: WalletRecord }>('/v1/wallets', {
-      method: 'POST',
-      body: {
-        account_id: params.accountId,
-        account_type: params.accountType || 'USER',
-        currency: params.currency || 'CREDIT',
-        metadata: params.metadata || {},
-      },
-    });
-    return res.wallet;
-  }
-
-  /**
-   * Consulter un portefeuille par son identifiant de compte externe (ex: user_alice)
-   */
-  public async getWalletByAccount(accountId: string, currency = 'CREDIT'): Promise<WalletRecord> {
-    const res = await this.request<{ status: string; wallet: WalletRecord }>(
-      `/v1/wallets/accounts/${encodeURIComponent(accountId)}?currency=${encodeURIComponent(currency)}`
+  public async getBalance(currency = 'CREDIT'): Promise<MerchantBalanceRecord> {
+    return await this.request<MerchantBalanceRecord>(
+      `/v1/merchant/balance?currency=${encodeURIComponent(currency)}`
     );
-    return res.wallet;
   }
 
   /**
-   * Consulter un portefeuille par son UUID interne
+   * 2. Collecter un paiement auprès d'un utilisateur LightPay (Collection)
    */
-  public async getWalletById(walletId: string): Promise<WalletRecord> {
-    const res = await this.request<{ status: string; wallet: WalletRecord }>(
-      `/v1/wallets/${encodeURIComponent(walletId)}`
-    );
-    return res.wallet;
-  }
-
-  /**
-   * Effectuer un dépôt / recharge en crédits sur un portefeuille
-   */
-  public async deposit(params: DepositParams): Promise<any> {
+  public async chargeUser(params: ChargeUserParams): Promise<any> {
     const idempotencyKey = params.idempotencyKey || LightWalletClient.generateIdempotencyKey();
-    return await this.request('/v1/collections/deposit', {
+    return await this.request('/v1/merchant/collections/charge-user', {
       method: 'POST',
       idempotencyKey,
       body: {
-        account_id: params.accountId,
-        wallet_id: params.walletId,
+        user_account_id: params.userAccountId,
         amount: params.amount.toString(),
         currency: params.currency || 'CREDIT',
-        method: params.method || (this.isSandbox() ? 'SANDBOX_TOPUP' : 'DIRECT_CREDIT'),
         reference: params.reference,
+        description: params.description,
         metadata: params.metadata || {},
       },
     });
   }
 
   /**
-   * Transférer des crédits en direct entre deux comptes (P2P instantané et atomique)
+   * 3. Demander un retrait vers Mobile Money MTN ou Airtel Congo (Disbursement)
+   */
+  public async requestPayout(params: RequestPayoutParams): Promise<any> {
+    return await this.request('/v1/merchant/disbursements/payout', {
+      method: 'POST',
+      body: {
+        amount: params.amount.toString(),
+        phone: params.phone,
+        network: params.network,
+        name: params.name,
+        currency: params.currency || 'CREDIT',
+        country: params.country || 'CG',
+        description: params.description,
+      },
+    });
+  }
+
+  /**
+   * 4. Obtenir le relevé complet des mouvements marchands (Collections & Disbursements)
+   */
+  public async getStatement(params?: {
+    limit?: number;
+    offset?: number;
+    type?: 'ALL' | 'COLLECTION' | 'DISBURSEMENT';
+  }): Promise<{ status: string; count: number; entries: LedgerEntryItem[] }> {
+    const limit = params?.limit || 50;
+    const offset = params?.offset || 0;
+    const typeParam = params?.type && params.type !== 'ALL' ? `&type=${params.type}` : '';
+    return await this.request(
+      `/v1/merchant/statement?limit=${limit}&offset=${offset}${typeParam}`
+    );
+  }
+
+  /**
+   * 5. Recharger son compte de test en mode Sandbox (Top-up Test)
+   */
+  public async topupSandbox(amount: number | bigint | string = 50000, currency = 'CREDIT'): Promise<any> {
+    return await this.request('/v1/merchant/sandbox-topup', {
+      method: 'POST',
+      body: {
+        amount: amount.toString(),
+        currency,
+      },
+    });
+  }
+
+  /**
+   * 6. Virement direct entre comptes (P2P atomique)
    */
   public async transfer(params: TransferParams): Promise<any> {
     const idempotencyKey = params.idempotencyKey || LightWalletClient.generateIdempotencyKey();
@@ -251,15 +273,4 @@ export class LightWalletClient {
       },
     });
   }
-
-  /**
-   * Obtenir le relevé comptable complet (statement) d'un portefeuille
-   */
-  public async getStatement(walletId: string, limit = 50, offset = 0): Promise<LedgerEntryItem[]> {
-    const res = await this.request<{ status: string; entries: LedgerEntryItem[] }>(
-      `/v1/wallets/${encodeURIComponent(walletId)}/statement?limit=${limit}&offset=${offset}`
-    );
-    return res.entries || [];
-  }
 }
-

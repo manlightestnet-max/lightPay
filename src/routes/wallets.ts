@@ -15,6 +15,14 @@ export async function walletRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: 'account_id is required' });
     }
 
+    // ⛔ SÉCURITÉ ARCHITECTURALE : Seule notre application centrale 'mainapp' peut émettre des wallets clients (USER)
+    if (account_type === 'USER' && appId !== 'mainapp') {
+      return reply.status(403).send({
+        error: 'FORBIDDEN_USER_WALLET_CREATION',
+        message: 'Only the central platform (mainapp) is authorized to issue user wallets. Third-party applications operate as wholesalers/merchants.',
+      });
+    }
+
     try {
       // Upsert : retourne le wallet existant ou le crée pour cet environnement
       const result = await query(
