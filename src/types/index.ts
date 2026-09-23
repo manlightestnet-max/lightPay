@@ -12,7 +12,8 @@ export type TransactionType =
   | 'PAYOUT'
   | 'REFUND'
   | 'HOLD_CAPTURE'
-  | 'HOLD_RELEASE';
+  | 'HOLD_RELEASE'
+  | 'FAUCET';
 
 export type TransactionStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'REVERSED';
 

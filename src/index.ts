@@ -7,6 +7,7 @@ import { adminRoutes } from './routes/admin.js';
 import { gatewayRoutes } from './routes/gateways.js';
 import { sdkDistributionRoutes } from './routes/sdk.js';
 import { merchantRoutes } from './routes/merchant.js';
+import { faucetRoutes } from './routes/faucet.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
@@ -133,6 +134,7 @@ server.register(adminRoutes, { prefix: '/v1/admin' });
 server.register(gatewayRoutes, { prefix: '/v1/gateways' });
 server.register(sdkDistributionRoutes, { prefix: '/v1/sdk' });
 server.register(merchantRoutes, { prefix: '/v1/merchant' });
+server.register(faucetRoutes);
 
 async function start() {
   try {

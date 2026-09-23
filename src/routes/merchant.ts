@@ -82,51 +82,6 @@ export async function merchantRoutes(fastify: FastifyInstance) {
       // 4. Provisionner le Wallet Marchand en Sandbox
       const sandboxWallet = await getOrCreateMerchantWallet(cleanId, 'sandbox', 'CREDIT');
 
-      // 5. Dotation automatique de 1 000 Crédits de test depuis le Main Treasury Sandbox
-      const treasuryWalletId = await LedgerEngine.getOrCreateMainTreasury('mainapp', 'sandbox', 'CREDIT');
-      const welcomeIdempotency = `WELCOME_GRANT_${cleanId}_${Date.now()}`;
-      try {
-        await LedgerEngine.executeTransaction({
-          appId: 'mainapp',
-          idempotencyKey: welcomeIdempotency,
-          type: 'TRANSFER',
-          environment: 'sandbox',
-          amount: 1000n,
-          currency: 'CREDIT',
-          reference: `WELCOME_${cleanId}`,
-          metadata: {
-            recipient_app_id: cleanId,
-            description: 'Dotation initiale de bienvenue (1000 Crédits Test)',
-          },
-          postings: [
-            {
-              walletId: treasuryWalletId,
-              direction: 'DEBIT',
-              amount: 1000n,
-              description: `Dotation initiale de bienvenue vers ${cleanId} (1000 Crédits)`,
-            },
-            {
-              walletId: sandboxWallet.id,
-              direction: 'CREDIT',
-              amount: 1000n,
-              description: `Crédit de bienvenue Sandbox (+1000 Crédits)`,
-            },
-          ],
-        });
-      } catch (grantErr: any) {
-        // Secours direct si le grand livre a un conflit d'idempotence
-        await query(
-          'UPDATE wallets SET available_balance = available_balance + 1000, updated_at = NOW() WHERE id = $1',
-          [sandboxWallet.id],
-          'sandbox'
-        );
-        await query(
-          'UPDATE wallets SET available_balance = available_balance - 1000, updated_at = NOW() WHERE id = $1',
-          [treasuryWalletId],
-          'sandbox'
-        );
-      }
-
       return reply.status(201).send({
         status: 'success',
         app: {
@@ -141,7 +96,6 @@ export async function merchantRoutes(fastify: FastifyInstance) {
           production: prodWallet.id,
           sandbox: sandboxWallet.id,
         },
-        initial_sandbox_credits: 1000,
         live_api_key: rawLiveKey,
         test_api_key: rawTestKey,
         webhook_secret: webhookSecret,
