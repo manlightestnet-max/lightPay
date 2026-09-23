@@ -37,7 +37,7 @@ export async function faucetRoutes(fastify: FastifyInstance) {
 
     // 3. Récupérer le wallet central de trésorerie (mainapp)
     let mainWalletRows = await query(
-      "SELECT id, available_balance FROM wallets WHERE app_id = 'mainapp' AND account_id = 'mainapp' AND environment = 'sandbox' LIMIT 1",
+      "SELECT id, available_balance FROM wallets WHERE app_id = 'mainapp' AND (account_id = 'mainapp' OR account_id = 'SYSTEM_MAIN_TREASURY') AND environment = 'sandbox' LIMIT 1",
       [],
       'sandbox'
     );
@@ -52,7 +52,7 @@ export async function faucetRoutes(fastify: FastifyInstance) {
         'sandbox'
       );
       mainWalletRows = await query(
-        "SELECT id, available_balance FROM wallets WHERE app_id = 'mainapp' AND account_id = 'mainapp' AND environment = 'sandbox' LIMIT 1",
+        "SELECT id, available_balance FROM wallets WHERE app_id = 'mainapp' AND (account_id = 'mainapp' OR account_id = 'SYSTEM_MAIN_TREASURY') AND environment = 'sandbox' LIMIT 1",
         [],
         'sandbox'
       );
@@ -131,7 +131,7 @@ export async function faucetRoutes(fastify: FastifyInstance) {
     // 5. La Faucet est maintenant garantie initialisée.
     // Récupérer ou provisionner l'unique wallet marchand de l'application
     const merchantWallets = await query(
-      "SELECT id, available_balance FROM wallets WHERE app_id = $1 AND account_type = 'MERCHANT' AND environment = 'sandbox' AND currency = 'CREDIT'",
+      "SELECT id, available_balance FROM wallets WHERE app_id = $1 AND environment = 'sandbox' AND currency = 'CREDIT' LIMIT 1",
       [appId],
       'sandbox'
     );
@@ -199,6 +199,7 @@ export async function faucetRoutes(fastify: FastifyInstance) {
         transaction: result,
       });
     } catch (err: any) {
+      console.error('[FAUCET ERROR]', err);
       return reply.status(400).send({
         status: 'error',
         error: err.code || 'FAUCET_TRANSFER_FAILED',

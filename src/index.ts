@@ -20,6 +20,20 @@ const server = Fastify({
   },
 });
 
+// Support des requêtes JSON avec corps vide sans erreur 400 (FST_ERR_CTP_EMPTY_JSON_BODY)
+server.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+  if (!body || (typeof body === 'string' && body.trim() === '')) {
+    done(null, {});
+    return;
+  }
+  try {
+    done(null, JSON.parse(body as string));
+  } catch (err: any) {
+    err.statusCode = 400;
+    done(err, undefined);
+  }
+});
+
 // 1. Healthcheck probe (Indispensable pour Render / Cloudflare / Uptime)
 server.get('/health', async () => {
   return {
