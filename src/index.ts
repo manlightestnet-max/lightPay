@@ -33,7 +33,7 @@ server.get('/health', async () => {
 server.addHook('onRequest', async (request, reply) => {
   reply.header('Access-Control-Allow-Origin', '*');
   reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-App-Id, X-Api-Key, X-Master-Key, Idempotency-Key');
+  reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-App-Id, X-Api-Key, X-Environment, X-Master-Key, Idempotency-Key, *');
   if (request.method === 'OPTIONS') {
     return reply.status(204).send();
   }

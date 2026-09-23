@@ -125,8 +125,9 @@ export class LedgerEngine {
           throw new Error(`Wallet is ${wallet.status}: ${post.walletId}`);
         }
 
-        // Vérification d'appartenance: le wallet doit appartenir à appId SAUF s'il s'agit d'un compte SYSTEM (Trésorerie Centrale ou Inflow Passerelle)
-        if (wallet.account_type !== 'SYSTEM' && wallet.app_id !== appId) {
+        // Vérification d'appartenance: le wallet doit appartenir à appId SAUF s'il s'agit d'un compte SYSTEM,
+        // ou d'une opération centrale ordonnée par 'mainapp', ou d'un encaissement sur un compte 'mainapp'
+        if (appId !== 'mainapp' && wallet.account_type !== 'SYSTEM' && wallet.app_id !== appId && wallet.app_id !== 'mainapp') {
           throw new Error(`Wallet ${post.walletId} does not belong to app ${appId}`);
         }
 
