@@ -1,6 +1,6 @@
 import { PoolClient } from 'pg';
 import { getClient, query } from './pool.js';
-import { LedgerDirection, TransactionType, Environment } from '../types/index.js';
+import { LedgerBucket, LedgerDirection, TransactionType, Environment } from '../types/index.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
 
 export interface LedgerPosting {
@@ -8,6 +8,8 @@ export interface LedgerPosting {
   direction: LedgerDirection;
   amount: bigint;
   description?: string;
+  /** Balance moved by this posting. Defaults to AVAILABLE; LOCKED is reserved to the escrow service. */
+  bucket?: LedgerBucket;
 }
 
 export interface ExecuteTransactionParams {
@@ -21,6 +23,12 @@ export interface ExecuteTransactionParams {
   reference?: string;
   metadata?: Record<string, any>;
   postings: LedgerPosting[];
+  /** Settlement of money already counted once (escrow capture/release): skips volume quotas. */
+  skipQuotas?: boolean;
+  /** Runs inside the DB transaction before any posting (e.g. lock and validate a hold). */
+  prepare?: (client: PoolClient) => Promise<void>;
+  /** Runs inside the DB transaction after the postings, before COMMIT. */
+  finalize?: (client: PoolClient, transactionId: string) => Promise<void>;
 }
 
 export class LedgerEngine {
@@ -41,6 +49,9 @@ export class LedgerEngine {
       reference,
       metadata = {},
       postings,
+      skipQuotas = false,
+      prepare,
+      finalize,
     } = params;
 
     // 1. Vérification de l'équilibre comptable : Total Débits == Total Crédits
@@ -85,7 +96,9 @@ export class LedgerEngine {
       }
 
       // 3. Vérification stricte des limites et quotas d'application (Plafond unitaire + Plafond journalier)
-      await enforceAppQuotas(appId, environment, amount, client, metadata);
+      if (!skipQuotas) await enforceAppQuotas(appId, environment, amount, client, metadata);
+
+      if (prepare) await prepare(client);
 
       // 4. Création de la transaction avec tag environnement
       const txResult = await client.query(
@@ -107,12 +120,14 @@ export class LedgerEngine {
       const transactionId = txResult.rows[0].id;
 
       // 4. Verrouillage et mise à jour des wallets ordonnés (pour éviter tout deadlock)
-      const sortedPostings = [...postings].sort((a, b) => a.walletId.localeCompare(b.walletId));
+      const sortedPostings = [...postings].sort(
+        (a, b) => a.walletId.localeCompare(b.walletId) || (a.bucket ?? 'AVAILABLE').localeCompare(b.bucket ?? 'AVAILABLE')
+      );
 
       for (const post of sortedPostings) {
         // Verrouillage de la ligne du wallet en cours avec vérification d'isolation
         const walletQuery = await client.query(
-          'SELECT id, account_id, available_balance, status, account_type, environment, app_id FROM wallets WHERE id = $1 FOR UPDATE',
+          'SELECT id, account_id, available_balance, locked_balance, status, account_type, environment, app_id FROM wallets WHERE id = $1 FOR UPDATE',
           [post.walletId]
         );
 
@@ -138,10 +153,18 @@ export class LedgerEngine {
           );
         }
 
-        const currentBalance = BigInt(wallet.available_balance);
+        const bucket: LedgerBucket = post.bucket ?? 'AVAILABLE';
+        const column = bucket === 'LOCKED' ? 'locked_balance' : 'available_balance';
+        const currentBalance = BigInt(bucket === 'LOCKED' ? wallet.locked_balance : wallet.available_balance);
         let newBalance = currentBalance;
 
-        if (post.direction === 'DEBIT') {
+        if (post.direction === 'DEBIT' && bucket === 'LOCKED') {
+          // Locked funds only leave through their own hold: never below what is locked.
+          if (currentBalance < post.amount) {
+            throw new Error(`Locked balance too low in wallet ${post.walletId}. Locked: ${currentBalance}, Required: ${post.amount}`);
+          }
+          newBalance = currentBalance - post.amount;
+        } else if (post.direction === 'DEBIT') {
           // SYSTEM_MAIN_TREASURY ne peut JAMAIS être à découvert : tout transfert doit être adossé
           const isMainTreasury = wallet.account_id === 'SYSTEM_MAIN_TREASURY';
           const isStrictBalance = wallet.account_type !== 'SYSTEM' || isMainTreasury;
@@ -160,14 +183,14 @@ export class LedgerEngine {
 
         // Mise à jour du solde du wallet
         await client.query(
-          'UPDATE wallets SET available_balance = $1, updated_at = NOW() WHERE id = $2',
+          `UPDATE wallets SET ${column} = $1, updated_at = NOW() WHERE id = $2`,
           [newBalance.toString(), post.walletId]
         );
 
         // Inscription immuable dans le grand livre (Ledger Entry) avec tag environnement
         await client.query(
-          `INSERT INTO ledger_entries (transaction_id, wallet_id, direction, environment, amount, balance_before, balance_after, description)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          `INSERT INTO ledger_entries (transaction_id, wallet_id, direction, environment, amount, balance_before, balance_after, description, bucket)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [
             transactionId,
             post.walletId,
@@ -177,9 +200,12 @@ export class LedgerEngine {
             currentBalance.toString(),
             newBalance.toString(),
             post.description || null,
+            bucket,
           ]
         );
       }
+
+      if (finalize) await finalize(client, transactionId);
 
       // 5. Finalisation avec succès de la transaction
       await client.query(

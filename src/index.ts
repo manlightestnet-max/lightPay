@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { config } from './config/index.js';
 import { walletRoutes } from './routes/wallets.js';
 import { paymentRoutes } from './routes/payments.js';
+import { holdRoutes } from './routes/holds.js';
 import { externalMoneyRoutes } from './routes/external.js';
 import { adminRoutes } from './routes/admin.js';
 import { gatewayRoutes } from './routes/gateways.js';
@@ -143,6 +144,7 @@ server.get('/', async (request, reply) => {
 // 6. Enregistrement des modules API Core Engine (100% JSON)
 server.register(walletRoutes, { prefix: '/v1/wallets' });
 server.register(paymentRoutes, { prefix: '/v1/payments' });
+server.register(holdRoutes, { prefix: '/v1/holds' });
 server.register(externalMoneyRoutes, { prefix: '/v1' });
 server.register(adminRoutes, { prefix: '/v1/admin' });
 server.register(gatewayRoutes, { prefix: '/v1/gateways' });

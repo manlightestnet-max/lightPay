@@ -11,6 +11,7 @@ export type TransactionType =
   | 'DISBURSEMENT'
   | 'PAYOUT'
   | 'REFUND'
+  | 'HOLD'
   | 'HOLD_CAPTURE'
   | 'HOLD_RELEASE'
   | 'FAUCET';
@@ -19,7 +20,11 @@ export type TransactionStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'REVERSED';
 
 export type LedgerDirection = 'DEBIT' | 'CREDIT';
 
-export type HoldStatus = 'ACTIVE' | 'CAPTURED' | 'RELEASED';
+/** ACTIVE: funds locked on the beneficiary. DISPUTED: frozen, only an explicit resolution moves them. */
+export type HoldStatus = 'ACTIVE' | 'DISPUTED' | 'CAPTURED' | 'RELEASED';
+
+/** Which balance of a wallet a ledger posting moves. */
+export type LedgerBucket = 'AVAILABLE' | 'LOCKED';
 
 export type Environment = 'production' | 'sandbox';
 
