@@ -4,7 +4,7 @@ import { CheckoutError, payWithWallet, publicView, startMobileMoney } from '../d
 import { ConnectError, validateAuthorizeRequest } from '../db/connect.js';
 import { EscrowError } from '../db/escrow.js';
 import { requireUser } from './me.js';
-import { accountPage, connectPage, hostedCsp, payPage } from '../pages/hosted.js';
+import { accountPage, connectPage, consolePage, hostedCsp, payPage } from '../pages/hosted.js';
 
 /** Per-IP brake on payment requests (each one rings a phone). */
 const hits = new Map<string, number[]>();
@@ -22,7 +22,7 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9_-]{16,40}$/;
 /**
  * Public side of the checkout. The session id is an unguessable capability; nothing here
  * exposes wallet ids, balances or full phone numbers.
- *   GET  /pay/:id | /account | /connect               hosted pages
+ *   GET  /pay/:id | /account | /account/console | /connect   hosted pages
  *   GET  /v1/checkout/public/authorize                validate an app authorization request
  *   POST /v1/checkout/public/sessions/:id/wallet      pay with a LightPay wallet (signed in)
  *   GET  /v1/checkout/public/sessions/:id             what the page shows (polled)
@@ -97,6 +97,11 @@ export async function checkoutPublicRoutes(fastify: FastifyInstance) {
 
   fastify.get('/account', async (request, reply) =>
     html(reply, (nonce) => accountPage(nonce, (request.query as any).env === 'sandbox' ? 'sandbox' : 'production'))
+  );
+
+  // Advanced mode: console with the developer space (opt-in from the simple account).
+  fastify.get('/account/console', async (request, reply) =>
+    html(reply, (nonce) => consolePage(nonce, (request.query as any).env === 'sandbox' ? 'sandbox' : 'production'))
   );
 
   fastify.get('/connect', async (request, reply) =>

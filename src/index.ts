@@ -90,6 +90,7 @@ server.addHook('onRequest', async (request, reply) => {
     url.startsWith('/pay/') ||
     url.startsWith('/v1/checkout/public/') ||
     url === '/account' ||
+    url === '/account/console' ||
     url === '/connect' ||
     url === '/v1/me' ||
     url.startsWith('/v1/me/') ||
@@ -119,6 +120,7 @@ server.addHook('onRequest', async (request, reply) => {
     url.startsWith('/v1/checkout/public/') ||
     // LightPay user space: authenticated by the person's own token (checked in its routes).
     url === '/account' ||
+    url === '/account/console' ||
     url === '/connect' ||
     url === '/v1/me' ||
     url.startsWith('/v1/me/')
