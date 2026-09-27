@@ -1,7 +1,9 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { LightPayUser, UserTokenError, isRecentSignIn, verifyUserToken } from '../security/user-token.js';
 import { ConnectError, SCOPE_LABELS, approve, listUserConnections, revokeConnection, userWallet, walletStatement } from '../db/connect.js';
-import { closeAccount, listWithdrawals, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
+import { closeAccount, listWithdrawals, quoteWithdrawal, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
+import { quote } from '../payments/fees.js';
+import { MOBILE_NETWORKS, providerFor } from '../payments/mobile-money.js';
 import { Environment } from '../types/index.js';
 
 declare module 'fastify' {
@@ -29,7 +31,7 @@ const fail = (reply: FastifyReply, err: any) => {
   return reply.status(err instanceof ConnectError ? err.statusCode : insufficient ? 402 : 400).send({
     status: 'error',
     error: insufficient ? 'INSUFFICIENT_FUNDS' : err.code || 'REQUEST_ERROR',
-    message: insufficient ? 'Solde disponible insuffisant.' : err.message,
+    message: insufficient ? 'Solde disponible insuffisant (frais compris).' : err.message,
   });
 };
 
@@ -62,6 +64,8 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   POST   /v1/me/transfers               send to another LightPay user (recent sign-in)
  *   POST   /v1/me/withdrawals             withdraw to mobile money (recent sign-in)
  *   GET    /v1/me/withdrawals             my withdrawals
+ *   GET    /v1/me/withdrawals/quote       ?amount&network -> amount received, fees, total debited
+ *   GET    /v1/me/deposits/quote          ?amount -> what the phone pays, per operator
  *   DELETE /v1/me                         close my account (recent sign-in, everything at zero)
  * X-Environment: sandbox | production (default production).
  */
@@ -135,6 +139,22 @@ export async function meRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get('/withdrawals', async (request) => ({ status: 'success', withdrawals: await listWithdrawals(envOf(request), request.lightpayUser!) }));
+
+  fastify.get('/withdrawals/quote', async (request, reply) => {
+    const q = request.query as any;
+    try {
+      return { status: 'success', quote: quoteWithdrawal(q.amount, q.network) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/deposits/quote', async (request, reply) => {
+    const raw = String((request.query as any).amount ?? '');
+    if (!/^\d{1,12}$/.test(raw) || BigInt(raw) <= 0n) return reply.status(400).send({ error: 'INVALID_AMOUNT', message: 'Montant invalide.' });
+    const amount = BigInt(raw);
+    return { status: 'success', quotes: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(amount, providerFor(n).name)])) };
+  });
 
   fastify.delete('/', async (request, reply) => {
     if (!recent(request, reply)) return;

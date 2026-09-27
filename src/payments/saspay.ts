@@ -12,7 +12,8 @@ import type { MobileMoneyProvider, MobileNetwork, RailOperation, RailResult } fr
  *
  * Env: SASPAY_SECRET_KEY (sk_live_… / sk_test_…), SASPAY_WEBHOOK_SECRET, SASPAY_API_URL,
  *      SASPAY_COLLECTION_FEE_MODE (default ADD_ON: the payer pays the fee, we receive the amount)
- *      SASPAY_PAYOUT_FEE_MODE     (default DEDUCTED: the fee comes out of the amount sent)
+ *      SASPAY_PAYOUT_FEE_MODE     (default ADD_ON: the phone receives the amount; the fee, already
+ *                                  debited from the person's wallet, is taken from our SasPay balance)
  */
 
 const NETWORK_CODES: Record<MobileNetwork, string> = {
@@ -134,7 +135,7 @@ export class SasPayProvider implements MobileMoneyProvider {
           recipient: { msisdn: op.msisdn },
           customer: customerOf(op),
           description: op.description || 'Retrait LightPay',
-          fee_charge_mode: process.env.SASPAY_PAYOUT_FEE_MODE || 'DEDUCTED',
+          fee_charge_mode: process.env.SASPAY_PAYOUT_FEE_MODE || 'ADD_ON',
           metadata: { lightpay_id: op.id },
         },
         idempotencyUuid(op.id)

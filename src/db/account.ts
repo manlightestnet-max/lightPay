@@ -6,7 +6,8 @@ import { LightPayUser } from '../security/user-token.js';
 import { ConnectError, SCOPES, Scope, userWallet } from './connect.js';
 import { MOBILE_NETWORKS, MobileNetwork, normalizeCongoMsisdn } from '../payments/mobile-money.js';
 import { sendPayout } from './payouts.js';
-import { minMobileMoneyAmount } from '../payments/fees.js';
+import { lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
+import { providerFor } from '../payments/mobile-money.js';
 import { maskMsisdn } from './checkout.js';
 
 /**
@@ -17,7 +18,6 @@ import { maskMsisdn } from './checkout.js';
  *   close     account closed once everything is at zero and nothing is pending
  */
 
-const MIN_WITHDRAWAL = 500n;
 const newId = (prefix: string) => `${prefix}${crypto.randomBytes(18).toString('base64url')}`;
 const txId = (r: any): string | null => r?.transactionId ?? r?.transaction?.id ?? null;
 
@@ -90,12 +90,23 @@ export async function sendMoney(environment: Environment, user: LightPayUser, in
 /** Withdraw available money to a mobile-money number. Locked money can never leave. */
 export async function withdraw(environment: Environment, user: LightPayUser, input: { amount: unknown; msisdn: unknown; network: unknown }, idempotencyKey: string) {
   const amount = positive(input.amount);
-  if (amount < MIN_WITHDRAWAL) throw new ConnectError(`Retrait minimum : ${MIN_WITHDRAWAL} FCFA.`, 'BELOW_MINIMUM');
+  const minimum = minWithdrawalAmount();
+  if (amount < minimum) throw new ConnectError(`Retrait minimum : ${minimum} FCFA.`, 'BELOW_MINIMUM');
   const network = String(input.network ?? '') as MobileNetwork;
   if (!MOBILE_NETWORKS.includes(network)) throw new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
   const msisdn = normalizeCongoMsisdn(String(input.msisdn ?? ''));
   if (!msisdn) throw new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN');
   const wallet = await activeWallet(environment, user);
+  const provider = providerFor(network).name;
+  const operatorFee = providerPayoutFee(provider, amount);
+  const lightpayFee = lightpayPayoutFee(amount);
+  if (BigInt(wallet.available_balance) < amount + operatorFee + lightpayFee) {
+    throw new ConnectError(
+      `Solde insuffisant : ce retrait coûte ${amount + operatorFee + lightpayFee} FCFA frais compris (${operatorFee} opérateur + ${lightpayFee} LightPay).`,
+      'INSUFFICIENT_FUNDS',
+      402
+    );
+  }
 
   const payout = await sendPayout({
     environment,
@@ -104,6 +115,8 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
     msisdn,
     network,
     amount,
+    operatorFee,
+    lightpayFee,
     currency: wallet.currency,
     reason: 'WITHDRAWAL',
     reference: `withdraw:${user.uid}:${idempotencyKey}`,
@@ -116,6 +129,9 @@ const payoutView = (p: any) => ({
   id: p.id,
   status: p.status,
   amount: String(p.amount),
+  operator_fee: String(p.operator_fee ?? 0),
+  lightpay_fee: String(p.lightpay_fee ?? 0),
+  total: String(p.total_debited ?? p.amount),
   currency: p.currency,
   to: maskMsisdn(p.msisdn),
   network: p.network,
@@ -181,4 +197,12 @@ export async function closeAccount(user: LightPayUser) {
     );
   }
   return { closed: true };
+}
+
+/** What a withdrawal will cost, before doing it (same computation as withdraw()). */
+export function quoteWithdrawal(amountInput: unknown, networkInput: unknown) {
+  const amount = positive(amountInput);
+  const network = String(networkInput ?? '') as MobileNetwork;
+  if (!MOBILE_NETWORKS.includes(network)) throw new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
+  return withdrawalQuote(amount, providerFor(network).name, 'XAF');
 }

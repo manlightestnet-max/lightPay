@@ -77,12 +77,18 @@ async function scenario(env: 'sandbox' | 'production', appKey: string) {
 
   // 3. Withdraw to mobile money.
   const small = await req('POST', '/v1/me/withdrawals', { user: alice, body: { amount: 100, msisdn: '066000003', network: 'AIRTEL_COG' }, idem: key('small') });
-  check('withdrawal minimum 500', small.status === 400 && small.body.error === 'BELOW_MINIMUM');
+  check('withdrawal minimum 1 000', small.status === 400 && small.body.error === 'BELOW_MINIMUM');
+  const wq = await req('GET', '/v1/me/withdrawals/quote?amount=8000&network=MTN_MOMO_COG', { user: alice });
+  check('withdrawal quote: 8 000 received, 0 operator + 5 LightPay = 8 005 debited', wq.body.quote?.amount === '8000' && wq.body.quote?.operator_fee === '0' && wq.body.quote?.lightpay_fee === '5' && wq.body.quote?.total === '8005' && wq.body.quote?.minimum === '1000', JSON.stringify(wq.body.quote));
+  const dq = await req('GET', '/v1/me/deposits/quote?amount=5000', { user: alice });
+  check('deposit quote per operator: 5 000 + 5 LightPay', dq.body.quotes?.MTN_MOMO_COG?.total === '5005' && dq.body.quotes?.AIRTEL_COG?.lightpay_fee === '5', JSON.stringify(dq.body.quotes?.MTN_MOMO_COG));
+  const badQuote = await req('GET', '/v1/me/withdrawals/quote?amount=abc&network=MTN_MOMO_COG', { user: alice });
+  check('invalid quote request refused', badQuote.status === 400);
   const wd = await req('POST', '/v1/me/withdrawals', { user: alice, body: { amount: 8000, msisdn: '06 600 00 03', network: 'MTN_MOMO_COG' }, idem: key('wd') });
-  check('withdraw 8 000 -> sent', wd.status === 200 && wd.body.withdrawal?.status === 'SUCCEEDED' && !JSON.stringify(wd.body).includes('66000003'), `${wd.status} ${wd.body.message ?? ''}`);
-  check('balance 50 000 - 12 000 - 8 000 = 30 000', (await balanceOf(alice))?.available_balance === '30000');
-  const tooMuch = await req('POST', '/v1/me/withdrawals', { user: alice, body: { amount: 30001, msisdn: '066000003', network: 'MTN_MOMO_COG' }, idem: key('much') });
-  check('cannot withdraw more than available', tooMuch.status === 402);
+  check('withdraw 8 000 -> sent, fees shown', wd.status === 200 && wd.body.withdrawal?.status === 'SUCCEEDED' && wd.body.withdrawal?.total === '8005' && wd.body.withdrawal?.lightpay_fee === '5' && !JSON.stringify(wd.body).includes('66000003'), `${wd.status} ${wd.body.message ?? ''}`);
+  check('balance 50 000 - 12 000 - 8 005 = 29 995', (await balanceOf(alice))?.available_balance === '29995');
+  const tooMuch = await req('POST', '/v1/me/withdrawals', { user: alice, body: { amount: 29991, msisdn: '066000003', network: 'MTN_MOMO_COG' }, idem: key('much') });
+  check('cannot withdraw more than available, fees included', tooMuch.status === 402 && /frais/.test(tooMuch.body.message ?? ''), tooMuch.body.message);
   const list = await req('GET', '/v1/me/withdrawals', { user: alice });
   check('withdrawal history', list.body.withdrawals?.length === 1);
 
@@ -118,7 +124,7 @@ async function scenario(env: 'sandbox' | 'production', appKey: string) {
   const refused = await req('DELETE', '/v1/me', { user: alice });
   check('closing refused while money is left', refused.status === 409);
   await req('POST', `/v1/holds/${held.body.hold.id}/release`, { key: appKey, idem: key('release') });
-  await req('POST', '/v1/me/withdrawals', { user: alice, body: { amount: 30000, msisdn: '066000003', network: 'MTN_MOMO_COG' }, idem: key('empty') });
+  await req('POST', '/v1/me/withdrawals', { user: alice, body: { amount: 29990, msisdn: '066000003', network: 'MTN_MOMO_COG' }, idem: key('empty') });
   w = await balanceOf(alice);
   check('Alice at zero after refund of the sale and a withdrawal', w?.available_balance === '0' && w?.locked_balance === '0', `${w?.available_balance}/${w?.locked_balance}`);
   const oldClose = await req('DELETE', '/v1/me', { user: aliceOld });

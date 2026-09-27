@@ -71,7 +71,7 @@ export async function enforceAppQuotas(
   // A. Verification du montant unitaire
   if (amount > maxPerTx) {
     throw new TransactionQuotaError(
-      `Montant de ${amount} AOA superieur au plafond autorise par transaction (${maxPerTx} AOA) pour cette application.`,
+      `Montant de ${amount} FCFA supérieur au plafond autorisé par transaction (${maxPerTx} FCFA) pour cette application.`,
       'MAX_TRANSACTION_EXCEEDED',
       400,
       { amount: amount.toString(), max_per_tx: maxPerTx.toString() }
@@ -91,7 +91,7 @@ export async function enforceAppQuotas(
   const current24hVolume = BigInt(volResult[0]?.rolling_volume || '0');
   if (current24hVolume + amount > dailyLimit) {
     throw new TransactionQuotaError(
-      `Plafond journalier de ${dailyLimit} AOA depasse. Volume deja consomme sur 24h: ${current24hVolume} AOA, Montant tente: ${amount} AOA.`,
+      `Plafond journalier de ${dailyLimit} FCFA dépassé pour cette application (déjà ${current24hVolume} FCFA sur 24 h, tentative de ${amount} FCFA).`,
       'DAILY_VOLUME_EXCEEDED',
       400,
       {

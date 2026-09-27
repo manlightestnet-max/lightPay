@@ -55,3 +55,70 @@ export function quote(amount: bigint, provider: string): FeeQuote {
     estimated: operator > 0n,
   };
 }
+
+// ---------------------------------------------------------------- payouts (withdrawals, refunds)
+//
+//   Operator fee   SasPay Congo: max(4 %, 700 XAF), charged on top from our SasPay balance
+//                  (ADD_ON) — SASPAY_PAYOUT_FEE_BPS (400) / SASPAY_PAYOUT_FEE_MIN (700)
+//   LightPay fee   max(LIGHTPAY_PAYOUT_FEE_MIN (5), amount × LIGHTPAY_PAYOUT_FEE_BPS (0))
+//   The person receives exactly the amount asked; the wallet is debited amount + both fees.
+//   Refunds carry no LightPay fee: the guest gets the largest amount the refund can cover.
+
+/** Smallest withdrawal (below it the operator fee makes no sense). */
+export const minWithdrawalAmount = (): bigint => BigInt(int(process.env.WITHDRAWAL_MIN_AMOUNT, 1000));
+
+export function lightpayPayoutFee(amount: bigint): bigint {
+  const min = BigInt(int(process.env.LIGHTPAY_PAYOUT_FEE_MIN, 5));
+  const byRate = ceilBps(amount, int(process.env.LIGHTPAY_PAYOUT_FEE_BPS, 0));
+  return byRate > min ? byRate : min;
+}
+
+/** Operator fee on a payout of `amount` (what the phone receives). */
+export function providerPayoutFee(provider: string, amount: bigint): bigint {
+  if (provider !== 'saspay') return 0n;
+  const byRate = ceilBps(amount, int(process.env.SASPAY_PAYOUT_FEE_BPS, 400));
+  const min = BigInt(int(process.env.SASPAY_PAYOUT_FEE_MIN, 700));
+  return byRate > min ? byRate : min;
+}
+
+export interface WithdrawalQuote {
+  /** What the phone receives. */
+  amount: string;
+  operator_fee: string;
+  lightpay_fee: string;
+  /** What leaves the wallet. */
+  total: string;
+  minimum: string;
+  currency: string;
+  estimated: boolean;
+}
+
+export function withdrawalQuote(amount: bigint, provider: string, currency: string): WithdrawalQuote {
+  const operator = providerPayoutFee(provider, amount);
+  const lightpay = lightpayPayoutFee(amount);
+  return {
+    amount: amount.toString(),
+    operator_fee: operator.toString(),
+    lightpay_fee: lightpay.toString(),
+    total: (amount + operator + lightpay).toString(),
+    minimum: minWithdrawalAmount().toString(),
+    currency,
+    estimated: false,
+  };
+}
+
+/**
+ * Largest amount s ≥ 1 that can be sent with `total` once the operator fee is paid on top
+ * (s + fee(s) ≤ total), or 0 when even the fee cannot be covered. s + fee(s) is strictly
+ * increasing, so a binary search is exact.
+ */
+export function refundSendable(total: bigint, provider: string): bigint {
+  let lo = 0n;
+  let hi = total;
+  while (lo < hi) {
+    const mid = (lo + hi + 1n) / 2n;
+    if (mid + providerPayoutFee(provider, mid) <= total) lo = mid;
+    else hi = mid - 1n;
+  }
+  return lo;
+}

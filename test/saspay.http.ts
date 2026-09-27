@@ -84,6 +84,15 @@ async function main() {
   const seller = (await req('GET', '/v1/me', { user: merchant })).body.wallet;
   check('seller receives exactly 35 000 (locked), fees never taken from him', seller?.locked_balance === '35000', seller?.locked_balance);
 
+  // Guest refund: the operator fee is paid out of the refund (LightPay takes nothing).
+  const s1App = (await req('GET', `/v1/checkout/sessions/${s1.body.session.id}`, { key: APP_KEY })).body.session;
+  const released = await req('POST', `/v1/holds/${s1App.hold_id}/release`, { key: APP_KEY, idem: `sasrel-${RUN}` });
+  check('guest refund: 33 653 sent + 1 347 operator fee = the 35 000 paid', released.body.refund?.amount === '33653' && released.body.refund?.operator_fee === '1347' && released.body.refund?.total === '35000', JSON.stringify(released.body.refund));
+  const refundReq = ((await (await fetch(`${FAKE}/_requests`)).json()) as any[]).find((r) => r.url === '/api/v1/payouts/initialize/' && r.body.recipient?.msisdn === '242065551233');
+  check('refund payout asked to SasPay: 33 653, ADD_ON, to the paying number', refundReq?.body.amount === '33653.00' && refundReq?.body.fee_charge_mode === 'ADD_ON', JSON.stringify(refundReq?.body ?? {}).slice(0, 140));
+  const seller2 = (await req('GET', '/v1/me', { user: merchant })).body.wallet;
+  check('seller lock released', seller2?.locked_balance === '0', seller2?.locked_balance);
+
   // 2. Refused by SasPay -> the session reopens.
   const s2 = await req('POST', '/v1/checkout/sessions', { key: APP_KEY, body: { amount: 5000, payee: conn.id }, idem: `sas-${RUN}-2` });
   await req('POST', `/v1/checkout/public/sessions/${s2.body.session.id}/mobile-money`, { body: { msisdn: '05 555 12 30', network: 'AIRTEL_COG' } });
@@ -109,22 +118,22 @@ async function main() {
 
   const bad = await req('POST', '/v1/me/withdrawals', { user, body: { amount: 7000, msisdn: '06 555 00 09', network: 'MTN_MOMO_COG' }, idem: `saswd1${RUN}` });
   check('withdrawal sent, PENDING at SasPay', bad.body.withdrawal?.status === 'PENDING', `${bad.status} ${JSON.stringify(bad.body).slice(0, 120)}`);
-  check('amount leaves the wallet while pending', (await req('GET', '/v1/me', { user })).body.wallet?.available_balance === '13000');
+  check('7 000 + 700 SasPay + 5 LightPay leave the wallet while pending', (await req('GET', '/v1/me', { user })).body.wallet?.available_balance === '12295' && bad.body.withdrawal?.total === '7705');
   let restored = false;
   for (let i = 0; i < 20 && !restored; i++) {
     await sleep(700);
     restored = (await req('GET', '/v1/me', { user })).body.wallet?.available_balance === '20000';
   }
-  check('SasPay FAILED payout -> 7 000 restored to the wallet', restored);
+  check('SasPay FAILED payout -> the whole 7 705 restored', restored);
   const good = await req('POST', '/v1/me/withdrawals', { user, body: { amount: 5000, msisdn: '06 555 00 04', network: 'MTN_MOMO_COG' }, idem: `saswd2${RUN}` });
   let succeeded = false;
   for (let i = 0; i < 20 && !succeeded; i++) {
     await sleep(700);
     succeeded = (await req('GET', '/v1/me/withdrawals', { user })).body.withdrawals?.some((w: any) => w.id === good.body.withdrawal?.id && w.status === 'SUCCEEDED');
   }
-  check('SasPay SUCCESS payout -> withdrawal SUCCEEDED, balance 15 000', succeeded && (await req('GET', '/v1/me', { user })).body.wallet?.available_balance === '15000');
+  check('SasPay SUCCESS payout -> withdrawal SUCCEEDED, balance 20 000 - 5 705 = 14 295', succeeded && (await req('GET', '/v1/me', { user })).body.wallet?.available_balance === '14295');
   const payoutReq = ((await (await fetch(`${FAKE}/_requests`)).json()) as any[]).find((r) => r.url === '/api/v1/payouts/initialize/' && r.body.recipient?.msisdn === '242065550004');
-  check('payout body: CG / method mtn_cg / DEDUCTED fee', payoutReq?.body.method === 'mtn_cg' && payoutReq?.body.country === 'CG' && payoutReq?.body.fee_charge_mode === 'DEDUCTED');
+  check('payout body: CG / mtn_cg / 5000.00 / ADD_ON (the phone gets exactly 5 000)', payoutReq?.body.method === 'mtn_cg' && payoutReq?.body.country === 'CG' && payoutReq?.body.amount === '5000.00' && payoutReq?.body.fee_charge_mode === 'ADD_ON');
 
   console.log(failures ? `\n${failures} check(s) failed` : '\nAll SasPay checks passed');
 }

@@ -3,13 +3,16 @@ import { query } from './pool.js';
 import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
 import { MobileNetwork, RailOperation, RailResult, providerByName, providerFor } from '../payments/mobile-money.js';
+import { lightpayFeeWallet } from './fee-wallet.js';
 
 /**
  * Money leaving LightPay to a phone number (withdrawals, guest refunds).
  *
- *   1. ledger: wallet --amount--> SYSTEM outflow (idempotent on `reference`)
+ *   1. ledger, one transaction (idempotent on `reference`):
+ *        wallet --total--> SYSTEM outflow (amount + operator fee) + LIGHTPAY_FEES (LightPay fee)
+ *      the provider sends exactly `amount`; its fee is paid on top from our provider balance
  *   2. payout row PENDING, then the provider is asked (idempotent on our payout id)
- *   3. SUCCEEDED -> done · FAILED -> the amount is credited back to the wallet (once)
+ *   3. SUCCEEDED -> done · FAILED -> the exact mirror is booked: the total comes back (once)
  *   PENDING payouts are resolved by the watcher, the provider webhook and the sweeper.
  */
 
@@ -28,6 +31,9 @@ export interface PayoutRow {
   failure_code: string | null;
   reference: string;
   provider_reference: string | null;
+  operator_fee: string;
+  lightpay_fee: string;
+  total_debited: string | null;
   created_at: Date;
 }
 
@@ -37,7 +43,12 @@ export interface SendPayoutInput {
   walletId: string;
   msisdn: string;
   network: MobileNetwork;
+  /** What the phone receives. */
   amount: bigint;
+  /** Provider fee, paid on top from our provider balance (covered by the wallet debit). */
+  operatorFee?: bigint;
+  /** LightPay's fee (credited to LIGHTPAY_FEES). */
+  lightpayFee?: bigint;
   currency: string;
   reason: PayoutRow['reason'];
   /** Idempotency of the whole payout (e.g. withdraw:<uid>:<key>, refund:<hold id>). */
@@ -66,19 +77,29 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   const outflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, input.currency);
   const payoutId = `po_${crypto.randomBytes(18).toString('base64url')}`;
   const provider = providerFor(input.network);
+  const operatorFee = input.operatorFee ?? 0n;
+  const lightpayFee = input.lightpayFee ?? 0n;
+  if (input.amount <= 0n || operatorFee < 0n || lightpayFee < 0n) throw new Error('Invalid payout amounts');
+  const total = input.amount + operatorFee + lightpayFee;
+  const feeWallet = lightpayFee > 0n ? await lightpayFeeWallet(env, input.currency) : null;
   const debit = await LedgerEngine.executeTransaction({
     appId: input.appId,
     environment: env,
     idempotencyKey: input.reference,
     type: 'PAYOUT',
-    amount: input.amount,
+    amount: total,
+    feeAmount: operatorFee + lightpayFee,
     currency: input.currency,
-    metadata: { ...(input.metadata ?? {}), payout: payoutId, reason: input.reason, network: input.network, provider: provider.name },
+    metadata: {
+      ...(input.metadata ?? {}), payout: payoutId, reason: input.reason, network: input.network, provider: provider.name,
+      sent: input.amount.toString(), operator_fee: operatorFee.toString(), lightpay_fee: lightpayFee.toString(),
+    },
     allowGuestDebit: input.allowGuestDebit,
     skipQuotas: input.reason === 'GUEST_REFUND',
     postings: [
-      { walletId: input.walletId, direction: 'DEBIT', amount: input.amount, description: input.description },
-      { walletId: outflow, direction: 'CREDIT', amount: input.amount, description: `Mobile money out [${input.network}] - ${payoutId}` },
+      { walletId: input.walletId, direction: 'DEBIT', amount: total, description: input.description },
+      { walletId: outflow, direction: 'CREDIT', amount: input.amount + operatorFee, description: `Mobile money out [${input.network}] - ${payoutId}` },
+      ...(feeWallet ? [{ walletId: feeWallet, direction: 'CREDIT' as const, amount: lightpayFee, description: `Frais LightPay - ${payoutId}` }] : []),
     ],
   });
   if (debit.duplicate) {
@@ -88,11 +109,11 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   }
 
   const [row] = await query(
-    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING', $10, $11)
+    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING', $10, $11, $12, $13, $14)
      ON CONFLICT DO NOTHING RETURNING *`,
     [payoutId, env, input.walletId, provider.name, input.network, input.msisdn, input.amount.toString(), input.currency, input.reason,
-      (debit as any).transactionId ?? (debit as any).transaction?.id ?? null, input.reference],
+      (debit as any).transactionId ?? (debit as any).transaction?.id ?? null, input.reference, operatorFee.toString(), lightpayFee.toString(), total.toString()],
     env
   );
   let result: RailResult;
@@ -119,19 +140,25 @@ async function applyResult(p: PayoutRow, r: RailResult): Promise<PayoutRow> {
     return row;
   }
   if (r.status === 'FAILED') {
-    // Money comes back to the wallet it left (idempotent), then the payout is closed.
+    // Exact mirror of the debit (idempotent): the whole total comes back to the wallet.
+    const sent = BigInt(p.amount);
+    const operatorFee = BigInt(p.operator_fee ?? 0);
+    const lightpayFee = BigInt(p.lightpay_fee ?? 0);
+    const total = sent + operatorFee + lightpayFee;
+    const feeWallet = lightpayFee > 0n ? await lightpayFeeWallet(env, p.currency) : null;
     await LedgerEngine.executeTransaction({
       appId: 'mainapp',
       environment: env,
       idempotencyKey: `${p.reference}:reversal`,
       type: 'REFUND',
-      amount: BigInt(p.amount),
+      amount: total,
       currency: p.currency,
       skipQuotas: true,
       metadata: { payout: p.id, reason: `${p.reason}_FAILED`, failure: r.failureCode },
       postings: [
-        { walletId: (await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, p.currency)), direction: 'DEBIT', amount: BigInt(p.amount), description: `Envoi annulé - ${p.id}` },
-        { walletId: p.wallet_id, direction: 'CREDIT', amount: BigInt(p.amount), description: 'Envoi mobile money échoué, montant restitué' },
+        { walletId: (await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, p.currency)), direction: 'DEBIT', amount: sent + operatorFee, description: `Envoi annulé - ${p.id}` },
+        ...(feeWallet ? [{ walletId: feeWallet, direction: 'DEBIT' as const, amount: lightpayFee, description: `Frais LightPay remboursés - ${p.id}` }] : []),
+        { walletId: p.wallet_id, direction: 'CREDIT', amount: total, description: 'Envoi mobile money échoué, montant et frais restitués' },
       ],
     });
   }
