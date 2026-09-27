@@ -65,6 +65,23 @@ server.addHook('onSend', async (request, reply) => {
   reply.header('X-XSS-Protection', '1; mode=block');
 });
 
+// 3'. Domaine de paiement (CHECKOUT_BASE_URL, ex. checkout.smlab.xyz) : il ne sert QUE la
+//     page de paiement et son API publique. Tout le reste y répond 404.
+const checkoutHost = (() => {
+  try {
+    return process.env.CHECKOUT_BASE_URL ? new URL(process.env.CHECKOUT_BASE_URL).host.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+})();
+
+server.addHook('onRequest', async (request, reply) => {
+  if (!checkoutHost || String(request.headers.host ?? '').toLowerCase() !== checkoutHost) return;
+  const url = request.url.split('?')[0];
+  if (url === '/health' || url.startsWith('/pay/') || url.startsWith('/v1/checkout/public/') || request.method === 'OPTIONS') return;
+  return reply.status(404).send({ error: 'Not Found' });
+});
+
 // 4. ⛔ VERROU GLOBAL D'AUTHENTIFICATION (AUCUNE ENTRÉE SANS BEARER OU CLÉ OFFICIELLE)
 server.addHook('onRequest', async (request, reply) => {
   const url = request.url.split('?')[0];

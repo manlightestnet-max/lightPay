@@ -15,9 +15,13 @@ const fail = (reply: FastifyReply, err: any) =>
     message: err.message,
   });
 
-/** Public base URL of the payment page (PUBLIC_BASE_URL, else the host that was called). */
+/** Where payers land: CHECKOUT_BASE_URL (https://checkout.smlab.xyz), else PUBLIC_BASE_URL, else the host called. */
 const baseUrl = (request: FastifyRequest) =>
-  (process.env.PUBLIC_BASE_URL || `${request.headers['x-forwarded-proto'] || request.protocol}://${request.headers.host}`).replace(/\/$/, '');
+  (
+    process.env.CHECKOUT_BASE_URL ||
+    process.env.PUBLIC_BASE_URL ||
+    `${request.headers['x-forwarded-proto'] || request.protocol}://${request.headers.host}`
+  ).replace(/\/$/, '');
 
 const sessionView = (request: FastifyRequest, s: any) => ({
   id: s.id,
