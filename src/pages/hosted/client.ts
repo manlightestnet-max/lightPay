@@ -31,8 +31,10 @@ export const CLIENT = (env: string) => `
     const KEY = ${JSON.stringify(FIREBASE_WEB_API_KEY())};
     const ENV = ${JSON.stringify(env)};
     const STORE = 'lightpay.session';
-    const read = () => { try { return JSON.parse(sessionStorage.getItem(STORE) || 'null'); } catch (e) { return null; } };
-    const write = (s) => { try { s ? sessionStorage.setItem(STORE, JSON.stringify(s)) : sessionStorage.removeItem(STORE); } catch (e) {} };
+    // Kept on LightPay's own origin, shared by its tabs and windows: signed in once, the account,
+    // a payment page or the wallet window opened from a dialog all know the person.
+    const read = () => { try { return JSON.parse(localStorage.getItem(STORE) || sessionStorage.getItem(STORE) || 'null'); } catch (e) { return null; } };
+    const write = (s) => { try { sessionStorage.removeItem(STORE); s ? localStorage.setItem(STORE, JSON.stringify(s)) : localStorage.removeItem(STORE); } catch (e) {} };
     const ERRORS = {
       EMAIL_EXISTS: 'Un compte existe déjà avec cet e-mail.',
       EMAIL_NOT_FOUND: 'E-mail ou mot de passe incorrect.',

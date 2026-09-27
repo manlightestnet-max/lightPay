@@ -27,6 +27,16 @@ const PAY_CSS = `
 .input-prefix input:-webkit-autofill { -webkit-box-shadow: 0 0 0 40px var(--card) inset; -webkit-text-fill-color: var(--text); }
 .secure { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 10px 0 0; font-size: 12px; color: var(--faint); }
 .secure svg { width: 13px; height: 13px; }
+.state .secure { margin-top: 24px; }
+.phone-ring { position: relative; width: 104px; height: 104px; border-radius: 999px; background: var(--raised); display: flex; align-items: center; justify-content: center; }
+.phone-ring::after { content: ''; position: absolute; inset: 8px; border-radius: 999px; border: 2px solid transparent; border-top-color: var(--accent); animation: spin 1.4s linear infinite; }
+.phone-ring span { width: 56px; height: 56px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; }
+.phone-ring svg { width: 24px; height: 24px; }
+.steps { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 12px; text-align: left; }
+.steps li { display: flex; align-items: center; gap: 12px; font-size: 14px; }
+.steps li span { width: 24px; height: 24px; flex-shrink: 0; border-radius: 999px; background: var(--raised); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.state .btn-inline { width: auto; min-width: 160px; margin-top: 20px; padding: 0 28px; }
+@media (prefers-reduced-motion: reduce) { .phone-ring::after { animation-duration: 3s; } }
 `;
 
 /**
@@ -94,10 +104,26 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
 <section class="screen" data-screen="waiting" hidden>
   ${topbar({ title: 'Validation', back: true, env })}
   <div class="state">
-    <div class="spinner" aria-hidden="true"></div>
-    <h2>Validez sur votre téléphone</h2>
+    <div class="phone-ring" aria-hidden="true"><span>${iconSvg('phone')}</span></div>
+    <h2>Confirmez sur votre téléphone</h2>
     <p id="waitText"></p>
-    <p class="small muted mt">Cette page se met à jour automatiquement.</p>
+    <ol class="steps">
+      <li><span>1</span>Ouvrez la demande reçue sur votre téléphone</li>
+      <li><span>2</span>Composez votre code secret</li>
+      <li><span>3</span>Cette page se met à jour toute seule</li>
+    </ol>
+    <p class="secure">${iconSvg('lock')}Paiement sécurisé par LightPay</p>
+  </div>
+</section>
+
+<section class="screen" data-screen="failed" hidden>
+  ${topbar({ title: 'Paiement', back: true, env })}
+  <div class="state">
+    <span class="state-icon err">${iconSvg('x')}</span>
+    <h2>Paiement échoué</h2>
+    <p id="failedText"></p>
+    <button class="btn btn-inline" type="button" id="retry">Réessayer</button>
+    <p class="secure">${iconSvg('lock')}Paiement sécurisé par LightPay</p>
   </div>
 </section>
 
@@ -265,14 +291,18 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       stop(); showDone(s);
     } else if (s.status === 'PROCESSING') {
       const total = a && a.charged ? LP.money(a.charged, c) : (s.fees && a && s.fees[a.network] ? (s.fees[a.network].estimated ? '≈ ' : '') + LP.money(s.fees[a.network].total, c) : '');
-      $('waitText').textContent = 'Demande envoyée au ' + (a ? a.msisdn : 'numéro indiqué') + (total ? ' pour ' + total + ' (frais compris)' : '') + '. Composez votre code secret pour confirmer.';
+      $('waitText').textContent = 'Demande envoyée au ' + (a ? a.msisdn : 'numéro indiqué') + (total ? ' pour ' + total + ', frais compris' : '') + '.';
       screen('waiting');
       start();
     } else if (s.status === 'OPEN') {
       const wasWaiting = !document.querySelector('[data-screen="waiting"]').hidden;
       stop();
-      if (first || wasWaiting) { screen('pay'); openMethod(); }
-      if (a && a.status === 'FAILED' && a.at !== lastAttemptAt) { lastAttemptAt = a.at; say('msg', failText(a.failure_code), 'err'); }
+      const failedNow = a && a.status === 'FAILED' && a.at !== lastAttemptAt;
+      if (failedNow && wasWaiting) { lastAttemptAt = a.at; $('failedText').textContent = failText(a.failure_code); screen('failed'); }
+      else {
+        if (first || wasWaiting) { screen('pay'); openMethod(); }
+        if (failedNow) { lastAttemptAt = a.at; say('msg', failText(a.failure_code), 'err'); }
+      }
     } else {
       stop();
       $('closedTitle').textContent = s.status === 'EXPIRED' ? 'Paiement expiré' : 'Paiement annulé';
@@ -358,6 +388,8 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       else say('msg', e.message, 'err');
     } finally { $('payWallet').disabled = walletBalance !== null && walletBalance < Number(session.amount); }
   });
+
+  $('retry').addEventListener('click', () => { say('msg', ''); screen('pay'); openMethod(); });
 
   tell('ready');
   if (!id) { $('closedTitle').textContent = 'Lien invalide'; $('closedText').textContent = 'Ce lien de paiement est invalide.'; screen('closed'); }
