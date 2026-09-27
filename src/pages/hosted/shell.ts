@@ -2,6 +2,10 @@ import { CSS } from './design.js';
 import { CLIENT } from './client.js';
 import { iconSvg } from './icons.js';
 
+/** Light/dark switch (the page script wires every [data-theme-toggle]). */
+export const themeToggle = () =>
+  `<button class="icon-btn" type="button" data-theme-toggle aria-label="Changer de thème"><span class="theme-light-icon">${iconSvg('sun')}</span><span class="theme-dark-icon">${iconSvg('moon')}</span></button>`;
+
 export const hostedCsp = (nonce: string) =>
   [
     "default-src 'none'",
@@ -25,7 +29,7 @@ export const topbar = (o: { title?: string; back?: boolean; brand?: boolean; env
     o.back ? `<button class="icon-btn" type="button" data-back${o.backId ? ` id="${o.backId}"` : ''} aria-label="Retour">${iconSvg('arrow-left')}</button>` : ''
   }<h1 class="topbar-title${o.back ? '' : ' pad'}">${
     o.brand ? `<span class="brand"><span class="brand-mark">${iconSvg('bolt')}</span>LightPay</span>` : escapeHtml(o.title ?? '')
-  }</h1><span class="topbar-end">${o.end ?? ''}${o.env === 'sandbox' ? '<span class="badge">Test</span>' : ''}</span></header>`;
+  }</h1><span class="topbar-end">${o.env === 'sandbox' ? '<span class="badge">Test</span>' : ''}${themeToggle()}${o.end ?? ''}</span></header>`;
 
 /** Full document: nonce'd design system + page css, page body in .app, shared client + page script. */
 export const shell = (o: { title: string; nonce: string; env: string; body: string; script: string; css?: string }) => `<!doctype html>
@@ -36,6 +40,7 @@ export const shell = (o: { title: string; nonce: string; env: string; body: stri
 <meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
 <title>${escapeHtml(o.title)} · LightPay</title>
+<script nonce="${o.nonce}">try { var t = localStorage.getItem('lightpay.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
 <style nonce="${o.nonce}">${CSS}${o.css ?? ''}</style>
 </head>
 <body>

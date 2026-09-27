@@ -175,6 +175,24 @@ export const CLIENT = (env: string) => `
     return date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
   }
   const timeLabel = (d) => new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  // Theme: saved choice, else the system preference. Every [data-theme-toggle] flips it.
+  function currentTheme() {
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t) return t;
+    return window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  document.addEventListener('click', function (e) {
+    const b = e.target.closest && e.target.closest('[data-theme-toggle]');
+    if (!b) return;
+    const next = currentTheme() === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('lightpay.theme', next); } catch (err) {}
+  });
+  function themeButton() {
+    return el('button', { class: 'icon-btn', type: 'button', 'data-theme-toggle': true, 'aria-label': 'Changer de thème' }, [
+      el('span', { class: 'theme-light-icon' }, [icon('sun')]), el('span', { class: 'theme-dark-icon' }, [icon('moon')]),
+    ]);
+  }
   function showOnly(section) {
     document.querySelectorAll('.app > .screen').forEach(function (s) { s.hidden = s !== section; });
   }
@@ -243,7 +261,7 @@ export const CLIENT = (env: string) => `
       const title = mode === 'in' ? (o.title || 'Connexion à LightPay') : mode === 'up' ? 'Créer votre compte LightPay' : 'Mot de passe oublié';
       const sub = mode === 'reset' ? 'Recevez un lien pour choisir un nouveau mot de passe.' : (o.subtitle || 'Un seul compte pour payer, recevoir et envoyer de l’argent.');
       const back = o.onBack ? el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Retour', on: { click: o.onBack } }, [icon('arrow-left')]) : null;
-      const bar = el('header', { class: 'topbar' }, [back, el('span', { class: 'topbar-title' + (back ? '' : ' pad') }, [el('span', { class: 'brand' }, [el('span', { class: 'brand-mark' }, [icon('bolt')]), 'LightPay'])]), LP.ENV === 'sandbox' ? el('span', { class: 'topbar-end' }, [el('span', { class: 'badge', text: 'Test' })]) : null]);
+      const bar = el('header', { class: 'topbar' }, [back, el('span', { class: 'topbar-title' + (back ? '' : ' pad') }, [el('span', { class: 'brand' }, [el('span', { class: 'brand-mark' }, [icon('bolt')]), 'LightPay'])]), el('span', { class: 'topbar-end' }, [LP.ENV === 'sandbox' ? el('span', { class: 'badge', text: 'Test' }) : null, themeButton()])]);
       const fields = [];
       const field = (id, label, type, auto) => {
         const input = el('input', { id: id, type: type, autocomplete: auto, required: true });
