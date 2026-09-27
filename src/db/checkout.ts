@@ -5,6 +5,8 @@ import { query } from './pool.js';
 import { Environment } from '../types/index.js';
 import { MOBILE_NETWORKS, MobileNetwork, RailOperation, mobileMoneyProvider, normalizeCongoMsisdn } from '../payments/mobile-money.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
+import { LightPayUser } from '../security/user-token.js';
+import { getConnection, payeeWallet, requireScope, userWallet } from './connect.js';
 
 /**
  * CHECKOUT — an app asks LightPay for a payment (server side, secret key); the payer pays
@@ -13,6 +15,10 @@ import { dispatchWebhook } from '../webhooks/dispatch.js';
  *   MoMo collection  SYSTEM_GATEWAY_INFLOW --> guest wallet (bound to the paying number)
  *   escrow hold      guest wallet --> payee LOCKED          (or direct payment if escrow=false)
  *   refund           payee LOCKED --> guest wallet --> payout to the same number
+ *
+ * A signed-in LightPay user can pay from their own wallet instead. A DEPOSIT session
+ * credits the person's own wallet (mobile money in, no escrow). Payees are always LightPay
+ * users connected to the app with the "payee" scope.
  *
  * Every step has a deterministic idempotency key, so resolving an attempt twice (poll +
  * timer, or after a crash) never moves money twice.
@@ -32,12 +38,15 @@ export interface CheckoutSession {
   app_id: string;
   environment: Environment;
   status: 'OPEN' | 'PROCESSING' | 'COMPLETED' | 'EXPIRED' | 'CANCELLED';
+  kind: 'PAYMENT' | 'DEPOSIT';
   amount: string;
   fee_amount: string;
   currency: string;
   reference: string | null;
   description: string | null;
   payee_wallet_id: string;
+  payee_connection_id: string | null;
+  payer_type: 'GUEST' | 'USER' | null;
   escrow: boolean;
   methods: CheckoutMethod[];
   return_url: string | null;
@@ -88,26 +97,6 @@ const getOrCreateWallet = async (environment: Environment, appId: string, accoun
     )
   )[0];
 
-/** A seller of the app. Receives locked funds; withdraws only what is available. */
-export async function upsertPayee(appId: string, environment: Environment, externalId: string, displayName: string, currency = 'XAF') {
-  if (!/^[A-Za-z0-9_.:-]{1,80}$/.test(externalId)) throw new CheckoutError('external_id: 1-80 chars, letters, digits, _ . : -', 'INVALID_PAYEE_ID');
-  const wallet = await getOrCreateWallet(environment, appId, `payee:${externalId}`, 'PAYEE', currency, { display_name: displayName, external_id: externalId });
-  if (wallet.account_type !== 'PAYEE') throw new CheckoutError('This id belongs to another kind of account', 'PAYEE_CONFLICT', 409);
-  await query(`UPDATE wallets SET metadata = metadata || $2 WHERE id = $1`, [wallet.id, JSON.stringify({ display_name: displayName })], environment);
-  return { ...wallet, metadata: { ...wallet.metadata, display_name: displayName } };
-}
-
-export async function getPayee(appId: string, environment: Environment, externalId: string, currency = 'XAF') {
-  return (
-    await query(`SELECT * FROM wallets WHERE app_id = $1 AND account_id = $2 AND currency = $3 AND environment = $4 AND account_type = 'PAYEE'`, [
-      appId,
-      `payee:${externalId}`,
-      currency,
-      environment,
-    ], environment)
-  )[0];
-}
-
 const guestWallet = (environment: Environment, msisdn: string, currency: string) =>
   getOrCreateWallet(environment, 'mainapp', `guest:${msisdn}`, 'GUEST', currency, { msisdn });
 
@@ -119,13 +108,15 @@ export interface CreateSessionInput {
   currency: string;
   reference?: string;
   description?: string;
-  payeeExternalId: string;
+  /** conn_… of a seller connected with the "payee" scope. */
+  payeeConnectionId: string;
   escrow: boolean;
   methods: CheckoutMethod[];
   returnUrl?: string;
   cancelUrl?: string;
   expiresInMinutes: number;
   metadata?: Record<string, any>;
+  kind?: 'PAYMENT' | 'DEPOSIT';
 }
 
 const safeUrl = (value?: string) => {
@@ -148,20 +139,19 @@ export async function createSession(appId: string, environment: Environment, ide
   for (const [name, value] of [['return_url', input.returnUrl], ['cancel_url', input.cancelUrl]] as const) {
     if (value && !safeUrl(value)) throw new CheckoutError(`${name} must be an https URL`, 'INVALID_URL');
   }
-  const payee = await getPayee(appId, environment, input.payeeExternalId, input.currency);
-  if (!payee) throw new CheckoutError(`Unknown payee "${input.payeeExternalId}" (create it with PUT /v1/payees/:external_id)`, 'PAYEE_NOT_FOUND', 404);
+  const payee = await payeeWallet(appId, environment, input.payeeConnectionId);
 
   const id = newId(environment === 'sandbox' ? 'cs_test_' : 'cs_live_');
   const minutes = Math.min(Math.max(input.expiresInMinutes, 5), 24 * 60);
   const rows = await query(
-    `INSERT INTO checkout_sessions (id, app_id, environment, idempotency_key, amount, fee_amount, currency, reference, description, payee_wallet_id, escrow, methods, return_url, cancel_url, metadata, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW() + ($16 || ' minutes')::interval)
+    `INSERT INTO checkout_sessions (id, app_id, environment, idempotency_key, amount, fee_amount, currency, reference, description, payee_wallet_id, escrow, methods, return_url, cancel_url, metadata, expires_at, payee_connection_id, kind)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW() + ($16 || ' minutes')::interval, $17, $18)
      ON CONFLICT (app_id, environment, idempotency_key) DO NOTHING
      RETURNING *`,
     [
       id, appId, environment, idempotencyKey, input.amount.toString(), input.feeAmount.toString(), input.currency, input.reference ?? null,
-      input.description ?? null, payee.id, input.escrow, JSON.stringify(input.methods), safeUrl(input.returnUrl), safeUrl(input.cancelUrl),
-      JSON.stringify(input.metadata ?? {}), String(minutes),
+      input.description ?? null, payee.wallet_id, input.escrow, JSON.stringify(input.methods), safeUrl(input.returnUrl), safeUrl(input.cancelUrl),
+      JSON.stringify(input.metadata ?? {}), String(minutes), payee.id, input.kind ?? 'PAYMENT',
     ],
     environment
   );
@@ -208,6 +198,7 @@ export async function publicView(id: string) {
   const environment = session.environment;
   const [app] = await query(`SELECT name FROM apps WHERE id = $1`, [session.app_id], environment);
   const [payee] = await query(`SELECT metadata FROM wallets WHERE id = $1`, [session.payee_wallet_id], environment);
+  const payeeName = payee?.metadata?.name ?? payee?.metadata?.display_name ?? null;
   const [attempt] = await query(
     `SELECT status, failure_code, network, msisdn, created_at FROM collection_attempts WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [session.id],
@@ -216,13 +207,14 @@ export async function publicView(id: string) {
   return {
     id: session.id,
     environment,
+    kind: session.kind,
     status: session.status,
     amount: session.amount,
     currency: session.currency,
     reference: session.reference,
     description: session.description,
     merchant: app?.name ?? session.app_id,
-    payee: payee?.metadata?.display_name ?? null,
+    payee: payeeName,
     escrow: session.escrow,
     methods: session.methods,
     return_url: session.status === 'COMPLETED' ? session.return_url : null,
@@ -343,8 +335,27 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
   const [session] = await query(`SELECT * FROM checkout_sessions WHERE id = $1`, [attempt.session_id], env);
   const amount = BigInt(attempt.amount);
   const fee = BigInt(session.fee_amount);
-  const payer = await guestWallet(env, attempt.msisdn, attempt.currency);
   const inflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, attempt.currency);
+
+  if (session.kind === 'DEPOSIT') {
+    const deposit = await LedgerEngine.executeTransaction({
+      appId: session.app_id,
+      environment: env,
+      idempotencyKey: `deposit:${attempt.id}`,
+      type: 'COLLECTION',
+      amount,
+      currency: attempt.currency,
+      reference: session.reference ?? session.id,
+      metadata: { checkout_session: session.id, attempt: attempt.id, provider: attempt.provider, network: attempt.network, provider_reference: providerReference, deposit: true },
+      postings: [
+        { walletId: inflow, direction: 'DEBIT', amount, description: `Mobile money in [${attempt.network}] - ${attempt.id}` },
+        { walletId: session.payee_wallet_id, direction: 'CREDIT', amount, description: 'Recharge du wallet' },
+      ],
+    });
+    return closeSession(session, attempt, providerReference, { payerWalletId: null, payerType: 'GUEST', holdId: null, paymentTx: (deposit as any).transactionId ?? (deposit as any).transaction?.id ?? null });
+  }
+
+  const payer = await guestWallet(env, attempt.msisdn, attempt.currency);
 
   // 1. Money arrives from the mobile network into the guest wallet.
   await LedgerEngine.executeTransaction({
@@ -405,7 +416,17 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
     paymentTx = (paid as any).transactionId ?? (paid as any).transaction?.id ?? null;
   }
 
-  // 3. Close: only the first resolver flips the states and notifies.
+  return closeSession(session, attempt, providerReference, { payerWalletId: payer.id, payerType: 'GUEST', holdId, paymentTx });
+}
+
+/** Only the first resolver flips the states and notifies. */
+async function closeSession(
+  session: CheckoutSession,
+  attempt: Attempt,
+  providerReference: string | undefined,
+  outcome: { payerWalletId: string | null; payerType: 'GUEST' | 'USER'; holdId: string | null; paymentTx: string | null }
+) {
+  const env = attempt.environment;
   const closed = await query(
     `UPDATE collection_attempts SET status = 'SUCCEEDED', provider_reference = COALESCE($2, provider_reference), updated_at = NOW() WHERE id = $1 AND status = 'PENDING' RETURNING id`,
     [attempt.id, providerReference ?? null],
@@ -413,11 +434,13 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
   );
   if (closed.length === 0) return;
   await query(
-    `UPDATE checkout_sessions SET status = 'COMPLETED', payer_wallet_id = $2, payer_msisdn = $3, hold_id = $4, payment_transaction_id = $5, completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
-    [session.id, payer.id, attempt.msisdn, holdId, paymentTx],
+    `UPDATE checkout_sessions SET status = 'COMPLETED', payer_wallet_id = $2, payer_msisdn = $3, hold_id = $4, payment_transaction_id = $5, payer_type = $6, completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+    [session.id, outcome.payerWalletId, attempt.msisdn, outcome.holdId, outcome.paymentTx, outcome.payerType],
     env
   );
-  void dispatchWebhook(session.app_id, env, 'checkout.completed', {
+  const { holdId } = outcome;
+  void dispatchWebhook(session.app_id, env, session.kind === 'DEPOSIT' ? 'deposit.completed' : 'checkout.completed', {
+    kind: session.kind,
     session_id: session.id,
     reference: session.reference,
     amount: session.amount,
@@ -498,4 +521,99 @@ export async function refundGuestPayer(hold: HoldRecord) {
     status: sent.status,
   });
   return payout;
+}
+
+// ---------------------------------------------------------------- LightPay wallet & deposits
+
+/** A signed-in LightPay user pays from their own wallet (escrow or direct). */
+export async function payWithWallet(id: string, user: LightPayUser) {
+  const session = await getSession(id);
+  if (!session) throw new CheckoutError('Session not found', 'SESSION_NOT_FOUND', 404);
+  const env = session.environment;
+  if (session.kind !== 'PAYMENT') throw new CheckoutError('Only payments can be paid with a wallet', 'METHOD_NOT_ALLOWED');
+  if (!session.methods.includes('lightpay_wallet')) throw new CheckoutError('LightPay wallet is not accepted for this payment', 'METHOD_NOT_ALLOWED');
+  const payer = await userWallet(env, user, session.currency);
+  if (payer.id === session.payee_wallet_id) throw new CheckoutError('Vous ne pouvez pas vous payer vous-même.', 'SAME_WALLET');
+
+  const locked = await query(
+    `UPDATE checkout_sessions SET status = 'PROCESSING', updated_at = NOW() WHERE id = $1 AND status = 'OPEN' AND expires_at > NOW() RETURNING id`,
+    [session.id],
+    env
+  );
+  if (locked.length === 0) throw new CheckoutError('Ce paiement n’est plus disponible.', 'SESSION_NOT_OPEN', 409);
+
+  const amount = BigInt(session.amount);
+  const fee = BigInt(session.fee_amount);
+  let holdId: string | null = null;
+  let paymentTx: string | null = null;
+  try {
+    if (session.escrow) {
+      const held = await Escrow.create({
+        appId: session.app_id, environment: env, idempotencyKey: `hold:${session.id}`,
+        payerWalletId: payer.id, beneficiaryWalletId: session.payee_wallet_id, amount, feeAmount: fee,
+        currency: session.currency, reference: session.reference ?? session.id, metadata: { checkout_session: session.id },
+      });
+      holdId = held.hold?.id ?? null;
+      paymentTx = held.hold?.hold_transaction_id ?? null;
+    } else {
+      const merchant = await merchantWallet(session.app_id, env, session.currency);
+      const paid = await LedgerEngine.executeTransaction({
+        appId: session.app_id, environment: env, idempotencyKey: `pay:${session.id}`, type: 'PAYMENT', amount, feeAmount: fee,
+        currency: session.currency, reference: session.reference ?? session.id, metadata: { checkout_session: session.id },
+        postings: [
+          { walletId: payer.id, direction: 'DEBIT', amount },
+          { walletId: session.payee_wallet_id, direction: 'CREDIT', amount: amount - fee },
+          ...(fee > 0n ? [{ walletId: merchant, direction: 'CREDIT' as const, amount: fee }] : []),
+        ],
+      });
+      paymentTx = (paid as any).transactionId ?? (paid as any).transaction?.id ?? null;
+    }
+  } catch (err: any) {
+    await query(`UPDATE checkout_sessions SET status = 'OPEN', updated_at = NOW() WHERE id = $1 AND status = 'PROCESSING'`, [session.id], env);
+    if (String(err.message).startsWith('Insufficient funds')) throw new CheckoutError('Solde LightPay insuffisant. Rechargez votre wallet ou payez par mobile money.', 'INSUFFICIENT_FUNDS', 402);
+    throw err;
+  }
+
+  await query(
+    `UPDATE checkout_sessions SET status = 'COMPLETED', payer_wallet_id = $2, payer_type = 'USER', hold_id = $3, payment_transaction_id = $4, completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+    [session.id, payer.id, holdId, paymentTx],
+    env
+  );
+  void dispatchWebhook(session.app_id, env, 'checkout.completed', {
+    kind: session.kind,
+    session_id: session.id,
+    reference: session.reference,
+    amount: session.amount,
+    fee_amount: session.fee_amount,
+    currency: session.currency,
+    escrow: session.escrow,
+    hold_id: holdId,
+    payer: { type: 'lightpay' },
+    metadata: session.metadata,
+  });
+  return publicView(session.id);
+}
+
+/** An app offers a connected person a top-up of their own wallet (scope deposit). */
+export async function createDepositSession(
+  appId: string,
+  environment: Environment,
+  idempotencyKey: string,
+  connectionId: string,
+  input: { amount: bigint; currency?: string; returnUrl?: string; cancelUrl?: string; reference?: string }
+) {
+  const person = await getConnection(appId, environment, connectionId);
+  requireScope(person, 'deposit');
+  const existing = (await query(`SELECT * FROM checkout_sessions WHERE app_id = $1 AND environment = $2 AND idempotency_key = $3`, [appId, environment, idempotencyKey], environment))[0];
+  if (existing) return { session: existing as CheckoutSession, duplicate: true };
+  if (input.amount <= 0n) throw new CheckoutError('amount must be greater than zero', 'INVALID_AMOUNT');
+  const id = newId(environment === 'sandbox' ? 'cs_test_' : 'cs_live_');
+  const [session] = await query(
+    `INSERT INTO checkout_sessions (id, app_id, environment, idempotency_key, kind, amount, fee_amount, currency, reference, description, payee_wallet_id, payee_connection_id, escrow, methods, return_url, cancel_url, expires_at)
+     VALUES ($1, $2, $3, $4, 'DEPOSIT', $5, 0, $6, $7, 'Recharge du wallet LightPay', $8, $9, FALSE, '["mobile_money"]'::jsonb, $10, $11, NOW() + interval '30 minutes')
+     RETURNING *`,
+    [id, appId, environment, idempotencyKey, input.amount.toString(), input.currency ?? 'XAF', input.reference ?? null, person.wallet_id, person.id, safeUrl(input.returnUrl), safeUrl(input.cancelUrl)],
+    environment
+  );
+  return { session: session as CheckoutSession, duplicate: false };
 }

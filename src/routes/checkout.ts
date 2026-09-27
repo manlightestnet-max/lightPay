@@ -1,19 +1,35 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { requireAppAuth } from '../middleware/app-auth.js';
-import { CheckoutError, CheckoutMethod, cancelSession, createSession, getPayee, getSession, upsertPayee } from '../db/checkout.js';
-import { query } from '../db/pool.js';
+import { CheckoutError, CheckoutMethod, cancelSession, createDepositSession, createSession, getSession } from '../db/checkout.js';
+import {
+  ConnectError,
+  charge,
+  connectionBalance,
+  connectionView,
+  exchangeCode,
+  getConnection,
+  requireScope,
+  setRedirectUris,
+  walletStatement,
+} from '../db/connect.js';
+import { EscrowError } from '../db/escrow.js';
 
 const context = (request: FastifyRequest) => ({
   appId: request.appData!.id,
   environment: request.appData!.environment || 'production',
 });
 
-const fail = (reply: FastifyReply, err: any) =>
-  reply.status(err instanceof CheckoutError ? err.statusCode : err.statusCode || 400).send({
+const idempotencyOf = (request: FastifyRequest) => (request.headers['idempotency-key'] as string) || request.idempotencyKey;
+
+const fail = (reply: FastifyReply, err: any) => {
+  const known = err instanceof CheckoutError || err instanceof ConnectError || err instanceof EscrowError;
+  const insufficient = String(err?.message ?? '').startsWith('Insufficient funds');
+  return reply.status(known ? err.statusCode : insufficient ? 402 : err.statusCode || 400).send({
     status: 'error',
-    error: err.code || 'CHECKOUT_ERROR',
+    error: insufficient ? 'INSUFFICIENT_FUNDS' : err.code || 'REQUEST_ERROR',
     message: err.message,
   });
+};
 
 /** Where payers land: CHECKOUT_BASE_URL (https://checkout.smlab.xyz), else PUBLIC_BASE_URL, else the host called. */
 const baseUrl = (request: FastifyRequest) =>
@@ -25,6 +41,7 @@ const baseUrl = (request: FastifyRequest) =>
 
 const sessionView = (request: FastifyRequest, s: any) => ({
   id: s.id,
+  kind: s.kind,
   status: s.status,
   environment: s.environment,
   amount: s.amount,
@@ -34,9 +51,10 @@ const sessionView = (request: FastifyRequest, s: any) => ({
   description: s.description,
   escrow: s.escrow,
   methods: s.methods,
+  payee: s.payee_connection_id,
   hold_id: s.hold_id,
   payment_transaction_id: s.payment_transaction_id,
-  payer: s.payer_wallet_id ? { type: 'guest', wallet_id: s.payer_wallet_id } : null,
+  payer: s.payer_type ? { type: s.payer_type === 'USER' ? 'lightpay' : 'guest' } : null,
   metadata: s.metadata,
   checkout_url: `${baseUrl(request)}/pay/${s.id}`,
   expires_at: s.expires_at,
@@ -45,47 +63,119 @@ const sessionView = (request: FastifyRequest, s: any) => ({
 });
 
 /**
- * App-side checkout API (secret key, from the app's server).
- *   PUT  /v1/payees/:external_id          declare a seller
- *   GET  /v1/payees/:external_id          seller balances (available / locked)
- *   POST /v1/checkout/sessions            ask for a payment -> checkout_url
- *   GET  /v1/checkout/sessions/:id        state (the webhook is the push version)
- *   POST /v1/checkout/sessions/:id/cancel cancel an open session
+ * App-side API (secret key, from the app's server).
+ *
+ *   PUT  /v1/apps/redirect-uris                  where LightPay may send people back
+ *   POST /v1/connect/token                       code + PKCE verifier -> connection
+ *   GET  /v1/connections/:id                     scopes, account
+ *   GET  /v1/connections/:id/balance             balance:read
+ *   GET  /v1/connections/:id/transactions        balance:read
+ *   POST /v1/connections/:id/deposits            deposit  -> checkout_url
+ *   POST /v1/connections/:id/charges             charge   (within the person's limit)
+ *   POST /v1/checkout/sessions                   payment to a connected seller -> checkout_url
+ *   GET  /v1/checkout/sessions/:id | POST …/cancel
  */
 export async function checkoutRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireAppAuth);
 
-  fastify.put('/payees/:external_id', async (request, reply) => {
-    const { appId, environment } = context(request);
-    const { display_name, currency = 'XAF' } = (request.body ?? {}) as any;
-    if (!display_name) return reply.status(400).send({ error: 'display_name is required' });
+  fastify.put('/apps/redirect-uris', async (request, reply) => {
     try {
-      const wallet = await upsertPayee(appId, environment, (request.params as any).external_id, String(display_name).slice(0, 120), currency);
-      return { status: 'success', payee: payeeView(wallet) };
+      const uris = await setRedirectUris(context(request).appId, (request.body as any)?.redirect_uris);
+      return { status: 'success', redirect_uris: uris };
     } catch (err) {
       return fail(reply, err);
     }
   });
 
-  fastify.get('/payees/:external_id', async (request, reply) => {
+  fastify.post('/connect/token', async (request, reply) => {
     const { appId, environment } = context(request);
-    const { currency = 'XAF' } = request.query as any;
-    const wallet = await getPayee(appId, environment, (request.params as any).external_id, currency);
-    if (!wallet) return reply.status(404).send({ error: 'Payee not found' });
-    const holds = await query(
-      `SELECT status, COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::text AS amount FROM holds WHERE wallet_id = $1 GROUP BY status`,
-      [wallet.id],
-      environment
-    );
-    return { status: 'success', payee: payeeView(wallet), holds };
+    const { code, redirect_uri, code_verifier } = (request.body ?? {}) as any;
+    try {
+      return { status: 'success', connection: await exchangeCode(appId, environment, String(code ?? ''), String(redirect_uri ?? ''), String(code_verifier ?? '')) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/connections/:id', async (request, reply) => {
+    const { appId, environment } = context(request);
+    try {
+      return { status: 'success', connection: await connectionView(await getConnection(appId, environment, (request.params as any).id)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/connections/:id/balance', async (request, reply) => {
+    const { appId, environment } = context(request);
+    try {
+      const c = await getConnection(appId, environment, (request.params as any).id);
+      requireScope(c, 'balance:read');
+      return { status: 'success', balance: await connectionBalance(c) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/connections/:id/transactions', async (request, reply) => {
+    const { appId, environment } = context(request);
+    try {
+      const c = await getConnection(appId, environment, (request.params as any).id);
+      requireScope(c, 'balance:read');
+      return { status: 'success', entries: await walletStatement(environment, c.wallet_id, Number((request.query as any).limit ?? 50)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.post('/connections/:id/deposits', async (request, reply) => {
+    const { appId, environment } = context(request);
+    const idempotencyKey = idempotencyOf(request);
+    if (!idempotencyKey) return reply.status(400).send({ error: 'Missing required header: Idempotency-Key' });
+    const b = (request.body ?? {}) as any;
+    if (!b.amount) return reply.status(400).send({ error: 'amount is required' });
+    try {
+      const { session, duplicate } = await createDepositSession(appId, environment, idempotencyKey, (request.params as any).id, {
+        amount: BigInt(b.amount),
+        currency: b.currency,
+        returnUrl: b.return_url,
+        cancelUrl: b.cancel_url,
+        reference: b.reference,
+      });
+      return reply.status(duplicate ? 200 : 201).send({ status: 'success', duplicate, session: sessionView(request, session) });
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.post('/connections/:id/charges', async (request, reply) => {
+    const { appId, environment } = context(request);
+    const idempotencyKey = idempotencyOf(request);
+    if (!idempotencyKey) return reply.status(400).send({ error: 'Missing required header: Idempotency-Key' });
+    const b = (request.body ?? {}) as any;
+    if (!b.amount) return reply.status(400).send({ error: 'amount is required' });
+    try {
+      const result = await charge(appId, environment, (request.params as any).id, idempotencyKey, {
+        amount: BigInt(b.amount),
+        feeAmount: BigInt(b.fee_amount ?? 0),
+        reference: b.reference,
+        description: b.description,
+        payeeConnectionId: b.payee,
+        escrow: b.escrow !== false,
+        metadata: b.metadata,
+      });
+      return reply.status(result.duplicate ? 200 : 201).send({ status: 'success', ...result });
+    } catch (err) {
+      return fail(reply, err);
+    }
   });
 
   fastify.post('/checkout/sessions', async (request, reply) => {
     const { appId, environment } = context(request);
-    const idempotencyKey = (request.headers['idempotency-key'] as string) || request.idempotencyKey;
+    const idempotencyKey = idempotencyOf(request);
     if (!idempotencyKey) return reply.status(400).send({ error: 'Missing required header: Idempotency-Key' });
     const b = (request.body ?? {}) as any;
-    if (!b.amount || !b.payee) return reply.status(400).send({ error: 'Missing required fields: amount, payee' });
+    if (!b.amount || !b.payee) return reply.status(400).send({ error: 'Missing required fields: amount, payee (conn_… of a connected seller)' });
     try {
       const { session, duplicate } = await createSession(appId, environment, idempotencyKey, {
         amount: BigInt(b.amount),
@@ -93,9 +183,9 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
         currency: b.currency ?? 'XAF',
         reference: b.reference,
         description: b.description,
-        payeeExternalId: String(b.payee),
+        payeeConnectionId: String(b.payee),
         escrow: b.escrow !== false,
-        methods: (Array.isArray(b.methods) ? b.methods : ['mobile_money']) as CheckoutMethod[],
+        methods: (Array.isArray(b.methods) ? b.methods : ['mobile_money', 'lightpay_wallet']) as CheckoutMethod[],
         returnUrl: b.return_url,
         cancelUrl: b.cancel_url,
         expiresInMinutes: Number(b.expires_in_minutes ?? 30),
@@ -122,13 +212,3 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
     }
   });
 }
-
-const payeeView = (w: any) => ({
-  external_id: w.metadata?.external_id ?? String(w.account_id).replace(/^payee:/, ''),
-  display_name: w.metadata?.display_name ?? null,
-  wallet_id: w.id,
-  currency: w.currency,
-  available_balance: String(w.available_balance),
-  locked_balance: String(w.locked_balance),
-  status: w.status,
-});

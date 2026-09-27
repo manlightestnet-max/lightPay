@@ -5,6 +5,7 @@ import { paymentRoutes } from './routes/payments.js';
 import { holdRoutes } from './routes/holds.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { checkoutPublicRoutes } from './routes/checkout-public.js';
+import { meRoutes } from './routes/me.js';
 import { MAINAPP_KEY_PREFIX, verifyMainappKey } from './security/app-identity.js';
 import { externalMoneyRoutes } from './routes/external.js';
 import { adminRoutes } from './routes/admin.js';
@@ -78,7 +79,16 @@ const checkoutHost = (() => {
 server.addHook('onRequest', async (request, reply) => {
   if (!checkoutHost || String(request.headers.host ?? '').toLowerCase() !== checkoutHost) return;
   const url = request.url.split('?')[0];
-  if (url === '/health' || url.startsWith('/pay/') || url.startsWith('/v1/checkout/public/') || request.method === 'OPTIONS') return;
+  if (
+    url === '/health' ||
+    url.startsWith('/pay/') ||
+    url.startsWith('/v1/checkout/public/') ||
+    url === '/account' ||
+    url === '/connect' ||
+    url === '/v1/me' ||
+    url.startsWith('/v1/me/') ||
+    request.method === 'OPTIONS'
+  ) return;
   return reply.status(404).send({ error: 'Not Found' });
 });
 
@@ -98,7 +108,12 @@ server.addHook('onRequest', async (request, reply) => {
     url === '/v1/merchant/apps/register' ||
     // Hosted payment page and its public API: the session id (unguessable) is the capability.
     url.startsWith('/pay/') ||
-    url.startsWith('/v1/checkout/public/')
+    url.startsWith('/v1/checkout/public/') ||
+    // LightPay user space: authenticated by the person's own token (checked in its routes).
+    url === '/account' ||
+    url === '/connect' ||
+    url === '/v1/me' ||
+    url.startsWith('/v1/me/')
   ) {
     return;
   }
@@ -177,6 +192,7 @@ server.register(paymentRoutes, { prefix: '/v1/payments' });
 server.register(holdRoutes, { prefix: '/v1/holds' });
 server.register(checkoutRoutes, { prefix: '/v1' });
 server.register(checkoutPublicRoutes);
+server.register(meRoutes, { prefix: '/v1/me' });
 server.register(externalMoneyRoutes, { prefix: '/v1' });
 server.register(adminRoutes, { prefix: '/v1/admin' });
 server.register(gatewayRoutes, { prefix: '/v1/gateways' });

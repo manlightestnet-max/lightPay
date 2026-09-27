@@ -178,110 +178,18 @@ export async function merchantRoutes(fastify: FastifyInstance) {
     });
 
     /**
-     * 2. COLLECTIONS : ENCAISSER AUPRÈS D'UN UTILISATEUR LIGHTPAY (mainapp)
-     * Débite le wallet d'un utilisateur de notre application centrale et crédite le compte marchand de l'app.
+     * 2. COLLECTIONS DIRECTES : FERMÉ.
+     * Débiter un client LightPay exige désormais son autorisation (LightPay Connect, droit
+     * "charge" dans la limite qu'il a fixée) : POST /v1/connections/:id/charges, ou une
+     * session de paiement : POST /v1/checkout/sessions.
      */
-    protectedRoutes.post('/collections/charge-user', async (request: FastifyRequest, reply: FastifyReply) => {
-      const appId = request.appData!.id;
-      const environment = request.appData!.environment || 'production';
-      const idempotencyKey = (request.headers['idempotency-key'] as string) || request.idempotencyKey;
+    protectedRoutes.post('/collections/charge-user', async (_request: FastifyRequest, reply: FastifyReply) =>
+      reply.status(410).send({
+        error: 'CHARGE_REQUIRES_CONSENT',
+        message: 'Direct charges are closed. Use a LightPay Connect charge (POST /v1/connections/:id/charges) or a checkout session (POST /v1/checkout/sessions).',
+      })
+    );
 
-      if (!idempotencyKey) {
-        return reply.status(400).send({ error: 'Missing required header: Idempotency-Key' });
-      }
-
-      const { user_account_id, amount, currency = 'CREDIT', reference, description, metadata = {} } = request.body as any;
-
-      if (!user_account_id || !amount) {
-        return reply.status(400).send({ error: 'user_account_id and amount are required' });
-      }
-
-      const chargeAmount = BigInt(amount);
-      if (chargeAmount <= 0n) {
-        return reply.status(400).send({ error: 'Amount must be greater than zero' });
-      }
-
-      // 1. Récupérer le wallet client de notre application centrale (mainapp)
-      const userWallets = await query(
-        'SELECT id, available_balance, status FROM wallets WHERE app_id = \'mainapp\' AND account_id = $1 AND currency = $2 AND environment = $3',
-        [user_account_id, currency, environment],
-        environment
-      );
-
-      if (userWallets.length === 0) {
-        return reply.status(404).send({
-          error: 'USER_NOT_FOUND',
-          message: `Utilisateur '${user_account_id}' introuvable sur la plateforme LightPay (${environment}).`,
-        });
-      }
-
-      const userWallet = userWallets[0];
-      if (userWallet.status !== 'ACTIVE') {
-        return reply.status(400).send({ error: 'USER_WALLET_INACTIVE', message: 'Le compte utilisateur est inactif ou bloqué.' });
-      }
-
-      if (BigInt(userWallet.available_balance) < chargeAmount) {
-        return reply.status(400).send({
-          error: 'INSUFFICIENT_FUNDS',
-          message: 'Solde insuffisant sur le compte LightPay de l\'utilisateur.',
-        });
-      }
-
-      // 2. Récupérer le wallet marchand de l'application
-      const merchantWallet = await getOrCreateMerchantWallet(appId, environment, currency);
-
-      // 3. Exécution comptable atomique en partie double
-      const postings: LedgerPosting[] = [
-        {
-          walletId: userWallet.id,
-          direction: 'DEBIT',
-          amount: chargeAmount,
-          description: `Paiement vers ${appId} - Ref: ${reference || 'N/A'} (${environment})`,
-        },
-        {
-          walletId: merchantWallet.id,
-          direction: 'CREDIT',
-          amount: chargeAmount,
-          description: `Encaissement client [${user_account_id}] - Ref: ${reference || 'N/A'} (${environment})`,
-        },
-      ];
-
-      try {
-        const result = await LedgerEngine.executeTransaction({
-          appId,
-          idempotencyKey,
-          type: 'COLLECTION',
-          environment,
-          amount: chargeAmount,
-          currency,
-          reference: reference || `COL_${Date.now()}`,
-          metadata: {
-            ...metadata,
-            payer_user_id: user_account_id,
-            merchant_app_id: appId,
-            description: description || 'Paiement marchand API',
-          },
-          postings,
-        });
-
-        return reply.status(result.duplicate ? 200 : 201).send({
-          status: 'success',
-          message: `Encaissement de ${amount} ${currency} effectué avec succès auprès de ${user_account_id}`,
-          ...result,
-        });
-      } catch (err: any) {
-        return reply.status(err.statusCode || 400).send({
-          status: 'error',
-          error: err.code || 'COLLECTION_FAILED',
-          message: err.message,
-        });
-      }
-    });
-
-    /**
-     * 3. DISBURSEMENTS : DEMANDER UN RETRAIT VERS MOBILE MONEY (MTN / Airtel Congo)
-     * Débite obligatoirement le compte marchand de l'application et déclenche le virement externe.
-     */
     protectedRoutes.post('/disbursements/payout', async (request: FastifyRequest, reply: FastifyReply) => {
       const appId = request.appData!.id;
       const environment = request.appData!.environment || 'production';
