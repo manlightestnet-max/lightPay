@@ -3,6 +3,7 @@
  *
  *   <script src="https://checkout.smlab.xyz/lightpay.js"></script>
  *   const result = await LightPay.pay(checkoutUrl);   // { status: 'completed' | 'closed', session }
+ *   LightPay.pay(checkoutUrl, { idToken })            // payer already signed in with LightPay: no second sign-in
  *
  * Opens the LightPay payment page in a dialog over the app. The page stays on LightPay's
  * origin: the app can open and close it, never read or change it. `completed` is only a hint
@@ -31,7 +32,8 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
     '@media (prefers-reduced-motion: reduce) { .backdrop, .frame { animation: none; } }',
   ].join('\\n');
 
-  function pay(target) {
+  function pay(target, options) {
+    var idToken = options && typeof options.idToken === 'string' && /^[\\w-]+\\.[\\w-]+\\.[\\w-]+$/.test(options.idToken) ? options.idToken : null;
     return new Promise(function (resolve, reject) {
       var url;
       try { url = new URL(target, ORIGIN); } catch (e) { url = null; }
@@ -74,7 +76,11 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
         if (e.origin !== ORIGIN || e.source !== iframe.contentWindow) return;
         var d = e.data || {};
         if (d.source !== 'lightpay' || d.session !== session) return;
-        if (d.type === 'ready') { ready = true; frame.className = 'frame loaded'; clearTimeout(timer); iframe.focus(); }
+        if (d.type === 'ready') {
+          ready = true; frame.className = 'frame loaded'; clearTimeout(timer); iframe.focus();
+          // Only to LightPay's own frame, never in the address.
+          if (idToken) iframe.contentWindow.postMessage({ source: 'lightpay-app', type: 'identity', session: session, idToken: idToken }, ORIGIN);
+        }
         else if (d.type === 'completed') close('completed');
         else if (d.type === 'closed') close('closed');
       }

@@ -33,8 +33,10 @@ export const CLIENT = (env: string) => `
     const STORE = 'lightpay.session';
     // Kept on LightPay's own origin, shared by its tabs and windows: signed in once, the account,
     // a payment page or the wallet window opened from a dialog all know the person.
-    const read = () => { try { return JSON.parse(localStorage.getItem(STORE) || sessionStorage.getItem(STORE) || 'null'); } catch (e) { return null; } };
-    const write = (s) => { try { sessionStorage.removeItem(STORE); s ? localStorage.setItem(STORE, JSON.stringify(s)) : localStorage.removeItem(STORE); } catch (e) {} };
+    // A session handed over by the app's page (payment dialog): memory only, never stored.
+    let lent = null;
+    const read = () => { if (lent) return lent; try { return JSON.parse(localStorage.getItem(STORE) || sessionStorage.getItem(STORE) || 'null'); } catch (e) { return null; } };
+    const write = (s) => { lent = null; try { sessionStorage.removeItem(STORE); s ? localStorage.setItem(STORE, JSON.stringify(s)) : localStorage.removeItem(STORE); } catch (e) {} };
     const ERRORS = {
       EMAIL_EXISTS: 'Un compte existe déjà avec cet e-mail.',
       EMAIL_NOT_FOUND: 'E-mail ou mot de passe incorrect.',
@@ -62,6 +64,7 @@ export const CLIENT = (env: string) => `
       const s = read();
       if (!s) return null;
       if (s.expiresAt > Date.now()) return s.idToken;
+      if (!s.refreshToken) { write(null); return null; }
       const res = await fetch('https://securetoken.googleapis.com/v1/token?key=' + KEY, {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(s.refreshToken),
@@ -87,6 +90,16 @@ export const CLIENT = (env: string) => `
     return {
       ENV: ENV,
       signedIn: () => Boolean(read()),
+      // The person is already signed in on the app (same LightPay identity): use their current
+      // ID token for this page only. LightPay's API still verifies it on every call.
+      lend: (idToken) => {
+        try {
+          const p = JSON.parse(atob(String(idToken).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+          if (!p.exp || p.exp * 1000 < Date.now() + 60000) return false;
+          lent = { idToken: String(idToken), refreshToken: null, expiresAt: p.exp * 1000 - 60000, email: p.email || '' };
+          return true;
+        } catch (e) { return false; }
+      },
       email: () => (read() || {}).email || '',
       signIn: async (email, password) => save(await auth('accounts:signInWithPassword', { email: email, password: password })),
       signUp: async (email, password, name) => {

@@ -362,6 +362,15 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     } finally { $('payWallet').disabled = walletBalance !== null && walletBalance < Number(session.amount); }
   });
 
+  // The app's page hands over the payer's current sign-in (lightpay.js, from the declared site only).
+  window.addEventListener('message', (e) => {
+    if (!MODE.embed || e.origin !== MODE.embed || e.source !== window.parent) return;
+    const d = e.data || {};
+    if (d.source !== 'lightpay-app' || d.type !== 'identity' || d.session !== id || typeof d.idToken !== 'string') return;
+    if (!LP.lend(d.idToken)) return;
+    if (session && session.status === 'OPEN' && method === 'lightpay_wallet') { screen('pay'); openMethod(); }
+  });
+
   $('retry').addEventListener('click', () => { say('msg', ''); screen('pay'); openMethod(); });
 
   tell('ready');
