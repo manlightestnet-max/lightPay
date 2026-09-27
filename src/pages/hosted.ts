@@ -258,7 +258,7 @@ export const accountPage = (nonce: string, env: string) =>
         </div>
 
         <div class="panel" data-panel="deposit" hidden>
-          <label for="depAmount">Montant à recharger (FCFA)</label>
+          <label for="depAmount">Montant à recharger (FCFA, minimum 200)</label>
           <input id="depAmount" inputmode="numeric" placeholder="10 000">
           <button class="btn" id="depGo" type="button">Continuer vers le paiement mobile money</button>
         </div>
@@ -625,7 +625,15 @@ export const payPage = (nonce: string, sessionId: string, env: string) =>
   const $ = (x) => document.getElementById(x);
   const PANES = ['loading', 'choose', 'momo', 'auth', 'wallet', 'waiting', 'done', 'closed'];
   const show = (...ids) => PANES.forEach((k) => ($(k).hidden = !ids.includes(k)));
-  const FAIL = { INSUFFICIENT_BALANCE: 'Solde insuffisant sur ce compte mobile money.', PAYER_DECLINED: 'Paiement refusé depuis le téléphone.', PAYER_TIMEOUT: 'Aucune confirmation reçue à temps. Réessayez.' };
+  const FAIL = {
+    INSUFFICIENT_BALANCE: 'Solde insuffisant sur ce compte mobile money.',
+    PAYER_DECLINED: 'Paiement refusé depuis le téléphone.',
+    PAYER_TIMEOUT: 'Aucune confirmation reçue à temps. Réessayez.',
+    PROVIDER_FAILED: 'Paiement refusé par l’opérateur : solde insuffisant, code secret incorrect ou validation non faite à temps. Vérifiez votre solde, puis réessayez.',
+    PROVIDER_CANCELLED: 'Paiement annulé depuis le téléphone.',
+    PROVIDER_EXPIRED: 'La demande a expiré sans validation. Réessayez.',
+  };
+  const failText = (code) => FAIL[code] || (code && code.startsWith('PROVIDER_') ? 'L’opérateur a refusé ce paiement (' + code.slice(9).toLowerCase().replace(/_/g, ' ') + '). Réessayez ou changez de numéro.' : 'Le paiement a échoué. Réessayez.');
   let session = null, method = 'mobile_money', network = 'MTN_MOMO_COG', poll = null, lastAttemptAt = null;
   const err = (t) => { $('msg').className = 'msg err'; $('msg').textContent = t; };
   const info = (t) => { $('msg').className = 'msg'; $('msg').textContent = t; };
@@ -646,6 +654,9 @@ export const payPage = (nonce: string, sessionId: string, env: string) =>
       row('Total à payer', approx + LP.money(q.total, cur), 'total'),
     );
     $('feeBox').hidden = false;
+    const tooSmall = Number(q.amount) < Number(q.minimum);
+    $('payMomo').disabled = tooSmall;
+    if (tooSmall) { $('payMomo').textContent = 'Minimum ' + LP.money(q.minimum, cur) + ' par mobile money'; return; }
     $('payMomo').textContent = 'Payer ' + approx + LP.money(q.total, cur);
   }
   document.querySelectorAll('#methods .opt').forEach((b) => b.addEventListener('click', () => { method = b.dataset.m; document.querySelectorAll('#methods .opt').forEach((o) => o.setAttribute('aria-pressed', String(o === b))); info(''); openMethod(); }));
@@ -689,7 +700,7 @@ export const payPage = (nonce: string, sessionId: string, env: string) =>
       stop();
       if (wasWaiting) openMethod();
       const a = s.last_attempt;
-      if (a && a.status === 'FAILED' && a.at !== lastAttemptAt) { lastAttemptAt = a.at; err(FAIL[a.failure_code] || 'Le paiement a échoué. Réessayez.'); }
+      if (a && a.status === 'FAILED' && a.at !== lastAttemptAt) { lastAttemptAt = a.at; err(failText(a.failure_code)); }
     } else {
       stop(); show('closed');
       $('closedTitle').textContent = s.status === 'EXPIRED' ? 'Paiement expiré' : 'Paiement annulé';

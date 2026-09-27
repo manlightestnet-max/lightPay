@@ -29,11 +29,16 @@ export function providerFeeEstimate(provider: string, collected: bigint): bigint
   return 0n;
 }
 
+/** Smallest mobile-money payment the operators accept (SasPay: 200 XAF). */
+export const minMobileMoneyAmount = (): bigint => BigInt(int(process.env.MOMO_MIN_AMOUNT, 200));
+
 export interface FeeQuote {
   amount: string;
   lightpay_fee: string;
   operator_fee: string;
   total: string;
+  /** Smallest amount accepted by mobile money. */
+  minimum: string;
   /** false once the provider reported the exact amount debited. */
   estimated: boolean;
 }
@@ -46,6 +51,7 @@ export function quote(amount: bigint, provider: string): FeeQuote {
     lightpay_fee: lightpay.toString(),
     operator_fee: operator.toString(),
     total: (amount + lightpay + operator).toString(),
+    minimum: minMobileMoneyAmount().toString(),
     estimated: operator > 0n,
   };
 }

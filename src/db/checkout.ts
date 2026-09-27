@@ -5,7 +5,7 @@ import { query } from './pool.js';
 import { Environment } from '../types/index.js';
 import { MOBILE_NETWORKS, MobileNetwork, RailOperation, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
 import { PayoutRow, sendPayout } from './payouts.js';
-import { FeeQuote, lightpayCollectionFee, quote } from '../payments/fees.js';
+import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, quote } from '../payments/fees.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { LightPayUser } from '../security/user-token.js';
 import { getConnection, payeeWallet, requireScope, userWallet } from './connect.js';
@@ -265,6 +265,9 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   if (!MOBILE_NETWORKS.includes(network as MobileNetwork)) throw new CheckoutError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
   const msisdn = normalizeCongoMsisdn(msisdnInput);
   if (!msisdn) throw new CheckoutError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81', 'INVALID_MSISDN');
+  if (BigInt(session.amount) < minMobileMoneyAmount()) {
+    throw new CheckoutError(`Le mobile money accepte au minimum ${minMobileMoneyAmount()} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
+  }
 
   const provider = providerFor(network as MobileNetwork);
   const lightpayFee = lightpayCollectionFee(BigInt(session.amount));
