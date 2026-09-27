@@ -3,6 +3,7 @@ import { LightPayUser, UserTokenError, isRecentSignIn, verifyUserToken } from '.
 import { ConnectError, SCOPE_LABELS, approve, listUserConnections, revokeConnection, userWallet, walletStatement } from '../db/connect.js';
 import { closeAccount, listWithdrawals, quoteWithdrawal, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
 import { quote } from '../payments/fees.js';
+import { getActivity, listActivity } from '../db/activity.js';
 import { MOBILE_NETWORKS, providerFor } from '../payments/mobile-money.js';
 import { Environment } from '../types/index.js';
 
@@ -55,7 +56,8 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
 /**
  * The person's own LightPay space (used by the hosted account and consent pages).
  *   GET    /v1/me                         profile + wallet balances (creates the wallet)
- *   GET    /v1/me/transactions            wallet history
+ *   GET    /v1/me/transactions            ledger statement (money that moved)
+ *   GET    /v1/me/activity[/:id]          history of every operation: state + reason of a refusal
  *   GET    /v1/me/connections             apps I authorized
  *   DELETE /v1/me/connections/:id         revoke an app
  *   POST   /v1/me/connect/approve         approve an app's request -> redirect URL with code
@@ -92,6 +94,18 @@ export async function meRoutes(fastify: FastifyInstance) {
   fastify.get('/transactions', async (request) => {
     const wallet = await userWallet(envOf(request), request.lightpayUser!);
     return { status: 'success', entries: await walletStatement(envOf(request), wallet.id, Number((request.query as any).limit ?? 50)) };
+  });
+
+  fastify.get('/activity', async (request) => {
+    const wallet = await userWallet(envOf(request), request.lightpayUser!);
+    return { status: 'success', activity: await listActivity(envOf(request), wallet.id, Number((request.query as any).limit ?? 50)) };
+  });
+
+  fastify.get('/activity/:id', async (request, reply) => {
+    const wallet = await userWallet(envOf(request), request.lightpayUser!);
+    const item = await getActivity(envOf(request), wallet.id, String((request.params as any).id));
+    if (!item) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Opération introuvable.' });
+    return { status: 'success', activity: item };
   });
 
   fastify.get('/connections', async (request) => ({

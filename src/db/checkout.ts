@@ -6,6 +6,8 @@ import { Environment } from '../types/index.js';
 import { MOBILE_NETWORKS, MobileNetwork, RailOperation, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
 import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayFeeWallet } from './fee-wallet.js';
+import { appName, failureOf, logActivity, updateActivity } from './activity.js';
+import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
 import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundSendable } from '../payments/fees.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { LightPayUser } from '../security/user-token.js';
@@ -270,6 +272,13 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
     throw new CheckoutError(`Le mobile money accepte au minimum ${minMobileMoneyAmount()} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   }
 
+  // App quotas are checked BEFORE the phone is asked to pay: money already collected must
+  // never be blocked by a quota afterwards (the collection itself skips quotas).
+  try {
+    await enforceAppQuotas(session.app_id, environment, BigInt(session.amount));
+  } catch (err: any) {
+    throw new CheckoutError(err.message, err.code || 'QUOTA_EXCEEDED', 403);
+  }
   const provider = providerFor(network as MobileNetwork);
   const lightpayFee = lightpayCollectionFee(BigInt(session.amount));
   let attempt: Attempt;
@@ -288,6 +297,22 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
     throw err;
   }
   await query(`UPDATE checkout_sessions SET status = 'PROCESSING', updated_at = NOW() WHERE id = $1 AND status = 'OPEN'`, [session.id], environment);
+
+  // Journal: a top-up line for the person, or a payment line for the paying number (guest).
+  const via = `${network === 'AIRTEL_COG' ? 'Airtel Money' : 'MTN MoMo'} · ${maskMsisdn(msisdn)}`;
+  if (session.kind === 'DEPOSIT') {
+    await logActivity(environment, {
+      walletId: session.payee_wallet_id, kind: 'DEPOSIT', direction: 'IN', status: 'PENDING', amount: session.amount, fees: lightpayFee,
+      currency: session.currency, counterparty: via, refType: 'collection', refId: attempt.id, metadata: { session: session.id },
+    });
+  } else {
+    const guest = await guestWallet(environment, msisdn, session.currency);
+    await logActivity(environment, {
+      walletId: guest.id, kind: 'PAYMENT', direction: 'OUT', status: 'PENDING', amount: session.amount, fees: lightpayFee,
+      currency: session.currency, counterparty: await appName(environment, session.app_id), refType: 'collection', refId: attempt.id,
+      metadata: { session: session.id, reference: session.reference, via },
+    });
+  }
 
   let sent;
   try {
@@ -360,6 +385,7 @@ async function failAttempt(attempt: Attempt, failureCode: string) {
     env
   );
   if (done.length === 0) return;
+  await updateActivity(env, 'collection', attempt.id, { status: 'FAILED', reasonCode: failureCode });
   const [session] = await query(
     `UPDATE checkout_sessions SET status = 'OPEN', updated_at = NOW() WHERE id = $1 AND status = 'PROCESSING' RETURNING *`,
     [attempt.session_id],
@@ -394,6 +420,7 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
       appId: session.app_id,
       environment: env,
       idempotencyKey: `deposit:${attempt.id}`,
+      skipQuotas: true,
       type: 'COLLECTION',
       amount,
       currency: attempt.currency,
@@ -415,6 +442,7 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
     appId: session.app_id,
     environment: env,
     idempotencyKey: `collect:${attempt.id}`,
+    skipQuotas: true,
     type: 'COLLECTION',
     amount,
     currency: attempt.currency,
@@ -493,6 +521,7 @@ async function closeSession(
     env
   );
   const { holdId } = outcome;
+  await updateActivity(env, 'collection', attempt.id, { status: 'SUCCEEDED', total: attempt.charged_amount ?? undefined });
   void dispatchWebhook(session.app_id, env, session.kind === 'DEPOSIT' ? 'deposit.completed' : 'checkout.completed', {
     kind: session.kind,
     session_id: session.id,
@@ -590,7 +619,20 @@ export async function payWithWallet(id: string, user: LightPayUser) {
   if (session.kind !== 'PAYMENT') throw new CheckoutError('Only payments can be paid with a wallet', 'METHOD_NOT_ALLOWED');
   if (!session.methods.includes('lightpay_wallet')) throw new CheckoutError('LightPay wallet is not accepted for this payment', 'METHOD_NOT_ALLOWED');
   const payer = await userWallet(env, user, session.currency);
-  if (payer.id === session.payee_wallet_id) throw new CheckoutError('Vous ne pouvez pas vous payer vous-même.', 'SAME_WALLET');
+  const merchantName = await appName(env, session.app_id);
+  const journal = (status: 'SUCCEEDED' | 'FAILED', err?: any) => {
+    const f = err ? failureOf(err) : null;
+    return logActivity(env, {
+      walletId: payer.id, kind: 'PAYMENT', direction: 'OUT', status, amount: session.amount, total: session.amount, currency: session.currency,
+      counterparty: merchantName, reasonCode: f?.code, reason: f?.message, refType: 'checkout', refId: session.id,
+      metadata: { reference: session.reference, escrow: session.escrow },
+    });
+  };
+  if (payer.id === session.payee_wallet_id) {
+    const err = new CheckoutError('Vous ne pouvez pas vous payer vous-même.', 'SAME_WALLET');
+    await journal('FAILED', err);
+    throw err;
+  }
 
   const locked = await query(
     `UPDATE checkout_sessions SET status = 'PROCESSING', updated_at = NOW() WHERE id = $1 AND status = 'OPEN' AND expires_at > NOW() RETURNING id`,
@@ -627,6 +669,7 @@ export async function payWithWallet(id: string, user: LightPayUser) {
     }
   } catch (err: any) {
     await query(`UPDATE checkout_sessions SET status = 'OPEN', updated_at = NOW() WHERE id = $1 AND status = 'PROCESSING'`, [session.id], env);
+    await journal('FAILED', err);
     if (String(err.message).startsWith('Insufficient funds')) throw new CheckoutError('Solde LightPay insuffisant. Rechargez votre wallet ou payez par mobile money.', 'INSUFFICIENT_FUNDS', 402);
     throw err;
   }
@@ -636,6 +679,7 @@ export async function payWithWallet(id: string, user: LightPayUser) {
     [session.id, payer.id, holdId, paymentTx],
     env
   );
+  await journal('SUCCEEDED');
   void dispatchWebhook(session.app_id, env, 'checkout.completed', {
     kind: session.kind,
     session_id: session.id,

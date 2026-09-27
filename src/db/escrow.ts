@@ -2,6 +2,7 @@ import { PoolClient } from 'pg';
 import { LedgerEngine } from './ledger.js';
 import { query } from './pool.js';
 import { Environment, HoldStatus } from '../types/index.js';
+import { appName, isPersonWallet, logActivity, updateActivity } from './activity.js';
 
 /**
  * ESCROW — money that has changed hands but is not yet usable.
@@ -150,6 +151,14 @@ export class Escrow {
     const hold = holdId
       ? await getHold(p.appId, p.environment, holdId)
       : await holdByTransaction(p.environment, (result as any).transaction?.id ?? (result as any).transactionId);
+    // Journal: the seller sees the sale as locked until the order is validated.
+    if (hold && !result.duplicate && (await isPersonWallet(p.environment, hold.wallet_id))) {
+      await logActivity(p.environment, {
+        walletId: hold.wallet_id, kind: 'SALE', direction: 'IN', status: 'LOCKED', amount: hold.amount, fees: hold.fee_amount,
+        total: (BigInt(hold.amount) - BigInt(hold.fee_amount)).toString(), currency: hold.currency, counterparty: await appName(p.environment, p.appId),
+        reason: 'Paiement bloqué jusqu’à la validation de la commande.', refType: 'hold', refId: hold.id, metadata: { reference: hold.reference },
+      });
+    }
     return { ...result, hold };
   }
 
@@ -211,7 +220,24 @@ export class Escrow {
       },
     });
 
-    return { ...result, hold: await getHold(p.appId, p.environment, p.holdId) };
+    const settled = await getHold(p.appId, p.environment, p.holdId);
+    if (settled && !result.duplicate) {
+      if (kind === 'capture') {
+        await updateActivity(p.environment, 'hold', settled.id, { walletId: settled.wallet_id, status: 'SUCCEEDED' });
+      } else {
+        await updateActivity(p.environment, 'hold', settled.id, {
+          walletId: settled.wallet_id, status: 'REFUNDED', reasonCode: 'REFUNDED_TO_BUYER', reason: 'Commande annulée : le montant a été rendu à l’acheteur.',
+        });
+        if (await isPersonWallet(p.environment, settled.payer_wallet_id)) {
+          await logActivity(p.environment, {
+            walletId: settled.payer_wallet_id, kind: 'REFUND', direction: 'IN', status: 'SUCCEEDED', amount: settled.amount, total: settled.amount,
+            currency: settled.currency, counterparty: await appName(p.environment, p.appId), refType: 'hold_refund', refId: settled.id,
+            metadata: { reference: settled.reference },
+          });
+        }
+      }
+    }
+    return { ...result, hold: settled };
   }
 
   /** Litigation: freezes the hold. No money moves; only a resolution (capture/release) unfreezes it. */
@@ -228,6 +254,7 @@ export class Escrow {
       if (!hold) throw new EscrowError('Hold not found', 'HOLD_NOT_FOUND', 404);
       throw new EscrowError(`Hold already ${hold.status.toLowerCase()}`, 'HOLD_ALREADY_SETTLED', 409);
     }
+    await updateActivity(p.environment, 'hold', rows[0].id, { walletId: rows[0].wallet_id, status: 'LOCKED', reasonCode: 'DISPUTED' });
     return { hold: rows[0] as HoldRecord };
   }
 

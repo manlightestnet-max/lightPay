@@ -6,6 +6,7 @@ import { LightPayUser } from '../security/user-token.js';
 import { ConnectError, SCOPES, Scope, userWallet } from './connect.js';
 import { MOBILE_NETWORKS, MobileNetwork, normalizeCongoMsisdn } from '../payments/mobile-money.js';
 import { sendPayout } from './payouts.js';
+import { failureOf, logActivity } from './activity.js';
 import { lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
 import { providerFor } from '../payments/mobile-money.js';
 import { maskMsisdn } from './checkout.js';
@@ -20,6 +21,16 @@ import { maskMsisdn } from './checkout.js';
 
 const newId = (prefix: string) => `${prefix}${crypto.randomBytes(18).toString('base64url')}`;
 const txId = (r: any): string | null => r?.transactionId ?? r?.transaction?.id ?? null;
+
+/** Best-effort amount for the journal of a refused request. */
+const safeAmount = (v: unknown): bigint => {
+  try {
+    const n = BigInt(String(v));
+    return n > 0n ? n : 0n;
+  } catch {
+    return 0n;
+  }
+};
 
 const positive = (value: unknown, field = 'amount') => {
   let amount: bigint;
@@ -59,53 +70,79 @@ export async function selfDeposit(environment: Environment, user: LightPayUser, 
 
 /** Send money to another LightPay user, found by e-mail. */
 export async function sendMoney(environment: Environment, user: LightPayUser, input: { to: unknown; amount: unknown; note?: unknown }, idempotencyKey: string) {
-  const amount = positive(input.amount);
-  const to = String(input.to ?? '').trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new ConnectError('Adresse e-mail du destinataire invalide.', 'INVALID_RECIPIENT');
-  if (to === (user.email ?? '').toLowerCase()) throw new ConnectError('Vous ne pouvez pas vous envoyer de l’argent.', 'SAME_WALLET');
   const from = await activeWallet(environment, user);
-  const [recipient] = await query(
-    `SELECT id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND lower(metadata->>'email') = $3 LIMIT 1`,
-    [environment, from.currency, to],
-    environment
-  );
-  if (!recipient) throw new ConnectError('Aucun compte LightPay avec cet e-mail.', 'RECIPIENT_NOT_FOUND', 404);
+  const ref = `send:${user.uid}:${idempotencyKey}`;
+  const to = String(input.to ?? '').trim().toLowerCase();
   const note = String(input.note ?? '').slice(0, 140) || undefined;
-  const result = await LedgerEngine.executeTransaction({
-    appId: 'mainapp',
-    environment,
-    idempotencyKey: `send:${user.uid}:${idempotencyKey}`,
-    type: 'TRANSFER',
-    amount,
-    currency: from.currency,
-    metadata: { kind: 'P2P', from_uid: user.uid, to_email: to, note },
-    postings: [
-      { walletId: from.id, direction: 'DEBIT', amount, description: `Envoi à ${recipient.metadata?.name || to}${note ? ` · ${note}` : ''}` },
-      { walletId: recipient.id, direction: 'CREDIT', amount, description: `Reçu de ${user.name || user.email}${note ? ` · ${note}` : ''}` },
-    ],
-  });
-  return { transaction_id: txId(result), duplicate: result.duplicate, to: { name: recipient.metadata?.name ?? null, email: to }, amount: amount.toString() };
+  try {
+    const amount = positive(input.amount);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new ConnectError('Adresse e-mail du destinataire invalide.', 'INVALID_RECIPIENT');
+    if (to === (user.email ?? '').toLowerCase()) throw new ConnectError('Vous ne pouvez pas vous envoyer de l’argent.', 'SAME_WALLET');
+    const [recipient] = await query(
+      `SELECT id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND lower(metadata->>'email') = $3 LIMIT 1`,
+      [environment, from.currency, to],
+      environment
+    );
+    if (!recipient) throw new ConnectError('Aucun compte LightPay avec cet e-mail.', 'RECIPIENT_NOT_FOUND', 404);
+    const result = await LedgerEngine.executeTransaction({
+      appId: 'mainapp',
+      environment,
+      idempotencyKey: ref,
+      type: 'TRANSFER',
+      amount,
+      currency: from.currency,
+      metadata: { kind: 'P2P', from_uid: user.uid, to_email: to, note },
+      postings: [
+        { walletId: from.id, direction: 'DEBIT', amount, description: `Envoi à ${recipient.metadata?.name || to}${note ? ` · ${note}` : ''}` },
+        { walletId: recipient.id, direction: 'CREDIT', amount, description: `Reçu de ${user.name || user.email}${note ? ` · ${note}` : ''}` },
+      ],
+    });
+    const common = { kind: 'TRANSFER' as const, status: 'SUCCEEDED' as const, amount, total: amount, currency: from.currency, refType: 'transfer', refId: ref, metadata: { note } };
+    await logActivity(environment, { ...common, walletId: from.id, direction: 'OUT', counterparty: recipient.metadata?.name || to });
+    await logActivity(environment, { ...common, walletId: recipient.id, direction: 'IN', counterparty: user.name || user.email || 'LightPay' });
+    return { transaction_id: txId(result), duplicate: result.duplicate, to: { name: recipient.metadata?.name ?? null, email: to }, amount: amount.toString() };
+  } catch (err: any) {
+    const f = failureOf(err);
+    await logActivity(environment, {
+      walletId: from.id, kind: 'TRANSFER', direction: 'OUT', status: 'FAILED', amount: safeAmount(input.amount), currency: from.currency,
+      counterparty: to || null, reasonCode: f.code, reason: f.message, refType: 'transfer', refId: ref, metadata: { note },
+    });
+    throw err;
+  }
 }
 
 /** Withdraw available money to a mobile-money number. Locked money can never leave. */
 export async function withdraw(environment: Environment, user: LightPayUser, input: { amount: unknown; msisdn: unknown; network: unknown }, idempotencyKey: string) {
-  const amount = positive(input.amount);
-  const minimum = minWithdrawalAmount();
-  if (amount < minimum) throw new ConnectError(`Retrait minimum : ${minimum} FCFA.`, 'BELOW_MINIMUM');
-  const network = String(input.network ?? '') as MobileNetwork;
-  if (!MOBILE_NETWORKS.includes(network)) throw new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
-  const msisdn = normalizeCongoMsisdn(String(input.msisdn ?? ''));
-  if (!msisdn) throw new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN');
   const wallet = await activeWallet(environment, user);
+  const refused = async (err: ConnectError) => {
+    const phone = normalizeCongoMsisdn(String(input.msisdn ?? ''));
+    await logActivity(environment, {
+      walletId: wallet.id, kind: 'WITHDRAWAL', direction: 'OUT', status: 'FAILED', amount: safeAmount(input.amount), currency: wallet.currency,
+      counterparty: phone ? maskMsisdn(phone) : null, reasonCode: err.code, reason: err.message, refType: 'withdraw_request', refId: `withdraw:${user.uid}:${idempotencyKey}`,
+    });
+    return err;
+  };
+  let amount: bigint;
+  try {
+    amount = positive(input.amount);
+  } catch (err: any) {
+    throw await refused(err);
+  }
+  const minimum = minWithdrawalAmount();
+  if (amount < minimum) throw await refused(new ConnectError(`Retrait minimum : ${minimum} FCFA.`, 'BELOW_MINIMUM'));
+  const network = String(input.network ?? '') as MobileNetwork;
+  if (!MOBILE_NETWORKS.includes(network)) throw await refused(new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK'));
+  const msisdn = normalizeCongoMsisdn(String(input.msisdn ?? ''));
+  if (!msisdn) throw await refused(new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN'));
   const provider = providerFor(network).name;
   const operatorFee = providerPayoutFee(provider, amount);
   const lightpayFee = lightpayPayoutFee(amount);
   if (BigInt(wallet.available_balance) < amount + operatorFee + lightpayFee) {
-    throw new ConnectError(
+    throw await refused(new ConnectError(
       `Solde insuffisant : ce retrait coûte ${amount + operatorFee + lightpayFee} FCFA frais compris (${operatorFee} opérateur + ${lightpayFee} LightPay).`,
       'INSUFFICIENT_FUNDS',
       402
-    );
+    ));
   }
 
   const payout = await sendPayout({

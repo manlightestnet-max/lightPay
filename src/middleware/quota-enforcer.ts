@@ -54,7 +54,7 @@ export async function enforceAppQuotas(
 
   const runQuery = client
     ? (sql: string, params: any[]) => client.query(sql, params).then((r) => r.rows)
-    : (sql: string, params: any[]) => query(sql, params);
+    : (sql: string, params: any[]) => query(sql, params, environment); // the environment's own database
 
   // 1. Recuperer la configuration des quotas de l'application
   const apps = await runQuery(

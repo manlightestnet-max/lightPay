@@ -5,6 +5,7 @@ import { Escrow } from './escrow.js';
 import { Environment } from '../types/index.js';
 import { LightPayUser } from '../security/user-token.js';
 import { isReservedAppId } from '../security/app-identity.js';
+import { appName, failureOf, logActivity } from './activity.js';
 
 /**
  * LIGHTPAY CONNECT — an app acts on a person's wallet only through a connection that
@@ -270,8 +271,31 @@ export async function payeeWallet(appId: string, environment: Environment, conne
   return payee;
 }
 
-/** Debits the person's wallet (scope charge, within their limit) to a connected seller. */
+/**
+ * Debits the person's wallet (scope charge, within their limit) to a connected seller.
+ * Journaled for the person, refusals included (limit, balance…).
+ */
 export async function charge(appId: string, environment: Environment, connectionId: string, idempotencyKey: string, input: ChargeInput) {
+  const payer = await getConnection(appId, environment, connectionId);
+  const journal = async (status: 'SUCCEEDED' | 'FAILED', err?: any, extra?: Record<string, any>) => {
+    const f = err ? failureOf(err) : null;
+    await logActivity(environment, {
+      walletId: payer.wallet_id, kind: 'CHARGE', direction: 'OUT', status, amount: input.amount > 0n ? input.amount : 0n, total: input.amount > 0n ? input.amount : 0n,
+      counterparty: await appName(environment, appId), reasonCode: f?.code, reason: f?.message, refType: 'charge', refId: `${appId}:${idempotencyKey}`,
+      metadata: { reference: input.reference, description: input.description, escrow: input.escrow, ...(extra ?? {}) },
+    });
+  };
+  try {
+    const result: any = await chargeUnjournaled(appId, environment, connectionId, idempotencyKey, input);
+    await journal('SUCCEEDED', undefined, result?.hold ? { hold_id: result.hold.id } : {});
+    return result;
+  } catch (err) {
+    await journal('FAILED', err);
+    throw err;
+  }
+}
+
+async function chargeUnjournaled(appId: string, environment: Environment, connectionId: string, idempotencyKey: string, input: ChargeInput) {
   const payer = await getConnection(appId, environment, connectionId);
   requireScope(payer, 'charge');
   if (input.amount <= 0n) throw new ConnectError('amount must be greater than zero', 'INVALID_AMOUNT');

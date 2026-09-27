@@ -4,7 +4,7 @@ import { iconSvg } from './icons.js';
 /**
  * /account — the person's LightPay space (hash routes):
  *   #/home  #/deposit  #/send → #/send/review → #/send/done  #/withdraw → #/withdraw/review →
- *   #/withdraw/done  #/activity  #/apps → #/apps/<id>  #/security
+ *   #/withdraw/done  #/activity → #/activity/<id>  #/apps → #/apps/<id>  #/security
  * ?env=sandbox for the test wallet · ?return=<url> shows a back button to the calling app.
  */
 export const accountPage = (nonce: string, env: string) => {
@@ -130,6 +130,16 @@ export const accountPage = (nonce: string, env: string) => {
   <div class="content"><div id="actList"></div><div class="msg" id="actMsg" role="status" aria-live="polite"></div></div>
 </section>
 
+<section class="screen" data-screen="activity-item" hidden>
+  ${bar('Détail de l’opération')}
+  <div class="content">
+    <div class="center mt"><span class="avatar avatar-lg" id="itemIcon" aria-hidden="true"></span><p class="small muted mt" id="itemKind"></p><div class="amount-xl" id="itemAmount"></div><p class="mt"><span class="pill" id="itemStatus"></span></p></div>
+    <div class="note warn" id="itemReasonBox" hidden>${iconSvg('alert')}<p id="itemReason"></p></div>
+    <div class="receipt" id="itemRows"></div>
+    <div class="msg" id="itemMsg" role="status" aria-live="polite"></div>
+  </div>
+</section>
+
 <section class="screen" data-screen="apps" hidden>
   ${bar('Apps connectées')}
   <div class="content">
@@ -225,19 +235,47 @@ export const accountPage = (nonce: string, env: string) => {
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('reauth').hidden) $('reCancel').click(); });
 
-  // ---------------------------------------------------------------- home
-  function txRow(e) {
-    const credit = e.direction === 'CREDIT';
-    const locked = e.bucket === 'LOCKED';
-    return listRow({
-      icon: locked ? 'lock' : credit ? 'receive' : 'send',
-      iconClass: credit && !locked ? 'in' : '',
-      title: e.description || e.type,
-      sub: timeLabel(e.created_at) + (locked ? ' · bloqué' : ''),
-      end: (credit ? '+' : '−') + LP.money(e.amount, cur()),
-      endClass: credit ? 'in' : '',
-    });
+  // ---------------------------------------------------------------- activity (journal of every operation)
+  const STATUS = {
+    PENDING: ['warn', 'En cours'], SUCCEEDED: ['ok', 'Réussi'], FAILED: ['err', 'Refusé'], LOCKED: ['warn', 'Bloqué'],
+    REFUNDED: ['', 'Remboursé'], EXPIRED: ['', 'Expiré'], CANCELLED: ['', 'Annulé'],
+  };
+  const KIND_ICON = { DEPOSIT: 'plus', TRANSFER: 'send', WITHDRAWAL: 'withdraw', PAYMENT: 'send', CHARGE: 'send', SALE: 'receive', REFUND: 'receive' };
+  function actTitle(a) {
+    const who = a.counterparty || '';
+    switch (a.kind) {
+      case 'DEPOSIT': return 'Recharge';
+      case 'TRANSFER': return a.direction === 'IN' ? 'Reçu de ' + who : 'Envoi à ' + (who || '—');
+      case 'WITHDRAWAL': return 'Retrait';
+      case 'PAYMENT': return 'Paiement · ' + who;
+      case 'CHARGE': return 'Débit par ' + who;
+      case 'SALE': return 'Vente · ' + who;
+      case 'REFUND': return a.direction === 'IN' ? 'Remboursement · ' + who : 'Remboursement envoyé';
+      default: return a.kind;
+    }
   }
+  const settledOk = (a) => a.status === 'SUCCEEDED' || a.status === 'LOCKED' || a.status === 'PENDING';
+  function actRow(a) {
+    const st = STATUS[a.status] || ['', a.status];
+    const incoming = a.direction === 'IN';
+    const sub = timeLabel(a.created_at) + ' · ' + st[1] + (a.status === 'FAILED' && a.reason ? ' — ' + a.reason : '');
+    const row = listRow({
+      icon: a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock'),
+      iconClass: incoming && a.status === 'SUCCEEDED' ? 'in' : '',
+      title: actTitle(a),
+      sub: sub,
+      end: (incoming ? '+' : '−') + LP.money(a.amount, a.currency),
+      endClass: !settledOk(a) || a.status === 'REFUNDED' && incoming ? 'void' : a.status === 'LOCKED' ? 'held' : incoming && a.status === 'SUCCEEDED' ? 'in' : '',
+      href: '#/activity/' + encodeURIComponent(a.id),
+      chev: true,
+    });
+    const subEl = row.querySelector('.row-sub');
+    if (subEl && (a.status === 'FAILED')) subEl.classList.add('err');
+    if (subEl && (a.status === 'PENDING' || a.status === 'LOCKED')) subEl.classList.add('warn');
+    return row;
+  }
+
+  // ---------------------------------------------------------------- home
   async function loadMe() {
     me = await LP.api('GET', '/v1/me');
     const name = me.user.name || (me.user.email || '').split('@')[0];
@@ -254,8 +292,8 @@ export const accountPage = (nonce: string, env: string) => {
   async function enterHome() {
     await guarded(async () => {
       await loadMe();
-      const tx = await LP.api('GET', '/v1/me/transactions?limit=5');
-      $('homeActivity').replaceChildren.apply($('homeActivity'), tx.entries.length ? tx.entries.map(txRow) : [el('li', { class: 'empty', text: 'Aucun mouvement pour l’instant.' })]);
+      const act = await LP.api('GET', '/v1/me/activity?limit=5');
+      $('homeActivity').replaceChildren.apply($('homeActivity'), act.activity.length ? act.activity.map(actRow) : [el('li', { class: 'empty', text: 'Aucune opération pour l’instant.' })]);
       const c = await LP.api('GET', '/v1/me/connections');
       const n = c.connections.filter((x) => x.status === 'ACTIVE').length;
       $('homeAppsSub').textContent = n ? n + (n > 1 ? ' apps autorisées' : ' app autorisée') : 'Aucune app autorisée';
@@ -445,16 +483,42 @@ export const accountPage = (nonce: string, env: string) => {
   // ---------------------------------------------------------------- activity
   async function enterActivity() {
     await guarded(async () => {
-      const r = await LP.api('GET', '/v1/me/transactions?limit=100');
-      if (!r.entries.length) { $('actList').replaceChildren(el('p', { class: 'empty', text: 'Aucun mouvement pour l’instant.' })); return; }
+      const r = await LP.api('GET', '/v1/me/activity?limit=100');
+      if (!r.activity.length) { $('actList').replaceChildren(el('p', { class: 'empty', text: 'Aucune opération pour l’instant.' })); return; }
       const out = []; let day = '';
-      r.entries.forEach((e) => {
-        const d = dayLabel(e.created_at);
+      r.activity.forEach((a) => {
+        const d = dayLabel(a.created_at);
         if (d !== day) { day = d; out.push(el('h2', { class: 'group-label', text: d.charAt(0).toUpperCase() + d.slice(1) })); out.push(el('ul', { class: 'list' })); }
-        out[out.length - 1].append(txRow(e));
+        out[out.length - 1].append(actRow(a));
       });
       $('actList').replaceChildren.apply($('actList'), out);
     }, 'actMsg');
+  }
+  async function enterActivityItem(id) {
+    say('itemMsg', '');
+    await guarded(async () => {
+      const a = (await LP.api('GET', '/v1/me/activity/' + encodeURIComponent(id))).activity;
+      const st = STATUS[a.status] || ['', a.status];
+      const incoming = a.direction === 'IN';
+      $('itemIcon').replaceChildren(icon(a.status === 'FAILED' ? 'x' : KIND_ICON[a.kind] || 'clock'));
+      $('itemKind').textContent = actTitle(a);
+      $('itemAmount').textContent = (incoming ? '+' : '−') + LP.money(a.amount, a.currency);
+      $('itemStatus').className = 'pill ' + st[0];
+      $('itemStatus').textContent = st[1];
+      $('itemReasonBox').hidden = !a.reason;
+      $('itemReason').textContent = a.reason || '';
+      const rows = [['Montant', LP.money(a.amount, a.currency)]];
+      if (a.fees && a.fees !== '0') rows.push(['Frais', LP.money(a.fees, a.currency)]);
+      if (a.total && a.total !== a.amount) rows.push([incoming ? 'Net reçu' : 'Total', LP.money(a.total, a.currency)]);
+      if (a.counterparty) rows.push([incoming ? 'De' : a.kind === 'DEPOSIT' || a.kind === 'WITHDRAWAL' ? 'Via' : 'À', a.counterparty]);
+      if (a.metadata && a.metadata.via) rows.push(['Via', a.metadata.via]);
+      if (a.metadata && a.metadata.reference) rows.push(['Référence', a.metadata.reference]);
+      if (a.metadata && a.metadata.note) rows.push(['Message', a.metadata.note]);
+      rows.push(['Créée le', new Date(a.created_at).toLocaleString('fr-FR')]);
+      if (a.updated_at && a.updated_at !== a.created_at) rows.push(['Mise à jour', new Date(a.updated_at).toLocaleString('fr-FR')]);
+      rows.push(['N° d’opération', a.id, true]);
+      feeRows($('itemRows'), rows);
+    }, 'itemMsg');
   }
 
   // ---------------------------------------------------------------- apps
@@ -553,7 +617,7 @@ export const accountPage = (nonce: string, env: string) => {
   // ---------------------------------------------------------------- navigation
   const nav = createNav({
     root: 'home',
-    resolve: (route) => route.indexOf('apps/') === 0 ? ['app', route.slice(5)] : [route.replace('/', '-'), null],
+    resolve: (route) => route.indexOf('apps/') === 0 ? ['app', route.slice(5)] : route.indexOf('activity/') === 0 ? ['activity-item', route.slice(9)] : [route.replace('/', '-'), null],
     onRootBack: () => { if (returnUrl) location.assign(returnUrl); },
     screens: {
       home: { enter: enterHome },
@@ -565,6 +629,7 @@ export const accountPage = (nonce: string, env: string) => {
       'withdraw-review': { parent: 'withdraw', enter: enterWithdrawReview },
       'withdraw-done': { parent: 'home', enter: enterWithdrawDone },
       activity: { parent: 'home', enter: enterActivity },
+      'activity-item': { parent: 'activity', enter: enterActivityItem },
       apps: { parent: 'home', enter: enterApps },
       app: { parent: 'apps', enter: enterApp },
       security: { parent: 'home', enter: enterSecurity },

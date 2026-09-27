@@ -4,6 +4,7 @@ import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
 import { MobileNetwork, RailOperation, RailResult, providerByName, providerFor } from '../payments/mobile-money.js';
 import { lightpayFeeWallet } from './fee-wallet.js';
+import { isPersonWallet, logActivity, maskPhone, reasonFor, updateActivity } from './activity.js';
 
 /**
  * Money leaving LightPay to a phone number (withdrawals, guest refunds).
@@ -116,6 +117,13 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
       (debit as any).transactionId ?? (debit as any).transaction?.id ?? null, input.reference, operatorFee.toString(), lightpayFee.toString(), total.toString()],
     env
   );
+  if (row && (await isPersonWallet(env, input.walletId))) {
+    await logActivity(env, {
+      walletId: input.walletId, kind: input.reason === 'WITHDRAWAL' ? 'WITHDRAWAL' : 'REFUND', direction: 'OUT', status: 'PENDING',
+      amount: input.amount, fees: operatorFee + lightpayFee, total, currency: input.currency,
+      counterparty: `${input.network === 'AIRTEL_COG' ? 'Airtel Money' : 'MTN MoMo'} · ${maskPhone(input.msisdn)}`, refType: 'payout', refId: payoutId,
+    });
+  }
   let result: RailResult;
   try {
     result = await provider.requestPayout(railOf(row));
@@ -168,6 +176,13 @@ async function applyResult(p: PayoutRow, r: RailResult): Promise<PayoutRow> {
     [p.id, r.status, r.failureCode ?? null, r.providerReference ?? null],
     env
   );
+  if (row) {
+    await updateActivity(env, 'payout', p.id, {
+      status: r.status === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+      reasonCode: r.failureCode ?? null,
+      reason: r.status === 'FAILED' ? `${reasonFor(r.failureCode ?? 'PROVIDER_FAILED')} Montant et frais restitués sur votre wallet.` : null,
+    });
+  }
   return row ?? (await query(`SELECT * FROM payouts WHERE id = $1`, [p.id], env))[0];
 }
 

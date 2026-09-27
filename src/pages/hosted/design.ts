@@ -151,6 +151,10 @@ a.row:hover .row-title, button.row:hover .row-title { text-decoration: underline
 .row-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-end { flex-shrink: 0; text-align: right; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .row-end.in { color: var(--accent); }
+.row-end.void { color: var(--faint); text-decoration: line-through; }
+.row-end.held { color: var(--warn); }
+.row-sub.err { color: var(--danger); }
+.row-sub.warn { color: var(--warn); }
 .chev { color: var(--faint); width: 18px; height: 18px; }
 .empty { padding: 28px 8px; text-align: center; color: var(--muted); font-size: 13px; }
 
