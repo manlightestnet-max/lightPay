@@ -79,14 +79,14 @@ export async function enforceAppQuotas(
   }
 
   // B. Verification du volume cumule sur 24h glissantes (hors opérations de trésorerie admin).
-  // Chaque paiement compte une seule fois : le paiement lui-même (PAYMENT, HOLD) ou l'envoi
-  // (TRANSFER). Pas l'arrivée du mobile money qui le finance (COLLECTION), ni sa libération
-  // (HOLD_CAPTURE / HOLD_RELEASE), ni les retraits, remboursements ou recharges de test.
+  // Chaque mouvement compte une seule fois : le paiement (PAYMENT, HOLD), l'envoi (TRANSFER)
+  // et le retrait (PAYOUT). Pas l'arrivée du mobile money qui finance un paiement (COLLECTION),
+  // ni sa libération (HOLD_CAPTURE / HOLD_RELEASE), ni les remboursements ou recharges de test.
   const volResult = await runQuery(
     `SELECT COALESCE(SUM(amount), 0) as rolling_volume 
      FROM transactions 
      WHERE app_id = $1 AND environment = $2 AND status = 'SUCCESS' 
-       AND type IN ('PAYMENT', 'HOLD', 'TRANSFER')
+       AND type IN ('PAYMENT', 'HOLD', 'TRANSFER', 'PAYOUT')
        AND (metadata->>'admin_seed' IS NULL OR metadata->>'admin_seed' != 'true')
        AND created_at >= NOW() - INTERVAL '24 HOURS'`,
     [appId, environment]
