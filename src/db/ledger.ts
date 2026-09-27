@@ -23,6 +23,8 @@ export interface ExecuteTransactionParams {
   reference?: string;
   metadata?: Record<string, any>;
   postings: LedgerPosting[];
+  /** Internal checkout flows only: allows debiting a GUEST wallet (never exposed to API callers). */
+  allowGuestDebit?: boolean;
   /** Settlement of money already counted once (escrow capture/release): skips volume quotas. */
   skipQuotas?: boolean;
   /** Runs inside the DB transaction before any posting (e.g. lock and validate a hold). */
@@ -31,13 +33,32 @@ export interface ExecuteTransactionParams {
   finalize?: (client: PoolClient, transactionId: string) => Promise<void>;
 }
 
+/** Postgres aborted the transaction to keep SERIALIZABLE guarantees: safe to replay. */
+const isRetryable = (err: any) => err?.code === '40001' || err?.code === '40P01';
+
 export class LedgerEngine {
+  /**
+   * Exécute une transaction atomique en partie double, rejouée automatiquement (5 fois
+   * max) si Postgres l'annule pour conflit de sérialisation. Le rejeu est sûr : rien
+   * n'a été écrit, et l'idempotence renvoie le résultat si une exécution a abouti.
+   */
+  static async executeTransaction(params: ExecuteTransactionParams) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await LedgerEngine.executeOnce(params);
+      } catch (err: any) {
+        if (!isRetryable(err) || attempt >= 5) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 25 * attempt + Math.random() * 50));
+      }
+    }
+  }
+
   /**
    * Exécute une transaction atomique en partie double.
    * Vérifie strictement que la somme des Débits est égale à la somme des Crédits (Sum = 0).
    * Isole strictement les opérations entre Sandbox et Production.
    */
-  static async executeTransaction(params: ExecuteTransactionParams) {
+  private static async executeOnce(params: ExecuteTransactionParams) {
     const {
       appId,
       idempotencyKey,
@@ -50,6 +71,7 @@ export class LedgerEngine {
       metadata = {},
       postings,
       skipQuotas = false,
+      allowGuestDebit = false,
       prepare,
       finalize,
     } = params;
@@ -138,6 +160,11 @@ export class LedgerEngine {
         const wallet = walletQuery.rows[0];
         if (wallet.status !== 'ACTIVE') {
           throw new Error(`Wallet is ${wallet.status}: ${post.walletId}`);
+        }
+
+        // A guest wallet only pays the checkout that funded it (or refunds its own number).
+        if (wallet.account_type === 'GUEST' && post.direction === 'DEBIT' && !allowGuestDebit) {
+          throw new Error(`GUEST_WALLET_LOCKED: guest wallet ${post.walletId} can only be used by LightPay checkout`);
         }
 
         // Vérification d'appartenance: le wallet doit appartenir à appId SAUF s'il s'agit d'un compte SYSTEM,

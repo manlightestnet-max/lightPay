@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { requireAppAuth } from '../middleware/app-auth.js';
 import { Escrow, EscrowError, getHold } from '../db/escrow.js';
 import { HoldStatus } from '../types/index.js';
+import { merchantWallet, refundGuestPayer } from '../db/checkout.js';
 
 const HOLD_STATUSES: HoldStatus[] = ['ACTIVE', 'DISPUTED', 'CAPTURED', 'RELEASED'];
 
@@ -78,11 +79,15 @@ export async function holdRoutes(fastify: FastifyInstance) {
     if (!idempotencyKey) return reply.status(400).send({ error: 'Missing required header: Idempotency-Key' });
     const { fee_wallet_id, resolve_dispute } = (request.body ?? {}) as any;
     try {
+      const { appId, environment } = context(request);
+      const hold = await getHold(appId, environment, (request.params as any).hold_id);
+      // The platform fee goes to the app's own merchant wallet unless another is given.
+      const feeWalletId = fee_wallet_id || (hold && BigInt(hold.fee_amount) > 0n ? await merchantWallet(appId, environment, hold.currency) : undefined);
       const result = await Escrow.capture({
         ...context(request),
         idempotencyKey,
         holdId: (request.params as any).hold_id,
-        feeWalletId: fee_wallet_id,
+        feeWalletId,
         resolveDispute: resolve_dispute === true,
       });
       return reply.status(result.duplicate ? 200 : 201).send({ status: 'success', ...result });
@@ -103,7 +108,9 @@ export async function holdRoutes(fastify: FastifyInstance) {
         holdId: (request.params as any).hold_id,
         resolveDispute: resolve_dispute === true,
       });
-      return reply.status(result.duplicate ? 200 : 201).send({ status: 'success', ...result });
+      // A guest payer gets the money back on the number that paid (idempotent).
+      const refund = result.hold?.status === 'RELEASED' ? await refundGuestPayer(result.hold) : null;
+      return reply.status(result.duplicate ? 200 : 201).send({ status: 'success', ...result, refund });
     } catch (err) {
       return fail(reply, err);
     }

@@ -60,6 +60,10 @@ export interface CreateHoldParams extends Base {
   reason?: string;
   metadata?: Record<string, any>;
   expiresAt?: Date;
+  /** Internal checkout only (payer is a guest wallet). */
+  allowGuestDebit?: boolean;
+  /** Internal checkout only: the collection that funded this hold already counted. */
+  skipQuotas?: boolean;
 }
 
 const lockHold = async (client: PoolClient, appId: string, environment: Environment, holdId: string): Promise<HoldRecord> => {
@@ -102,6 +106,8 @@ export class Escrow {
       environment: p.environment,
       idempotencyKey: p.idempotencyKey,
       type: 'HOLD',
+      allowGuestDebit: p.allowGuestDebit,
+      skipQuotas: p.skipQuotas,
       amount: p.amount,
       feeAmount: fee,
       currency: p.currency,

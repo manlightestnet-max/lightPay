@@ -3,6 +3,9 @@ import { config } from './config/index.js';
 import { walletRoutes } from './routes/wallets.js';
 import { paymentRoutes } from './routes/payments.js';
 import { holdRoutes } from './routes/holds.js';
+import { checkoutRoutes } from './routes/checkout.js';
+import { checkoutPublicRoutes } from './routes/checkout-public.js';
+import { MAINAPP_KEY_PREFIX, verifyMainappKey } from './security/app-identity.js';
 import { externalMoneyRoutes } from './routes/external.js';
 import { adminRoutes } from './routes/admin.js';
 import { gatewayRoutes } from './routes/gateways.js';
@@ -75,7 +78,10 @@ server.addHook('onRequest', async (request, reply) => {
     url === '/health' ||
     url.startsWith('/v1/gateways/webhook') ||
     url.startsWith('/v1/sdk') ||
-    url === '/v1/merchant/apps/register'
+    url === '/v1/merchant/apps/register' ||
+    // Hosted payment page and its public API: the session id (unguessable) is the capability.
+    url.startsWith('/pay/') ||
+    url.startsWith('/v1/checkout/public/')
   ) {
     return;
   }
@@ -91,6 +97,13 @@ server.addHook('onRequest', async (request, reply) => {
   // A. Vérification Master Key
   if (masterKey && timingSafeCompare(masterKey, config.masterAdminKey)) {
     return;
+  }
+
+  // A'. MainApp : clé sec_main_ vérifiée contre l'empreinte scrypt de l'environnement
+  const presentedKey = bearerToken || (request.headers['x-api-key'] as string) || '';
+  if (presentedKey.startsWith(MAINAPP_KEY_PREFIX)) {
+    if (verifyMainappKey(presentedKey) === 'ok') return;
+    return reply.status(403).send({ error: 'Forbidden', message: 'Invalid application credentials' });
   }
 
   // B. Vérification Bearer Token (API Key application)
@@ -145,6 +158,8 @@ server.get('/', async (request, reply) => {
 server.register(walletRoutes, { prefix: '/v1/wallets' });
 server.register(paymentRoutes, { prefix: '/v1/payments' });
 server.register(holdRoutes, { prefix: '/v1/holds' });
+server.register(checkoutRoutes, { prefix: '/v1' });
+server.register(checkoutPublicRoutes);
 server.register(externalMoneyRoutes, { prefix: '/v1' });
 server.register(adminRoutes, { prefix: '/v1/admin' });
 server.register(gatewayRoutes, { prefix: '/v1/gateways' });

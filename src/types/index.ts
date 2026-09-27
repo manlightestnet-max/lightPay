@@ -1,6 +1,7 @@
 export type Currency = 'CREDIT' | 'AOA' | 'USD' | 'EUR' | 'XAF';
 
-export type AccountType = 'USER' | 'MERCHANT' | 'PLATFORM' | 'SYSTEM';
+/** GUEST: payer without account, bound to a phone number. PAYEE: a seller of an app. */
+export type AccountType = 'USER' | 'MERCHANT' | 'PLATFORM' | 'SYSTEM' | 'GUEST' | 'PAYEE';
 
 export type WalletStatus = 'ACTIVE' | 'FROZEN' | 'CLOSED';
 
