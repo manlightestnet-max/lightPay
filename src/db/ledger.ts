@@ -38,8 +38,9 @@ const isRetryable = (err: any) => err?.code === '40001' || err?.code === '40P01'
 
 export class LedgerEngine {
   /**
-   * Exécute une transaction atomique en partie double, rejouée automatiquement (5 fois
-   * max) si Postgres l'annule pour conflit de sérialisation. Le rejeu est sûr : rien
+   * Exécute une transaction atomique en partie double, rejouée automatiquement (8 fois
+   * max, délai exponentiel avec aléa) si Postgres l'annule pour conflit de sérialisation
+   * (comptes système très sollicités : transit mobile money, trésorerie). Le rejeu est sûr : rien
    * n'a été écrit, et l'idempotence renvoie le résultat si une exécution a abouti.
    */
   static async executeTransaction(params: ExecuteTransactionParams) {
@@ -47,8 +48,9 @@ export class LedgerEngine {
       try {
         return await LedgerEngine.executeOnce(params);
       } catch (err: any) {
-        if (!isRetryable(err) || attempt >= 5) throw err;
-        await new Promise((resolve) => setTimeout(resolve, 25 * attempt + Math.random() * 50));
+        if (!isRetryable(err) || attempt >= 8) throw err;
+        const backoff = Math.min(40 * 2 ** attempt, 1_500);
+        await new Promise((resolve) => setTimeout(resolve, backoff / 2 + Math.random() * backoff));
       }
     }
   }

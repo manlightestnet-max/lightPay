@@ -45,8 +45,27 @@ const DEFAULT_CURRENCY = 'XAF';
 
 // ---------------------------------------------------------------- the person's wallet
 
-/** The person's LightPay wallet (created on first sign-in), per environment. */
+/**
+ * The person's LightPay wallet (created on first sign-in), per environment.
+ * Read first: a plain read never writes (balance polling must not contend with payments);
+ * the profile is only rewritten when the name or e-mail actually changed.
+ */
 export async function userWallet(environment: Environment, user: LightPayUser, currency = DEFAULT_CURRENCY) {
+  const [existing] = await query(
+    `SELECT * FROM wallets WHERE app_id = 'mainapp' AND account_id = $1 AND currency = $2 AND environment = $3`,
+    [`user:${user.uid}`, currency, environment],
+    environment
+  );
+  if (existing) {
+    const stale = (user.email && existing.metadata?.email !== user.email) || (user.name && existing.metadata?.name !== user.name);
+    if (!stale) return existing;
+    const [updated] = await query(
+      `UPDATE wallets SET metadata = metadata || $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [existing.id, JSON.stringify({ email: user.email ?? existing.metadata?.email, name: user.name ?? existing.metadata?.name })],
+      environment
+    );
+    return updated;
+  }
   return (
     await query(
       `INSERT INTO wallets (app_id, account_id, account_type, currency, environment, metadata)

@@ -1,7 +1,15 @@
 /**
- * Mobile-money rails (collections and payouts). The checkout only talks to this
- * interface; pawaPay (or MTN/Airtel direct) plugs in later without touching the ledger.
+ * Mobile-money rails (collections and payouts), pluggable per network.
+ *
+ * The ledger never talks to a provider directly: checkout, deposits, refunds and
+ * withdrawals go through this registry. Each network is routed to a provider:
+ *
+ *   MOBILE_MONEY_ROUTES="MTN_MOMO_COG=saspay,AIRTEL_COG=saspay"   (per network)
+ *   MOBILE_MONEY_PROVIDER=simulator                                 (default for the rest)
+ *
+ * Adding a provider = one file implementing MobileMoneyProvider + one line in PROVIDERS.
  */
+import { SasPayProvider } from './saspay.js';
 
 export type MobileNetwork = 'MTN_MOMO_COG' | 'AIRTEL_COG';
 export const MOBILE_NETWORKS: MobileNetwork[] = ['MTN_MOMO_COG', 'AIRTEL_COG'];
@@ -9,12 +17,17 @@ export const MOBILE_NETWORKS: MobileNetwork[] = ['MTN_MOMO_COG', 'AIRTEL_COG'];
 export type RailStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED';
 
 export interface RailOperation {
+  /** Our id (ca_… / po_…), also sent as the provider's idempotency key. */
   id: string;
   msisdn: string;
   amount: bigint;
   currency: string;
   network: MobileNetwork;
   createdAt: Date;
+  /** Provider-side id, once known (needed to check the status). */
+  providerReference?: string | null;
+  description?: string;
+  customer?: { name?: string | null; email?: string | null };
 }
 
 export interface RailResult {
@@ -27,10 +40,12 @@ export interface MobileMoneyProvider {
   name: string;
   /** Sends the payment request to the payer's phone. */
   requestCollection(op: RailOperation): Promise<RailResult>;
-  /** Current state of a collection (polling; providers also call back). */
+  /** Current state of a collection (webhooks only trigger this check). */
   collectionStatus(op: RailOperation): Promise<RailResult>;
   /** Sends money to a phone number. */
   requestPayout(op: RailOperation): Promise<RailResult>;
+  /** Current state of a payout. */
+  payoutStatus(op: RailOperation): Promise<RailResult>;
 }
 
 /** Congo numbers: "06 512 44 81", "+242 06…", "24206…" → "242065124481". */
@@ -44,10 +59,10 @@ export function normalizeCongoMsisdn(input: string): string | null {
  * SIMULATOR — deterministic by the last digit of the number (like pawaPay test numbers):
  *   …0 → FAILED  INSUFFICIENT_BALANCE      …1 → FAILED PAYER_DECLINED
  *   …2 → FAILED  PAYER_TIMEOUT (after 20 s) otherwise → SUCCEEDED (after 4 s)
- * Stateless: the outcome only depends on the number and the time elapsed.
+ * Payouts always succeed. Stateless: the outcome only depends on the number and time.
  */
 export class SimulatorProvider implements MobileMoneyProvider {
-  name = 'SIMULATOR';
+  name = 'simulator';
   constructor(private approveAfterMs = 4_000, private timeoutAfterMs = 20_000) {}
 
   async requestCollection(op: RailOperation): Promise<RailResult> {
@@ -66,16 +81,37 @@ export class SimulatorProvider implements MobileMoneyProvider {
   async requestPayout(op: RailOperation): Promise<RailResult> {
     return { status: 'SUCCEEDED', providerReference: `SIM-PO-${op.id}` };
   }
+
+  async payoutStatus(op: RailOperation): Promise<RailResult> {
+    return { status: 'SUCCEEDED', providerReference: op.providerReference ?? `SIM-PO-${op.id}` };
+  }
 }
 
-/** Active rail. MOBILE_MONEY_PROVIDER=simulator until pawaPay is plugged in. */
-export function mobileMoneyProvider(): MobileMoneyProvider {
-  const name = (process.env.MOBILE_MONEY_PROVIDER || 'simulator').toLowerCase();
-  if (name === 'simulator') return simulator;
-  throw new Error(`Mobile money provider "${name}" is not available yet`);
+const PROVIDERS: Record<string, () => MobileMoneyProvider> = {
+  simulator: () => new SimulatorProvider(Number(process.env.SIMULATOR_APPROVE_MS || 4_000), Number(process.env.SIMULATOR_TIMEOUT_MS || 20_000)),
+  saspay: () => new SasPayProvider(),
+};
+
+const instances = new Map<string, MobileMoneyProvider>();
+
+/** A provider by name (the one recorded on an attempt or payout keeps handling it). */
+export function providerByName(name: string): MobileMoneyProvider {
+  const key = name.toLowerCase();
+  const make = PROVIDERS[key];
+  if (!make) throw new Error(`Mobile money provider "${name}" is not available`);
+  if (!instances.has(key)) instances.set(key, make());
+  return instances.get(key)!;
 }
 
-const simulator = new SimulatorProvider(
-  Number(process.env.SIMULATOR_APPROVE_MS || 4_000),
-  Number(process.env.SIMULATOR_TIMEOUT_MS || 20_000)
-);
+const routes = (): Record<string, string> =>
+  Object.fromEntries(
+    String(process.env.MOBILE_MONEY_ROUTES || '')
+      .split(',')
+      .map((pair) => pair.split('=').map((s) => s.trim()))
+      .filter(([network, provider]) => network && provider)
+  );
+
+/** The provider that serves a network today. */
+export function providerFor(network: MobileNetwork): MobileMoneyProvider {
+  return providerByName(routes()[network] || process.env.MOBILE_MONEY_PROVIDER || 'simulator');
+}

@@ -3,7 +3,8 @@ import { LedgerEngine } from './ledger.js';
 import { Escrow, HoldRecord } from './escrow.js';
 import { query } from './pool.js';
 import { Environment } from '../types/index.js';
-import { MOBILE_NETWORKS, MobileNetwork, RailOperation, mobileMoneyProvider, normalizeCongoMsisdn } from '../payments/mobile-money.js';
+import { MOBILE_NETWORKS, MobileNetwork, RailOperation, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
+import { PayoutRow, sendPayout } from './payouts.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { LightPayUser } from '../security/user-token.js';
 import { getConnection, payeeWallet, requireScope, userWallet } from './connect.js';
@@ -72,6 +73,7 @@ interface Attempt {
   currency: string;
   status: 'PENDING' | 'SUCCEEDED' | 'FAILED';
   failure_code: string | null;
+  provider_reference: string | null;
   created_at: Date;
 }
 
@@ -235,6 +237,8 @@ const railOp = (a: Attempt): RailOperation => ({
   currency: a.currency,
   network: a.network,
   createdAt: new Date(a.created_at),
+  providerReference: a.provider_reference,
+  description: 'Paiement LightPay',
 });
 
 export async function startMobileMoney(id: string, msisdnInput: string, network: string) {
@@ -247,7 +251,7 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   const msisdn = normalizeCongoMsisdn(msisdnInput);
   if (!msisdn) throw new CheckoutError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81', 'INVALID_MSISDN');
 
-  const provider = mobileMoneyProvider();
+  const provider = providerFor(network as MobileNetwork);
   let attempt: Attempt;
   try {
     attempt = (
@@ -264,7 +268,15 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   }
   await query(`UPDATE checkout_sessions SET status = 'PROCESSING', updated_at = NOW() WHERE id = $1 AND status = 'OPEN'`, [session.id], environment);
 
-  const sent = await provider.requestCollection(railOp(attempt));
+  let sent;
+  try {
+    sent = await provider.requestCollection(railOp(attempt));
+  } catch (err: any) {
+    // Provider unreachable: the attempt stays PENDING and the (idempotent) request is retried.
+    console.error('[CHECKOUT] collection request failed, will retry', attempt.id, err?.message);
+    watch(attempt);
+    return { attempt_id: attempt.id, status: 'PENDING', msisdn: maskMsisdn(msisdn), network };
+  }
   if (sent.status === 'FAILED') {
     await failAttempt(attempt, sent.failureCode ?? 'REQUEST_FAILED');
   } else {
@@ -297,7 +309,13 @@ async function resolveAttempt(attempt: Attempt) {
   if (attempt.status !== 'PENDING' || resolving.has(attempt.id)) return;
   resolving.add(attempt.id);
   try {
-    const result = await mobileMoneyProvider().collectionStatus(railOp(attempt));
+    const provider = providerByName(attempt.provider);
+    // No provider id yet (request lost): re-send it, the provider deduplicates on our id.
+    let result = attempt.provider_reference ? await provider.collectionStatus(railOp(attempt)) : await provider.requestCollection(railOp(attempt));
+    if (!attempt.provider_reference && result.providerReference) {
+      await query(`UPDATE collection_attempts SET provider_reference = $2 WHERE id = $1`, [attempt.id, result.providerReference], attempt.environment);
+      if (result.status === 'PENDING') result = await provider.collectionStatus({ ...railOp(attempt), providerReference: result.providerReference });
+    }
     if (result.status === 'PENDING') return;
     if (result.status === 'FAILED') return await failAttempt(attempt, result.failureCode ?? 'FAILED');
     return await completeCollection(attempt, result.providerReference);
@@ -468,8 +486,6 @@ export async function refundGuestPayer(hold: HoldRecord) {
   const env = hold.environment;
   const [payer] = await query(`SELECT * FROM wallets WHERE id = $1`, [hold.payer_wallet_id], env);
   if (payer?.account_type !== 'GUEST') return null;
-  const existing = (await query(`SELECT * FROM payouts WHERE reference = $1 AND reason = 'GUEST_REFUND'`, [`refund:${hold.id}`], env))[0];
-  if (existing) return existing;
 
   const [attempt] = await query(
     `SELECT a.* FROM collection_attempts a JOIN checkout_sessions s ON s.id = a.session_id
@@ -479,38 +495,21 @@ export async function refundGuestPayer(hold: HoldRecord) {
   );
   const msisdn: string = attempt?.msisdn ?? payer.metadata?.msisdn;
   const network: MobileNetwork = attempt?.network ?? 'MTN_MOMO_COG';
-  const amount = BigInt(hold.amount);
-  const outflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, hold.currency);
-  const payoutId = newId('po_');
-
-  const tx = await LedgerEngine.executeTransaction({
-    appId: hold.app_id,
+  const payout: PayoutRow = await sendPayout({
     environment: env,
-    idempotencyKey: `refund:${hold.id}`,
-    type: 'PAYOUT',
-    amount,
+    appId: hold.app_id,
+    walletId: payer.id,
+    msisdn,
+    network,
+    amount: BigInt(hold.amount),
     currency: hold.currency,
-    reference: hold.reference ?? hold.id,
-    metadata: { hold_id: hold.id, payout: payoutId, reason: 'GUEST_REFUND' },
+    reason: 'GUEST_REFUND',
+    reference: `refund:${hold.id}`,
+    description: `Remboursement vers ${maskMsisdn(msisdn)}`,
     allowGuestDebit: true,
-    skipQuotas: true,
-    postings: [
-      { walletId: payer.id, direction: 'DEBIT', amount, description: `Guest refund to ${maskMsisdn(msisdn)}` },
-      { walletId: outflow, direction: 'CREDIT', amount, description: `Mobile money out [${network}] - ${payoutId}` },
-    ],
+    metadata: { hold_id: hold.id },
   });
-
-  const provider = mobileMoneyProvider();
-  const sent = await provider.requestPayout({ id: payoutId, msisdn, amount, currency: hold.currency, network, createdAt: new Date() });
-  const [payout] = await query(
-    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, failure_code, reference)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'GUEST_REFUND', $9, $10, $11, $12) RETURNING *`,
-    [
-      payoutId, env, payer.id, provider.name, network, msisdn, amount.toString(), hold.currency, sent.status,
-      (tx as any).transactionId ?? (tx as any).transaction?.id ?? null, sent.failureCode ?? null, `refund:${hold.id}`,
-    ],
-    env
-  );
+  const sent = { status: payout.status };
   void dispatchWebhook(hold.app_id, env, 'refund.sent', {
     hold_id: hold.id,
     reference: hold.reference,
@@ -616,4 +615,28 @@ export async function createDepositSession(
     environment
   );
   return { session: session as CheckoutSession, duplicate: false };
+}
+
+/** Provider notification: re-check this collection with the provider (never trust the payload). */
+export async function resolveCollectionByProviderReference(providerReference: string) {
+  for (const env of ['production', 'sandbox'] as Environment[]) {
+    const [attempt] = await query(`SELECT * FROM collection_attempts WHERE provider_reference = $1`, [providerReference], env);
+    if (attempt) {
+      await resolveAttempt(attempt);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Sweeper: collections still pending after a while (lost webhooks, restarts). */
+export async function sweepPendingCollections() {
+  for (const env of ['production', 'sandbox'] as Environment[]) {
+    const pending = await query(
+      `SELECT * FROM collection_attempts WHERE status = 'PENDING' AND created_at < NOW() - interval '20 seconds' ORDER BY created_at LIMIT 50`,
+      [],
+      env
+    );
+    for (const attempt of pending) await resolveAttempt(attempt).catch((err) => console.error('[SWEEP] collection', attempt.id, err?.message));
+  }
 }

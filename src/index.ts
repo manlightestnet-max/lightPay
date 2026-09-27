@@ -6,6 +6,9 @@ import { holdRoutes } from './routes/holds.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { checkoutPublicRoutes } from './routes/checkout-public.js';
 import { meRoutes } from './routes/me.js';
+import { providerRoutes } from './routes/providers.js';
+import { sweepPendingCollections } from './db/checkout.js';
+import { pendingPayouts, resolvePayout } from './db/payouts.js';
 import { MAINAPP_KEY_PREFIX, verifyMainappKey } from './security/app-identity.js';
 import { externalMoneyRoutes } from './routes/external.js';
 import { adminRoutes } from './routes/admin.js';
@@ -27,6 +30,8 @@ const server = Fastify({
 
 // Support des requêtes JSON avec corps vide sans erreur 400 (FST_ERR_CTP_EMPTY_JSON_BODY)
 server.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+  // Raw body kept for signature checks on provider webhooks.
+  (req as any).rawBody = body;
   if (!body || (typeof body === 'string' && body.trim() === '')) {
     done(null, {});
     return;
@@ -104,6 +109,8 @@ server.addHook('onRequest', async (request, reply) => {
   if (
     url === '/health' ||
     url.startsWith('/v1/gateways/webhook') ||
+    // Provider notifications (signature verified in the route).
+    url.startsWith('/v1/providers/') ||
     url.startsWith('/v1/sdk') ||
     url === '/v1/merchant/apps/register' ||
     // Hosted payment page and its public API: the session id (unguessable) is the capability.
@@ -193,6 +200,21 @@ server.register(holdRoutes, { prefix: '/v1/holds' });
 server.register(checkoutRoutes, { prefix: '/v1' });
 server.register(checkoutPublicRoutes);
 server.register(meRoutes, { prefix: '/v1/me' });
+server.register(providerRoutes, { prefix: '/v1/providers' });
+
+// Sweeper: pending collections and payouts are re-checked with their provider every minute
+// (lost webhooks, restarts). Each operation is idempotent, so overlaps are harmless.
+const sweep = async () => {
+  try {
+    await sweepPendingCollections();
+    for (const env of ['production', 'sandbox'] as const) {
+      for (const payout of await pendingPayouts(env)) await resolvePayout(payout).catch((err) => console.error('[SWEEP] payout', payout.id, err?.message));
+    }
+  } catch (err: any) {
+    console.error('[SWEEP] failed', err?.message);
+  }
+};
+setInterval(() => void sweep(), 60_000).unref();
 server.register(externalMoneyRoutes, { prefix: '/v1' });
 server.register(adminRoutes, { prefix: '/v1/admin' });
 server.register(gatewayRoutes, { prefix: '/v1/gateways' });

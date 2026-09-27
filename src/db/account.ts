@@ -4,7 +4,8 @@ import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
 import { LightPayUser } from '../security/user-token.js';
 import { ConnectError, SCOPES, Scope, userWallet } from './connect.js';
-import { MOBILE_NETWORKS, MobileNetwork, mobileMoneyProvider, normalizeCongoMsisdn } from '../payments/mobile-money.js';
+import { MOBILE_NETWORKS, MobileNetwork, normalizeCongoMsisdn } from '../payments/mobile-money.js';
+import { sendPayout } from './payouts.js';
 import { maskMsisdn } from './checkout.js';
 
 /**
@@ -94,49 +95,18 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   if (!msisdn) throw new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN');
   const wallet = await activeWallet(environment, user);
 
-  const key = `withdraw:${user.uid}:${idempotencyKey}`;
-  const [existing] = await query(`SELECT * FROM payouts WHERE reference = $1`, [key], environment);
-  if (existing) return payoutView(existing);
-
-  const outflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', environment, wallet.currency);
-  const payoutId = newId('po_');
-  const debit = await LedgerEngine.executeTransaction({
-    appId: 'mainapp',
+  const payout = await sendPayout({
     environment,
-    idempotencyKey: key,
-    type: 'PAYOUT',
+    appId: 'mainapp',
+    walletId: wallet.id,
+    msisdn,
+    network,
     amount,
     currency: wallet.currency,
-    metadata: { payout: payoutId, reason: 'WITHDRAWAL', network },
-    postings: [
-      { walletId: wallet.id, direction: 'DEBIT', amount, description: `Retrait vers ${maskMsisdn(msisdn)}` },
-      { walletId: outflow, direction: 'CREDIT', amount, description: `Mobile money out [${network}] - ${payoutId}` },
-    ],
+    reason: 'WITHDRAWAL',
+    reference: `withdraw:${user.uid}:${idempotencyKey}`,
+    description: `Retrait vers ${maskMsisdn(msisdn)}`,
   });
-  if (debit.duplicate) {
-    const [again] = await query(`SELECT * FROM payouts WHERE reference = $1`, [key], environment);
-    if (again) return payoutView(again);
-  }
-
-  const provider = mobileMoneyProvider();
-  const sent = await provider.requestPayout({ id: payoutId, msisdn, amount, currency: wallet.currency, network, createdAt: new Date() });
-  if (sent.status === 'FAILED') {
-    // The network refused: the money comes back to the wallet.
-    await LedgerEngine.executeTransaction({
-      appId: 'mainapp', environment, idempotencyKey: `${key}:reversal`, type: 'REFUND', amount, currency: wallet.currency, skipQuotas: true,
-      metadata: { payout: payoutId, reason: 'WITHDRAWAL_FAILED', failure: sent.failureCode },
-      postings: [
-        { walletId: outflow, direction: 'DEBIT', amount, description: `Retrait annulé - ${payoutId}` },
-        { walletId: wallet.id, direction: 'CREDIT', amount, description: 'Retrait échoué, montant restitué' },
-      ],
-    });
-  }
-  const [payout] = await query(
-    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, failure_code, reference)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'WITHDRAWAL', $9, $10, $11, $12) RETURNING *`,
-    [payoutId, environment, wallet.id, provider.name, network, msisdn, amount.toString(), wallet.currency, sent.status, txId(debit), sent.failureCode ?? null, key],
-    environment
-  );
   return payoutView(payout);
 }
 
