@@ -52,6 +52,16 @@ const CSS = `
   .list li:first-child { border-top:0; } .grow { flex:1; min-width:0; } .num { font-variant-numeric:tabular-nums; font-weight:600; }
   .scopes li::before { content:"✓"; color:var(--accent); font-weight:700; }
   .h2 { font-size:15px; } .mt { margin-top:12px; } .center { text-align:center; }
+  .tabs { display:flex; gap:4px; margin-bottom:18px; overflow-x:auto; scrollbar-width:none; }
+  .tab { flex:1; height:34px; border:1px solid var(--line); border-radius:99px; background:transparent; color:var(--muted); font:inherit; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .tab[aria-selected="true"] { background:var(--text); color:var(--bg); border-color:var(--text); }
+  .actions { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:16px; }
+  .panel { margin-top:4px; }
+  .appcard { border:1px solid var(--line); border-radius:14px; padding:14px; margin-top:12px; }
+  .apphead { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .btn.danger { background:transparent; color:var(--danger); border:1px solid color-mix(in srgb, var(--danger) 45%, transparent); }
+  .linkbtn { display:flex; align-items:center; justify-content:center; text-decoration:none; }
+  main:has(.tabs) { max-width:480px; }
   .foot { text-align:center; color:var(--muted); font-size:11px; margin-top:12px; }
   [hidden] { display:none !important; }
   @keyframes spin { to { transform:rotate(360deg); } }
@@ -97,14 +107,15 @@ const CLIENT = (env: string) => `
       write({ ...s, idToken: d.id_token, refreshToken: d.refresh_token, expiresAt: Date.now() + (Number(d.expires_in) - 60) * 1000 });
       return d.id_token;
     };
-    const api = async (method, path, body) => {
+    const api = async (method, path, body, idem) => {
       const t = await token();
       if (!t) throw Object.assign(new Error('Connectez-vous à LightPay.'), { signIn: true });
       const res = await fetch(path, {
-        method, headers: { Authorization: 'Bearer ' + t, 'X-Environment': ENV, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        method, headers: { Authorization: 'Bearer ' + t, 'X-Environment': ENV, ...(body ? { 'Content-Type': 'application/json' } : {}), ...(idem ? { 'Idempotency-Key': idem } : {}) },
         body: body ? JSON.stringify(body) : undefined, cache: 'no-store',
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 401 && data.error === 'RECENT_SIGN_IN_REQUIRED') throw Object.assign(new Error(data.message), { reauth: true });
       if (res.status === 401) { write(null); throw Object.assign(new Error(data.message || 'Session expirée.'), { signIn: true }); }
       if (!res.ok) throw new Error(data.message || 'Une erreur est survenue.');
       return data;
@@ -122,6 +133,26 @@ const CLIENT = (env: string) => `
       signOut: () => write(null),
       api,
       money: (v, c) => Number(v).toLocaleString('fr-FR') + ' ' + (c === 'XAF' ? 'FCFA' : c),
+      uuid: () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9_-]/g, ''),
+      /** Change e-mail or password (Firebase asks for a recent sign-in). */
+      updateIdentity: async (fields) => {
+        const t = await token();
+        if (!t) throw Object.assign(new Error('Connectez-vous à LightPay.'), { signIn: true });
+        try {
+          const d = await auth('accounts:update', { idToken: t, ...fields });
+          const s = read();
+          write({ ...s, idToken: d.idToken || s.idToken, refreshToken: d.refreshToken || s.refreshToken, email: d.email || s.email, expiresAt: d.idToken ? Date.now() + (Number(d.expiresIn) - 60) * 1000 : s.expiresAt });
+        } catch (e) {
+          if (/connexion impossible/i.test(e.message)) throw Object.assign(new Error('Confirmez votre mot de passe.'), { reauth: true });
+          throw e;
+        }
+      },
+      /** Deletes the sign-in identity (after the LightPay account was closed). */
+      deleteIdentity: async () => {
+        const t = await token();
+        if (t) await fetch('https://identitytoolkit.googleapis.com/v1/accounts:delete?key=' + KEY, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: t }) });
+        write(null);
+      },
     };
   })();
 
@@ -196,56 +227,291 @@ export const accountPage = (nonce: string, env: string) =>
     nonce,
     `
     <div id="auth" hidden></div>
+    <div id="reauth" hidden>
+      <h1>Confirmez votre identité</h1>
+      <p class="muted">Pour votre sécurité, entrez votre mot de passe.</p>
+      <label for="rePass">Mot de passe</label>
+      <input id="rePass" type="password" autocomplete="current-password">
+      <div class="row"><button class="btn ghost" id="reCancel" type="button">Annuler</button><button class="btn" id="reGo" type="button">Confirmer</button></div>
+      <div class="msg" id="reMsg" role="status"></div>
+    </div>
     <div id="space" hidden>
-      <p class="muted" id="who"></p>
-      <div class="amount" id="available"></div>
-      <p class="muted">disponible · <span id="locked"></span> bloqués</p>
-      <div class="note">Les fonds bloqués sont des paiements en attente de validation de la commande.</div>
-      <hr>
-      <h1 class="h2">Apps autorisées</h1>
-      <ul class="list" id="apps"></ul>
-      <p class="muted" id="noApps" hidden>Aucune app n’a accès à votre wallet.</p>
-      <hr>
-      <h1 class="h2">Derniers mouvements</h1>
-      <ul class="list" id="moves"></ul>
-      <p class="muted" id="noMoves" hidden>Aucun mouvement pour l’instant.</p>
-      <button class="btn ghost" id="out" type="button">Se déconnecter</button>
-    </div>`,
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-tab="home" aria-selected="true">Accueil</button>
+        <button class="tab" role="tab" data-tab="activity" aria-selected="false">Activité</button>
+        <button class="tab" role="tab" data-tab="apps" aria-selected="false">Apps</button>
+        <button class="tab" role="tab" data-tab="security" aria-selected="false">Sécurité</button>
+      </div>
+
+      <section data-pane="home">
+        <p class="muted" id="who"></p>
+        <div class="amount" id="available"></div>
+        <p class="muted">disponible · <span id="locked"></span> bloqués</p>
+        <p class="muted mt" id="closedNote" hidden>Ce compte est fermé.</p>
+        <div class="actions" id="actions">
+          <button class="opt" data-action="deposit" type="button">Recharger</button>
+          <button class="opt" data-action="send" type="button">Envoyer</button>
+          <button class="opt" data-action="withdraw" type="button">Retirer</button>
+        </div>
+
+        <div class="panel" data-panel="deposit" hidden>
+          <label for="depAmount">Montant à recharger (FCFA)</label>
+          <input id="depAmount" inputmode="numeric" placeholder="10 000">
+          <button class="btn" id="depGo" type="button">Continuer vers le paiement mobile money</button>
+        </div>
+
+        <div class="panel" data-panel="send" hidden>
+          <label for="sendTo">E-mail du destinataire LightPay</label>
+          <input id="sendTo" type="email" autocomplete="off" placeholder="nom@exemple.com">
+          <label for="sendAmount">Montant (FCFA)</label>
+          <input id="sendAmount" inputmode="numeric">
+          <label for="sendNote">Message (facultatif)</label>
+          <input id="sendNote" maxlength="140">
+          <button class="btn" id="sendGo" type="button">Envoyer</button>
+        </div>
+
+        <div class="panel" data-panel="withdraw" hidden>
+          <label>Opérateur</label>
+          <div class="nets" role="group" aria-label="Opérateur">
+            <button type="button" class="opt wnet" data-net="MTN_MOMO_COG" aria-pressed="true">MTN MoMo</button>
+            <button type="button" class="opt wnet" data-net="AIRTEL_COG" aria-pressed="false">Airtel Money</button>
+          </div>
+          <label for="wdNumber">Numéro qui reçoit</label>
+          <input id="wdNumber" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81">
+          <label for="wdAmount">Montant (FCFA, minimum 500)</label>
+          <input id="wdAmount" inputmode="numeric">
+          <button class="btn" id="wdGo" type="button">Retirer</button>
+          <ul class="list" id="withdrawals"></ul>
+        </div>
+        <div class="msg" id="homeMsg" role="status" aria-live="polite"></div>
+        <div class="note">Les fonds bloqués sont des paiements en attente de validation d’une commande : ils ne peuvent être ni envoyés ni retirés.</div>
+      </section>
+
+      <section data-pane="activity" hidden>
+        <ul class="list" id="moves"></ul>
+        <p class="muted" id="noMoves" hidden>Aucun mouvement pour l’instant.</p>
+      </section>
+
+      <section data-pane="apps" hidden>
+        <p class="muted">Les apps que vous avez autorisées et ce qu’elles peuvent faire.</p>
+        <div id="apps"></div>
+        <p class="muted mt" id="noApps" hidden>Aucune app n’a accès à votre compte.</p>
+        <div class="msg" id="appsMsg" role="status"></div>
+      </section>
+
+      <section data-pane="security" hidden>
+        <label>E-mail du compte</label>
+        <p id="curEmail"></p>
+        <label for="newEmail">Nouvel e-mail</label>
+        <input id="newEmail" type="email" autocomplete="email">
+        <button class="btn ghost" id="emailGo" type="button">Changer l’e-mail</button>
+        <label for="newPass">Nouveau mot de passe</label>
+        <input id="newPass" type="password" autocomplete="new-password" placeholder="6 caractères minimum">
+        <button class="btn ghost" id="passGo" type="button">Changer le mot de passe</button>
+        <div class="msg" id="secMsg" role="status"></div>
+        <hr>
+        <h1 class="h2">Supprimer mon compte</h1>
+        <p class="muted">Possible uniquement si votre wallet est à zéro (réel et test) et qu’aucun paiement n’est en attente. Les apps connectées perdent leur accès. L’historique comptable est conservé.</p>
+        <label for="delConfirm">Tapez SUPPRIMER pour confirmer</label>
+        <input id="delConfirm" autocomplete="off">
+        <button class="btn danger" id="delGo" type="button" disabled>Supprimer définitivement</button>
+        <div class="msg" id="delMsg" role="status"></div>
+        <hr>
+        <div class="row">
+          <a class="btn ghost linkbtn" id="envSwitch"></a>
+          <button class="btn ghost" id="out" type="button">Se déconnecter</button>
+        </div>
+      </section>
+    </div>
+    <div id="bye" class="state" hidden><h2>Compte supprimé</h2><p>Votre compte LightPay a été fermé. Merci d’avoir utilisé LightPay.</p></div>`,
     `
   const $ = (x) => document.getElementById(x);
-  const li = (...cells) => { const el = document.createElement('li'); cells.forEach((c) => el.append(c)); return el; };
-  const span = (text, cls) => { const s = document.createElement('span'); s.textContent = text; if (cls) s.className = cls; return s; };
-  const SCOPE = { 'balance:read': 'solde', payee: 'recevoir', deposit: 'recharges', charge: 'débits' };
-  async function load() {
-    try {
-      const me = await LP.api('GET', '/v1/me');
-      $('who').textContent = (me.user.name || me.user.email || '') + (LP.ENV === 'sandbox' ? ' · environnement de test' : '');
-      $('available').textContent = LP.money(me.wallet.available_balance, me.wallet.currency);
-      $('locked').textContent = LP.money(me.wallet.locked_balance, me.wallet.currency);
-      const { connections } = await LP.api('GET', '/v1/me/connections');
-      const active = connections.filter((c) => c.status === 'ACTIVE');
-      $('apps').replaceChildren(...active.map((c) => {
-        const btn = document.createElement('button'); btn.className = 'link'; btn.type = 'button'; btn.textContent = 'Retirer';
-        btn.onclick = async () => { btn.disabled = true; await LP.api('DELETE', '/v1/me/connections/' + encodeURIComponent(c.id)); load(); };
-        const info = document.createElement('div'); info.className = 'grow';
-        info.append(span(c.app_name), document.createElement('br'), span(c.scopes.map((s) => SCOPE[s] || s).join(' · '), 'muted'));
-        return li(info, btn);
-      }));
-      $('noApps').hidden = active.length > 0;
-      const { entries } = await LP.api('GET', '/v1/me/transactions?limit=15');
-      $('moves').replaceChildren(...entries.map((e) => {
-        const info = document.createElement('div'); info.className = 'grow';
-        info.append(span(e.description || e.type), document.createElement('br'), span(new Date(e.created_at).toLocaleString('fr-FR') + (e.bucket === 'LOCKED' ? ' · bloqué' : ''), 'muted'));
-        return li(info, span((e.direction === 'CREDIT' ? '+' : '−') + LP.money(e.amount, me.wallet.currency), 'num'));
-      }));
-      $('noMoves').hidden = entries.length > 0;
-      $('space').hidden = false;
-    } catch (e) {
-      if (e.signIn) { $('space').hidden = true; mountAuth(load); } else { $('who').textContent = e.message; $('space').hidden = false; }
+  const el = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
+  let me = null;
+  const cur = () => (me ? me.wallet.currency : 'XAF');
+  const digits = (v) => String(v || '').replace(/\\D/g, '');
+  const say = (id, text, bad) => { $(id).className = 'msg' + (bad ? ' err' : ''); $(id).textContent = text || ''; };
+
+  // Sensitive actions: ask the password again, then retry.
+  let pending = null;
+  async function guarded(action, msgId) {
+    try { return await action(); }
+    catch (e) {
+      if (e.reauth) { pending = { action, msgId }; $('space').hidden = true; $('reauth').hidden = false; $('rePass').value = ''; $('rePass').focus(); return; }
+      if (e.signIn) { $('space').hidden = true; mountAuth(boot); return; }
+      say(msgId, e.message, true);
     }
   }
-  $('out').onclick = () => { LP.signOut(); $('space').hidden = true; mountAuth(load); };
-  LP.signedIn() ? load() : mountAuth(load);
+  $('reCancel').onclick = () => { pending = null; $('reauth').hidden = true; $('space').hidden = false; };
+  $('reGo').onclick = async () => {
+    $('reGo').disabled = true; say('reMsg', '');
+    try {
+      await LP.signIn(LP.email(), $('rePass').value);
+      $('reauth').hidden = true; $('space').hidden = false;
+      const p = pending; pending = null;
+      if (p) await guarded(p.action, p.msgId);
+    } catch (e) { say('reMsg', e.message, true); }
+    finally { $('reGo').disabled = false; }
+  };
+  $('rePass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('reGo').click(); });
+
+  // Tabs.
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((o) => o.setAttribute('aria-selected', String(o === t)));
+    document.querySelectorAll('[data-pane]').forEach((p) => (p.hidden = p.dataset.pane !== t.dataset.tab));
+    if (t.dataset.tab === 'activity') loadActivity();
+    if (t.dataset.tab === 'apps') loadApps();
+  }));
+
+  // Home actions.
+  let openPanel = null;
+  document.querySelectorAll('[data-action]').forEach((b) => b.addEventListener('click', () => {
+    openPanel = openPanel === b.dataset.action ? null : b.dataset.action;
+    document.querySelectorAll('[data-action]').forEach((o) => o.setAttribute('aria-pressed', String(o.dataset.action === openPanel)));
+    document.querySelectorAll('[data-panel]').forEach((p) => (p.hidden = p.dataset.panel !== openPanel));
+    say('homeMsg', '');
+    if (openPanel === 'withdraw') loadWithdrawals();
+  }));
+  let wnet = 'MTN_MOMO_COG';
+  document.querySelectorAll('.wnet').forEach((b) => b.addEventListener('click', () => { wnet = b.dataset.net; document.querySelectorAll('.wnet').forEach((o) => o.setAttribute('aria-pressed', String(o === b))); }));
+
+  $('depGo').onclick = () => guarded(async () => {
+    const amount = digits($('depAmount').value);
+    if (!amount) return say('homeMsg', 'Indiquez un montant.', true);
+    const r = await LP.api('POST', '/v1/me/deposits', { amount }, LP.uuid());
+    location.assign(r.checkout_path);
+  }, 'homeMsg');
+
+  let sendKey = LP.uuid();
+  $('sendGo').onclick = () => guarded(async () => {
+    const amount = digits($('sendAmount').value);
+    if (!amount) return say('homeMsg', 'Indiquez un montant.', true);
+    $('sendGo').disabled = true;
+    try {
+      const r = await LP.api('POST', '/v1/me/transfers', { to: $('sendTo').value.trim(), amount, note: $('sendNote').value.trim() }, sendKey);
+      sendKey = LP.uuid();
+      $('sendAmount').value = ''; $('sendNote').value = '';
+      say('homeMsg', LP.money(r.transfer.amount, cur()) + ' envoyés à ' + (r.transfer.to.name || r.transfer.to.email) + '.');
+      loadHome();
+    } finally { $('sendGo').disabled = false; }
+  }, 'homeMsg');
+
+  let wdKey = LP.uuid();
+  $('wdGo').onclick = () => guarded(async () => {
+    const amount = digits($('wdAmount').value);
+    if (!amount) return say('homeMsg', 'Indiquez un montant.', true);
+    $('wdGo').disabled = true;
+    try {
+      const r = await LP.api('POST', '/v1/me/withdrawals', { amount, msisdn: $('wdNumber').value, network: wnet }, wdKey);
+      wdKey = LP.uuid();
+      const w = r.withdrawal;
+      say('homeMsg', w.status === 'FAILED' ? 'Le retrait a échoué, le montant a été restitué.' : LP.money(w.amount, cur()) + ' envoyés au ' + w.to + '.', w.status === 'FAILED');
+      $('wdAmount').value = '';
+      loadHome(); loadWithdrawals();
+    } finally { $('wdGo').disabled = false; }
+  }, 'homeMsg');
+
+  async function loadWithdrawals() {
+    try {
+      const { withdrawals } = await LP.api('GET', '/v1/me/withdrawals');
+      $('withdrawals').replaceChildren(...withdrawals.slice(0, 5).map((w) => {
+        const li = el('li'); const info = el('div', undefined, 'grow');
+        info.append(el('span', 'Retrait vers ' + w.to), el('br'), el('span', new Date(w.created_at).toLocaleString('fr-FR') + ' · ' + ({ SUCCEEDED: 'envoyé', PENDING: 'en cours', FAILED: 'échoué, restitué' }[w.status] || w.status), 'muted'));
+        li.append(info, el('span', LP.money(w.amount, w.currency), 'num'));
+        return li;
+      }));
+    } catch {}
+  }
+
+  async function loadHome() {
+    me = await LP.api('GET', '/v1/me');
+    $('who').textContent = (me.user.name || me.user.email || '') + (LP.ENV === 'sandbox' ? ' · environnement de test' : '');
+    $('available').textContent = LP.money(me.wallet.available_balance, cur());
+    $('locked').textContent = LP.money(me.wallet.locked_balance, cur());
+    const closed = me.wallet.status !== 'ACTIVE';
+    $('closedNote').hidden = !closed; $('actions').hidden = closed;
+    $('curEmail').textContent = me.user.email || '—';
+  }
+
+  async function loadActivity() {
+    await guarded(async () => {
+      const { entries } = await LP.api('GET', '/v1/me/transactions?limit=50');
+      $('moves').replaceChildren(...entries.map((e) => {
+        const li = el('li'); const info = el('div', undefined, 'grow');
+        info.append(el('span', e.description || e.type), el('br'), el('span', new Date(e.created_at).toLocaleString('fr-FR') + (e.bucket === 'LOCKED' ? ' · bloqué' : ''), 'muted'));
+        li.append(info, el('span', (e.direction === 'CREDIT' ? '+' : '−') + LP.money(e.amount, cur()), 'num'));
+        return li;
+      }));
+      $('noMoves').hidden = entries.length > 0;
+    }, 'homeMsg');
+  }
+
+  async function loadApps() {
+    await guarded(async () => {
+      const { connections, scope_labels } = await LP.api('GET', '/v1/me/connections');
+      const active = connections.filter((c) => c.status === 'ACTIVE');
+      $('apps').replaceChildren(...active.map((c) => {
+        const card = el('div', undefined, 'appcard');
+        const head = el('div', undefined, 'apphead');
+        head.append(el('strong', c.app_name), el('span', 'depuis le ' + new Date(c.created_at).toLocaleDateString('fr-FR'), 'muted'));
+        const perms = el('ul', undefined, 'list');
+        c.scopes.forEach((s) => {
+          const li = el('li'); li.append(el('span', scope_labels[s] || s, 'grow'));
+          if (c.scopes.length > 1) {
+            const rm = el('button', 'Retirer', 'link'); rm.type = 'button';
+            rm.onclick = () => guarded(async () => { await LP.api('PATCH', '/v1/me/connections/' + encodeURIComponent(c.id), { scopes: c.scopes.filter((x) => x !== s) }); loadApps(); }, 'appsMsg');
+            li.append(rm);
+          }
+          perms.append(li);
+        });
+        card.append(head, perms);
+        if (c.scopes.includes('charge')) {
+          const lab = el('label', 'Montant maximum par débit (FCFA)'); const inp = el('input'); inp.inputMode = 'numeric'; inp.value = c.charge_limit;
+          const save = el('button', 'Enregistrer la limite', 'btn ghost'); save.type = 'button';
+          save.onclick = () => guarded(async () => { await LP.api('PATCH', '/v1/me/connections/' + encodeURIComponent(c.id), { charge_limit: digits(inp.value) }); say('appsMsg', 'Limite mise à jour.'); }, 'appsMsg');
+          card.append(lab, inp, save);
+        }
+        const revoke = el('button', 'Révoquer l’accès de ' + c.app_name, 'btn danger'); revoke.type = 'button';
+        revoke.onclick = () => guarded(async () => { await LP.api('DELETE', '/v1/me/connections/' + encodeURIComponent(c.id)); say('appsMsg', c.app_name + ' n’a plus accès à votre compte.'); loadApps(); }, 'appsMsg');
+        card.append(revoke);
+        return card;
+      }));
+      $('noApps').hidden = active.length > 0;
+    }, 'appsMsg');
+  }
+
+  // Security.
+  $('emailGo').onclick = () => guarded(async () => {
+    const email = $('newEmail').value.trim();
+    if (!email) return say('secMsg', 'Indiquez le nouvel e-mail.', true);
+    await LP.updateIdentity({ email });
+    $('newEmail').value = ''; say('secMsg', 'E-mail mis à jour.'); loadHome();
+  }, 'secMsg');
+  $('passGo').onclick = () => guarded(async () => {
+    const password = $('newPass').value;
+    if (password.length < 6) return say('secMsg', 'Mot de passe trop court (6 caractères minimum).', true);
+    await LP.updateIdentity({ password });
+    $('newPass').value = ''; say('secMsg', 'Mot de passe mis à jour.');
+  }, 'secMsg');
+  $('delConfirm').addEventListener('input', () => { $('delGo').disabled = $('delConfirm').value.trim() !== 'SUPPRIMER'; });
+  $('delGo').onclick = () => guarded(async () => {
+    $('delGo').disabled = true;
+    try {
+      await LP.api('DELETE', '/v1/me');
+      await LP.deleteIdentity();
+      $('space').hidden = true; $('bye').hidden = false;
+    } finally { $('delGo').disabled = $('delConfirm').value.trim() !== 'SUPPRIMER'; }
+  }, 'delMsg');
+
+  $('envSwitch').textContent = LP.ENV === 'sandbox' ? 'Passer au compte réel' : 'Voir mon compte de test';
+  $('envSwitch').href = LP.ENV === 'sandbox' ? '/account' : '/account?env=sandbox';
+  $('out').onclick = () => { LP.signOut(); $('space').hidden = true; mountAuth(boot); };
+
+  async function boot() {
+    try { await loadHome(); $('space').hidden = false; }
+    catch (e) { if (e.signIn) { $('space').hidden = true; mountAuth(boot); } else { $('space').hidden = false; say('homeMsg', e.message, true); } }
+  }
+  LP.signedIn() ? boot() : mountAuth(boot);
 `,
     env
   );
@@ -389,6 +655,7 @@ export const payPage = (nonce: string, sessionId: string, env: string) =>
       stop(); info(''); show('done');
       $('doneTitle').textContent = s.kind === 'DEPOSIT' ? 'Wallet rechargé' : 'Paiement confirmé';
       if (s.return_url) { $('back').href = s.return_url; $('back').hidden = false; setTimeout(() => location.assign(s.return_url), 2500); }
+      else if (s.kind === 'DEPOSIT') { $('back').href = s.environment === 'sandbox' ? '/account?env=sandbox' : '/account'; $('back').textContent = 'Retour à mon compte'; $('back').hidden = false; }
     } else if (s.status === 'PROCESSING') {
       show('waiting');
       $('waitText').textContent = 'Demande envoyée au ' + (s.last_attempt ? s.last_attempt.msisdn : 'numéro indiqué') + '. Composez votre code secret pour confirmer.';

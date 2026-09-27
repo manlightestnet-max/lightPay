@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { LightPayUser, UserTokenError, verifyUserToken } from '../security/user-token.js';
-import { ConnectError, approve, listUserConnections, revokeConnection, userWallet, walletStatement } from '../db/connect.js';
+import { LightPayUser, UserTokenError, isRecentSignIn, verifyUserToken } from '../security/user-token.js';
+import { ConnectError, SCOPE_LABELS, approve, listUserConnections, revokeConnection, userWallet, walletStatement } from '../db/connect.js';
+import { closeAccount, listWithdrawals, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
 import { Environment } from '../types/index.js';
 
 declare module 'fastify' {
@@ -23,8 +24,31 @@ export async function requireUser(request: FastifyRequest, reply: FastifyReply) 
   }
 }
 
-const fail = (reply: FastifyReply, err: any) =>
-  reply.status(err instanceof ConnectError ? err.statusCode : 400).send({ status: 'error', error: err.code || 'REQUEST_ERROR', message: err.message });
+const fail = (reply: FastifyReply, err: any) => {
+  const insufficient = String(err?.message ?? '').startsWith('Insufficient funds');
+  return reply.status(err instanceof ConnectError ? err.statusCode : insufficient ? 402 : 400).send({
+    status: 'error',
+    error: insufficient ? 'INSUFFICIENT_FUNDS' : err.code || 'REQUEST_ERROR',
+    message: insufficient ? 'Solde disponible insuffisant.' : err.message,
+  });
+};
+
+/** Money moves need an Idempotency-Key (a double tap never pays twice). */
+const idem = (request: FastifyRequest, reply: FastifyReply) => {
+  const key = String(request.headers['idempotency-key'] ?? '');
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(key)) {
+    reply.status(400).send({ error: 'IDEMPOTENCY_KEY_REQUIRED', message: 'Missing Idempotency-Key header' });
+    return null;
+  }
+  return key;
+};
+
+/** Sensitive actions: password entered in the last 10 minutes. */
+const recent = (request: FastifyRequest, reply: FastifyReply) => {
+  if (isRecentSignIn(request.lightpayUser!)) return true;
+  reply.status(401).send({ error: 'RECENT_SIGN_IN_REQUIRED', message: 'Pour votre sécurité, confirmez votre mot de passe.' });
+  return false;
+};
 
 /**
  * The person's own LightPay space (used by the hosted account and consent pages).
@@ -33,6 +57,12 @@ const fail = (reply: FastifyReply, err: any) =>
  *   GET    /v1/me/connections             apps I authorized
  *   DELETE /v1/me/connections/:id         revoke an app
  *   POST   /v1/me/connect/approve         approve an app's request -> redirect URL with code
+ *   PATCH  /v1/me/connections/:id         remove permissions / change the charge limit
+ *   POST   /v1/me/deposits                top up by mobile money -> hosted page
+ *   POST   /v1/me/transfers               send to another LightPay user (recent sign-in)
+ *   POST   /v1/me/withdrawals             withdraw to mobile money (recent sign-in)
+ *   GET    /v1/me/withdrawals             my withdrawals
+ *   DELETE /v1/me                         close my account (recent sign-in, everything at zero)
  * X-Environment: sandbox | production (default production).
  */
 export async function meRoutes(fastify: FastifyInstance) {
@@ -51,6 +81,7 @@ export async function meRoutes(fastify: FastifyInstance) {
         status: wallet.status,
       },
       environment: envOf(request),
+      recent_sign_in: isRecentSignIn(user),
     };
   });
 
@@ -59,7 +90,60 @@ export async function meRoutes(fastify: FastifyInstance) {
     return { status: 'success', entries: await walletStatement(envOf(request), wallet.id, Number((request.query as any).limit ?? 50)) };
   });
 
-  fastify.get('/connections', async (request) => ({ status: 'success', connections: await listUserConnections(envOf(request), request.lightpayUser!) }));
+  fastify.get('/connections', async (request) => ({
+    status: 'success',
+    scope_labels: SCOPE_LABELS,
+    connections: await listUserConnections(envOf(request), request.lightpayUser!),
+  }));
+
+  fastify.patch('/connections/:id', async (request, reply) => {
+    try {
+      return { status: 'success', connection: await updateConnection(envOf(request), request.lightpayUser!, (request.params as any).id, (request.body ?? {}) as any) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.post('/deposits', async (request, reply) => {
+    const key = idem(request, reply);
+    if (!key) return;
+    try {
+      return { status: 'success', ...(await selfDeposit(envOf(request), request.lightpayUser!, (request.body as any)?.amount, key)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.post('/transfers', async (request, reply) => {
+    const key = idem(request, reply);
+    if (!key || !recent(request, reply)) return;
+    try {
+      return { status: 'success', transfer: await sendMoney(envOf(request), request.lightpayUser!, (request.body ?? {}) as any, key) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.post('/withdrawals', async (request, reply) => {
+    const key = idem(request, reply);
+    if (!key || !recent(request, reply)) return;
+    try {
+      return { status: 'success', withdrawal: await withdraw(envOf(request), request.lightpayUser!, (request.body ?? {}) as any, key) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/withdrawals', async (request) => ({ status: 'success', withdrawals: await listWithdrawals(envOf(request), request.lightpayUser!) }));
+
+  fastify.delete('/', async (request, reply) => {
+    if (!recent(request, reply)) return;
+    try {
+      return { status: 'success', ...(await closeAccount(request.lightpayUser!)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
 
   fastify.delete('/connections/:id', async (request, reply) => {
     try {

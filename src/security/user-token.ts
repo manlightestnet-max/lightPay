@@ -16,6 +16,8 @@ export interface LightPayUser {
   emailVerified: boolean;
   phone: string | null;
   name: string | null;
+  /** When the person last entered their password (seconds since epoch). */
+  authTime: number;
 }
 
 export class UserTokenError extends Error {
@@ -46,6 +48,9 @@ const testKey = (): crypto.KeyObject | null => {
 };
 
 const b64json = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+
+/** Sensitive actions (withdraw, send, delete, credentials) need a sign-in from the last 10 minutes. */
+export const isRecentSignIn = (user: LightPayUser, maxAgeSeconds = 600) => Math.floor(Date.now() / 1000) - user.authTime <= maxAgeSeconds;
 
 export async function verifyUserToken(token: string): Promise<LightPayUser> {
   const parts = token.split('.');
@@ -87,5 +92,6 @@ export async function verifyUserToken(token: string): Promise<LightPayUser> {
     emailVerified: payload.email_verified === true,
     phone: payload.phone_number ?? null,
     name: payload.name ?? null,
+    authTime: typeof payload.auth_time === 'number' ? payload.auth_time : payload.iat,
   };
 }
