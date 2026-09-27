@@ -154,7 +154,6 @@ export class LedgerEngine {
         }
 
         const bucket: LedgerBucket = post.bucket ?? 'AVAILABLE';
-        const column = bucket === 'LOCKED' ? 'locked_balance' : 'available_balance';
         const currentBalance = BigInt(bucket === 'LOCKED' ? wallet.locked_balance : wallet.available_balance);
         let newBalance = currentBalance;
 
@@ -183,7 +182,9 @@ export class LedgerEngine {
 
         // Mise à jour du solde du wallet
         await client.query(
-          `UPDATE wallets SET ${column} = $1, updated_at = NOW() WHERE id = $2`,
+          bucket === 'LOCKED'
+            ? 'UPDATE wallets SET locked_balance = $1, updated_at = NOW() WHERE id = $2'
+            : 'UPDATE wallets SET available_balance = $1, updated_at = NOW() WHERE id = $2',
           [newBalance.toString(), post.walletId]
         );
 

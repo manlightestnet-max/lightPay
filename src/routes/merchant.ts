@@ -5,6 +5,20 @@ import { LedgerEngine, LedgerPosting } from '../db/ledger.js';
 import { requireAppAuth } from '../middleware/app-auth.js';
 import { encrypt3Des } from './gateways.js';
 import { Environment } from '../types/index.js';
+import { APP_ID_PATTERN, isReservedAppId } from '../security/app-identity.js';
+
+/** Fresh live/test API keys and webhook secret; only hashes of the API keys are stored. */
+const generateAppCredentials = () => {
+  const liveKey = `sec_live_${crypto.randomBytes(24).toString('hex')}`;
+  const testKey = `sec_test_${crypto.randomBytes(24).toString('hex')}`;
+  return {
+    liveKey,
+    testKey,
+    liveKeyHash: crypto.createHash('sha256').update(liveKey).digest('hex'),
+    testKeyHash: crypto.createHash('sha256').update(testKey).digest('hex'),
+    webhookSecret: `whsec_${crypto.randomBytes(24).toString('hex')}`,
+  };
+};
 
 /**
  * Récupère ou provisionne automatiquement le portefeuille marchand racine de l'application
@@ -46,23 +60,33 @@ export async function merchantRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: 'id and name are required' });
     }
 
-    const cleanId = id.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    const cleanId = String(id).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
 
-    // Génération des paires de clés indépendantes (Live vs Sandbox)
-    const rawLiveKey = `sec_live_${crypto.randomBytes(24).toString('hex')}`;
-    const liveKeyHash = crypto.createHash('sha256').update(rawLiveKey).digest('hex');
+    // ⛔ SECURITY: registration never overwrites an existing app (that would hand its keys
+    // to whoever calls this public route) and never creates a reserved identity.
+    if (!APP_ID_PATTERN.test(cleanId)) {
+      return reply.status(400).send({ error: 'INVALID_APP_ID', message: 'id: 3 to 50 characters, lowercase letters, digits, "_" or "-"' });
+    }
+    if (isReservedAppId(cleanId)) {
+      return reply.status(403).send({ error: 'RESERVED_APP_ID', message: 'This application id is reserved' });
+    }
 
-    const rawTestKey = `sec_test_${crypto.randomBytes(24).toString('hex')}`;
-    const testKeyHash = crypto.createHash('sha256').update(rawTestKey).digest('hex');
-
-    const webhookSecret = `whsec_${crypto.randomBytes(24).toString('hex')}`;
+    const { liveKey: rawLiveKey, testKey: rawTestKey, liveKeyHash, testKeyHash, webhookSecret } = generateAppCredentials();
 
     try {
+      const [inProd, inSandbox] = await Promise.all([
+        query('SELECT 1 FROM apps WHERE id = $1', [cleanId], 'production'),
+        query('SELECT 1 FROM apps WHERE id = $1', [cleanId], 'sandbox'),
+      ]);
+      if (inProd.length > 0 || inSandbox.length > 0) {
+        return reply.status(409).send({ error: 'APP_ID_TAKEN', message: 'This application id is already taken' });
+      }
+
       // 1. Enregistrer dans la base PRODUCTION
       await query(
         `INSERT INTO apps (id, name, api_key_hash, test_api_key_hash, webhook_url, webhook_secret, contact_email)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (id) DO UPDATE SET name = $2, api_key_hash = $3, test_api_key_hash = $4, webhook_secret = $6, contact_email = $7, updated_at = NOW()`,
+         ON CONFLICT (id) DO NOTHING`,
         [cleanId, name, liveKeyHash, testKeyHash, webhook_url || null, webhookSecret, contact_email || null],
         'production'
       );
@@ -71,7 +95,7 @@ export async function merchantRoutes(fastify: FastifyInstance) {
       await query(
         `INSERT INTO apps (id, name, api_key_hash, test_api_key_hash, webhook_url, webhook_secret, contact_email)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (id) DO UPDATE SET name = $2, api_key_hash = $3, test_api_key_hash = $4, webhook_secret = $6, contact_email = $7, updated_at = NOW()`,
+         ON CONFLICT (id) DO NOTHING`,
         [cleanId, name, liveKeyHash, testKeyHash, webhook_url || null, webhookSecret, contact_email || null],
         'sandbox'
       );
@@ -110,6 +134,25 @@ export async function merchantRoutes(fastify: FastifyInstance) {
   // =========================================================================
   fastify.register(async (protectedRoutes) => {
     protectedRoutes.addHook('preHandler', requireAppAuth);
+
+    /**
+     * 0.b ROTATION DES CLÉS (clé actuelle obligatoire)
+     * Remplace les clés live/test et le secret webhook de l'application appelante. Les
+     * anciennes clés cessent de fonctionner immédiatement.
+     */
+    protectedRoutes.post('/apps/rotate-keys', async (request: FastifyRequest, reply: FastifyReply) => {
+      const appId = request.appData!.id;
+      if (isReservedAppId(appId)) {
+        return reply.status(403).send({ error: 'RESERVED_APP_ID', message: 'Reserved identities are managed from the server environment' });
+      }
+      const { liveKey, testKey, liveKeyHash, testKeyHash, webhookSecret } = generateAppCredentials();
+      const sql = 'UPDATE apps SET api_key_hash = $2, test_api_key_hash = $3, webhook_secret = $4, updated_at = NOW() WHERE id = $1';
+      await Promise.all([
+        query(sql, [appId, liveKeyHash, testKeyHash, webhookSecret], 'production'),
+        query(sql, [appId, liveKeyHash, testKeyHash, webhookSecret], 'sandbox'),
+      ]);
+      return reply.send({ status: 'success', app_id: appId, live_api_key: liveKey, test_api_key: testKey, webhook_secret: webhookSecret });
+    });
 
     /**
      * 1. CONSULTER LE SOLDE DU WALLET MARCHAND (Son Solde)

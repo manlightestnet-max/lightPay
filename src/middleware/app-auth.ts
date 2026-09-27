@@ -4,6 +4,7 @@ import { query } from '../db/pool.js';
 import { config } from '../config/index.js';
 import { Environment } from '../types/index.js';
 import { checkRateLimit } from './quota-enforcer.js';
+import { MAINAPP_KEY_PREFIX, isReservedAppId, verifyMainappKey } from '../security/app-identity.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -59,7 +60,29 @@ export async function requireAppAuth(request: FastifyRequest, reply: FastifyRepl
     return;
   }
 
-  // 2. Accès Application via Bearer API Key directe
+  // 2. MAINAPP : uniquement avec sa clé sec_main_…, vérifiée contre l'empreinte scrypt de
+  //    l'environnement (MAINAPP_KEY_HASH). Aucune clé en base ne peut ouvrir mainapp.
+  const presentedKey = bearerToken || (request.headers['x-api-key'] as string) || '';
+  if (presentedKey.startsWith(MAINAPP_KEY_PREFIX)) {
+    const verdict = verifyMainappKey(presentedKey);
+    if (verdict === 'throttled') {
+      return reply.status(429).send({ error: 'Too Many Requests', message: 'Too many failed attempts. Retry in a minute.' });
+    }
+    if (verdict !== 'ok') {
+      return reply.status(403).send({ error: 'Forbidden', message: 'Invalid application credentials or application disabled' });
+    }
+    request.appData = {
+      id: 'mainapp',
+      name: 'LightPay MainApp',
+      environment: request.headers['x-environment'] === 'sandbox' ? 'sandbox' : 'production',
+      webhookSecret: '',
+    };
+    const idempotencyKey = request.headers['idempotency-key'] as string;
+    if (idempotencyKey) request.idempotencyKey = idempotencyKey;
+    return;
+  }
+
+  // 3. Accès Application via Bearer API Key directe (jamais une identité réservée)
   if (bearerToken) {
     const keyHash = crypto.createHash('sha256').update(bearerToken).digest('hex');
     const apps = await query(
@@ -67,7 +90,7 @@ export async function requireAppAuth(request: FastifyRequest, reply: FastifyRepl
       [keyHash]
     );
 
-    if (apps.length > 0) {
+    if (apps.length > 0 && !isReservedAppId(apps[0].id)) {
       const app = apps[0];
       const isTest = timingSafeCompare(app.test_api_key_hash || '', keyHash);
       const rpmLimit = app.rate_limit_rpm || 60;
@@ -97,7 +120,7 @@ export async function requireAppAuth(request: FastifyRequest, reply: FastifyRepl
     }
   }
 
-  // 3. Accès Application via X-App-Id + X-Api-Key
+  // 4. Accès Application via X-App-Id + X-Api-Key (jamais une identité réservée)
   const appId = request.headers['x-app-id'] as string;
   const apiKey = request.headers['x-api-key'] as string;
 
@@ -116,7 +139,7 @@ export async function requireAppAuth(request: FastifyRequest, reply: FastifyRepl
     const isLiveMatch = timingSafeCompare(liveHash, keyHash);
     const isTestMatch = timingSafeCompare(testHash, keyHash);
 
-    if (apps.length === 0 || !apps[0].is_active || (!isLiveMatch && !isTestMatch)) {
+    if (apps.length === 0 || isReservedAppId(apps[0].id) || !apps[0].is_active || (!isLiveMatch && !isTestMatch)) {
       return reply.status(403).send({
         error: 'Forbidden',
         message: 'Invalid application credentials or application disabled',
