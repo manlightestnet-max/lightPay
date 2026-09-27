@@ -23,7 +23,8 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  *   createNav({ root, screens: { name: { parent, enter(param) } }, resolve(route) -> [name, param], onRootBack })
  *     -> { start(), go(route, replace?), back(), home(), current() }   (hash routes #/route; the
  *        browser back button and every [data-back] button use the same history)
- *   mountAuth(onDone, { title?, subtitle?, onBack? })   sign in / sign up / reset, in <section id="auth">
+ *   mountAuth(onDone, { title?, subtitle?, onBack?, aside? })   sign in / sign up / reset, in <section id="auth">
+ *     (aside: a brand panel shown beside the form on wide screens)
  */
 export const CLIENT = (env: string) => `
   const LP = (() => {
@@ -194,7 +195,10 @@ export const CLIENT = (env: string) => `
     ]);
   }
   function showOnly(section) {
-    document.querySelectorAll('.app > .screen').forEach(function (s) { s.hidden = s !== section; });
+    document.querySelectorAll('.screen').forEach(function (s) { s.hidden = s !== section; });
+    // Console layout: the menu and top bar go away on the sign-in screen.
+    const frame = document.querySelector('.console-shell');
+    if (frame) frame.hidden = !frame.contains(section);
   }
 
   // Hash-route navigator: #/route. The on-screen back button and the browser back button share
@@ -212,14 +216,20 @@ export const CLIENT = (env: string) => `
       else if (stack.length > 1 && stack[stack.length - 2] === route) stack.pop();
       else if (stack[stack.length - 1] !== route) stack.push(route);
       replacing = false;
+      const sameScreen = current && current.name === resolved[0];
       current = { route: route, name: resolved[0], param: resolved[1] };
       const section = document.querySelector('[data-screen="' + resolved[0] + '"]');
       if (section) {
         showOnly(section);
         const h = section.querySelector('h1');
-        if (h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+        if (h && !sameScreen) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
       }
-      window.scrollTo(0, 0);
+      // A list + detail screen keeps its scroll when another item is opened.
+      if (!sameScreen) {
+        window.scrollTo(0, 0);
+        const body = document.querySelector('.console-body');
+        if (body) body.scrollTop = 0;
+      }
       const def = opts.screens[resolved[0]];
       if (def.enter) def.enter(resolved[1]);
     }
@@ -298,7 +308,8 @@ export const CLIENT = (env: string) => `
         } catch (err) { say(msg, err.message, 'err'); }
         finally { btn.disabled = false; }
       });
-      box.replaceChildren(bar, form);
+      if (o.aside) box.replaceChildren(o.aside, el('div', { class: 'auth-main' }, [bar, form]));
+      else box.replaceChildren(bar, form);
       showOnly(box);
       const first = fields[0]; if (first) first.focus();
     }

@@ -6,6 +6,7 @@ import { holdRoutes } from './routes/holds.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { checkoutPublicRoutes } from './routes/checkout-public.js';
 import { meRoutes } from './routes/me.js';
+import { developerRoutes } from './routes/developer.js';
 import { providerRoutes } from './routes/providers.js';
 import { sweepPendingCollections } from './db/checkout.js';
 import { pendingPayouts, resolvePayout } from './db/payouts.js';
@@ -200,6 +201,7 @@ server.register(holdRoutes, { prefix: '/v1/holds' });
 server.register(checkoutRoutes, { prefix: '/v1' });
 server.register(checkoutPublicRoutes);
 server.register(meRoutes, { prefix: '/v1/me' });
+server.register(developerRoutes, { prefix: '/v1/me/developer' });
 server.register(providerRoutes, { prefix: '/v1/providers' });
 
 // Sweeper: pending collections and payouts are re-checked with their provider every minute

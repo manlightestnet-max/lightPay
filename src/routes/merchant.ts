@@ -1,133 +1,22 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import crypto from 'crypto';
 import { query } from '../db/pool.js';
 import { LedgerEngine, LedgerPosting } from '../db/ledger.js';
 import { requireAppAuth } from '../middleware/app-auth.js';
 import { encrypt3Des } from './gateways.js';
-import { Environment } from '../types/index.js';
-import { APP_ID_PATTERN, isReservedAppId } from '../security/app-identity.js';
-
-/** Fresh live/test API keys and webhook secret; only hashes of the API keys are stored. */
-const generateAppCredentials = () => {
-  const liveKey = `sec_live_${crypto.randomBytes(24).toString('hex')}`;
-  const testKey = `sec_test_${crypto.randomBytes(24).toString('hex')}`;
-  return {
-    liveKey,
-    testKey,
-    liveKeyHash: crypto.createHash('sha256').update(liveKey).digest('hex'),
-    testKeyHash: crypto.createHash('sha256').update(testKey).digest('hex'),
-    webhookSecret: `whsec_${crypto.randomBytes(24).toString('hex')}`,
-  };
-};
-
-/**
- * Récupère ou provisionne automatiquement le portefeuille marchand racine de l'application
- */
-async function getOrCreateMerchantWallet(appId: string, environment: Environment, currency = 'CREDIT') {
-  const existing = await query(
-    'SELECT * FROM wallets WHERE app_id = $1 AND account_type = \'MERCHANT\' AND environment = $2 AND currency = $3',
-    [appId, environment, currency],
-    environment
-  );
-
-  if (existing.length > 0) {
-    return existing[0];
-  }
-
-  // Provisionnement automatique du wallet marchand
-  const created = await query(
-    `INSERT INTO wallets (app_id, account_id, account_type, currency, environment, metadata)
-     VALUES ($1, $1, 'MERCHANT', $2, $3, '{"role":"merchant_root"}')
-     ON CONFLICT (app_id, account_id, currency, environment)
-     DO UPDATE SET updated_at = NOW()
-     RETURNING *`,
-    [appId, currency, environment],
-    environment
-  );
-
-  return created[0];
-}
+import { isReservedAppId } from '../security/app-identity.js';
+import { generateAppCredentials, getOrCreateMerchantWallet } from '../db/apps.js';
 
 export async function merchantRoutes(fastify: FastifyInstance) {
   /**
-   * 0. ONBOARDING / CRÉATION D'APPLICATION MARCHANDE (Depuis le Dashboard)
-   * Accessible publiquement pour permettre à un développeur de générer son application grossiste
+   * 0. Apps are created from the owner's LightPay account (developer space, signed in):
+   *    POST /v1/me/developer/apps. This public route used to create apps for anyone.
    */
-  fastify.post('/apps/register', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id, name, webhook_url, contact_email } = request.body as any;
-
-    if (!id || !name) {
-      return reply.status(400).send({ error: 'id and name are required' });
-    }
-
-    const cleanId = String(id).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
-
-    // ⛔ SECURITY: registration never overwrites an existing app (that would hand its keys
-    // to whoever calls this public route) and never creates a reserved identity.
-    if (!APP_ID_PATTERN.test(cleanId)) {
-      return reply.status(400).send({ error: 'INVALID_APP_ID', message: 'id: 3 to 50 characters, lowercase letters, digits, "_" or "-"' });
-    }
-    if (isReservedAppId(cleanId)) {
-      return reply.status(403).send({ error: 'RESERVED_APP_ID', message: 'This application id is reserved' });
-    }
-
-    const { liveKey: rawLiveKey, testKey: rawTestKey, liveKeyHash, testKeyHash, webhookSecret } = generateAppCredentials();
-
-    try {
-      const [inProd, inSandbox] = await Promise.all([
-        query('SELECT 1 FROM apps WHERE id = $1', [cleanId], 'production'),
-        query('SELECT 1 FROM apps WHERE id = $1', [cleanId], 'sandbox'),
-      ]);
-      if (inProd.length > 0 || inSandbox.length > 0) {
-        return reply.status(409).send({ error: 'APP_ID_TAKEN', message: 'This application id is already taken' });
-      }
-
-      // 1. Enregistrer dans la base PRODUCTION
-      await query(
-        `INSERT INTO apps (id, name, api_key_hash, test_api_key_hash, webhook_url, webhook_secret, contact_email)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (id) DO NOTHING`,
-        [cleanId, name, liveKeyHash, testKeyHash, webhook_url || null, webhookSecret, contact_email || null],
-        'production'
-      );
-
-      // 2. Enregistrer dans la base SANDBOX
-      await query(
-        `INSERT INTO apps (id, name, api_key_hash, test_api_key_hash, webhook_url, webhook_secret, contact_email)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (id) DO NOTHING`,
-        [cleanId, name, liveKeyHash, testKeyHash, webhook_url || null, webhookSecret, contact_email || null],
-        'sandbox'
-      );
-
-      // 3. Provisionner le Wallet Marchand en Production
-      const prodWallet = await getOrCreateMerchantWallet(cleanId, 'production', 'CREDIT');
-
-      // 4. Provisionner le Wallet Marchand en Sandbox
-      const sandboxWallet = await getOrCreateMerchantWallet(cleanId, 'sandbox', 'CREDIT');
-
-      return reply.status(201).send({
-        status: 'success',
-        app: {
-          id: cleanId,
-          name,
-          webhook_url: webhook_url || null,
-          contact_email: contact_email || null,
-          is_active: true,
-          created_at: new Date().toISOString(),
-        },
-        merchant_wallets: {
-          production: prodWallet.id,
-          sandbox: sandboxWallet.id,
-        },
-        live_api_key: rawLiveKey,
-        test_api_key: rawTestKey,
-        webhook_secret: webhookSecret,
-      });
-    } catch (err: any) {
-      return reply.status(500).send({ error: 'Failed to create merchant application', details: err.message });
-    }
-  });
+  fastify.post('/apps/register', async (_request: FastifyRequest, reply: FastifyReply) =>
+    reply.status(410).send({
+      error: 'MOVED_TO_ACCOUNT',
+      message: 'Créez vos apps depuis votre compte LightPay, espace Développeurs (checkout.smlab.xyz/account#/dev).',
+    })
+  );
 
   // =========================================================================
   // ROUTES PROTÉGÉES PAR LA CLÉ D'API DU MARCHAND (sec_live_... ou sec_test_...)
@@ -145,11 +34,12 @@ export async function merchantRoutes(fastify: FastifyInstance) {
       if (isReservedAppId(appId)) {
         return reply.status(403).send({ error: 'RESERVED_APP_ID', message: 'Reserved identities are managed from the server environment' });
       }
-      const { liveKey, testKey, liveKeyHash, testKeyHash, webhookSecret } = generateAppCredentials();
-      const sql = 'UPDATE apps SET api_key_hash = $2, test_api_key_hash = $3, webhook_secret = $4, updated_at = NOW() WHERE id = $1';
+      const { liveKey, testKey, liveKeyHash, testKeyHash, webhookSecret, liveHint, testHint } = generateAppCredentials();
+      const sql =
+        'UPDATE apps SET api_key_hash = $2, test_api_key_hash = $3, webhook_secret = $4, live_key_hint = $5, test_key_hint = $6, keys_rotated_at = NOW(), updated_at = NOW() WHERE id = $1';
       await Promise.all([
-        query(sql, [appId, liveKeyHash, testKeyHash, webhookSecret], 'production'),
-        query(sql, [appId, liveKeyHash, testKeyHash, webhookSecret], 'sandbox'),
+        query(sql, [appId, liveKeyHash, testKeyHash, webhookSecret, liveHint, testHint], 'production'),
+        query(sql, [appId, liveKeyHash, testKeyHash, webhookSecret, liveHint, testHint], 'sandbox'),
       ]);
       return reply.send({ status: 'success', app_id: appId, live_api_key: liveKey, test_api_key: testKey, webhook_secret: webhookSecret });
     });

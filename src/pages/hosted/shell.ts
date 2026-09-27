@@ -32,8 +32,8 @@ export const topbar = (o: { title?: string; back?: boolean; brand?: boolean; env
   }</h1><span class="topbar-end">${o.env === 'sandbox' ? '<span class="badge">Test</span>' : ''}${themeToggle()}${o.end ?? ''}</span></header>`;
 
 /** Full document: nonce'd design system + page css, page body in .app, shared client + page script. */
-export const shell = (o: { title: string; nonce: string; env: string; body: string; script: string; css?: string }) => `<!doctype html>
-<html lang="fr">
+export const shell = (o: { title: string; nonce: string; env: string; body: string; script: string; css?: string; console?: boolean }) => `<!doctype html>
+<html lang="fr"${o.console ? ' class="console-page"' : ''}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -44,7 +44,7 @@ export const shell = (o: { title: string; nonce: string; env: string; body: stri
 <style nonce="${o.nonce}">${CSS}${o.css ?? ''}</style>
 </head>
 <body>
-<div class="app">
+<div class="app${o.console ? ' console' : ''}">
 ${o.body}
 <section class="screen" id="auth" hidden></section>
 </div>
