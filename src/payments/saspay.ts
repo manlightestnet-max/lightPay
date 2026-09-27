@@ -39,6 +39,12 @@ const customerOf = (op: RailOperation) => {
   };
 };
 
+/** "213.00" -> 213n (XAF has no minor unit). */
+const whole = (v: unknown): bigint | undefined => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? BigInt(Math.round(n)) : undefined;
+};
+
 const mapStatus = (status: string): RailResult['status'] => {
   const s = String(status || '').toUpperCase();
   if (s === 'SUCCESS' || s === 'SUCCEEDED' || s === 'COMPLETED') return 'SUCCEEDED';
@@ -106,7 +112,13 @@ export class SasPayProvider implements MobileMoneyProvider {
     if (!op.providerReference) return { status: 'PENDING' };
     const r = await this.call('GET', `/payments/${encodeURIComponent(op.providerReference)}/verify/`);
     const status = mapStatus(r.status);
-    return { status, providerReference: r.id ?? op.providerReference, failureCode: status === 'FAILED' ? `PROVIDER_${String(r.status).toUpperCase()}` : undefined };
+    return {
+      status,
+      providerReference: r.id ?? op.providerReference,
+      failureCode: status === 'FAILED' ? `PROVIDER_${String(r.status).toUpperCase()}` : undefined,
+      providerFee: whole(r.client_fee ?? r.amounts?.fee),
+      charged: whole(r.debited_amount ?? r.amounts?.charged),
+    };
   }
 
   async requestPayout(op: RailOperation): Promise<RailResult> {

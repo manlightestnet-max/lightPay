@@ -34,6 +34,9 @@ export interface RailResult {
   status: RailStatus;
   failureCode?: string;
   providerReference?: string;
+  /** Operator fee and exact amount debited from the payer, when the provider reports them. */
+  providerFee?: bigint;
+  charged?: bigint;
 }
 
 export interface MobileMoneyProvider {

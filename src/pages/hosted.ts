@@ -52,6 +52,9 @@ const CSS = `
   .list li:first-child { border-top:0; } .grow { flex:1; min-width:0; } .num { font-variant-numeric:tabular-nums; font-weight:600; }
   .scopes li::before { content:"✓"; color:var(--accent); font-weight:700; }
   .h2 { font-size:15px; } .mt { margin-top:12px; } .center { text-align:center; }
+  .fees { margin-top:16px; border:1px solid var(--line); border-radius:12px; padding:10px 14px; font-size:13px; }
+  .fees div { display:flex; justify-content:space-between; gap:12px; padding:3px 0; color:var(--muted); }
+  .fees .total { color:var(--text); font-weight:650; border-top:1px solid var(--line); margin-top:6px; padding-top:8px; }
   .tabs { display:flex; gap:4px; margin-bottom:18px; overflow-x:auto; scrollbar-width:none; }
   .tab { flex:1; height:34px; border:1px solid var(--line); border-radius:99px; background:transparent; color:var(--muted); font:inherit; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap; }
   .tab[aria-selected="true"] { background:var(--text); color:var(--bg); border-color:var(--text); }
@@ -603,6 +606,7 @@ export const payPage = (nonce: string, sessionId: string, env: string) =>
       </div>
       <label for="msisdn">Numéro de téléphone</label>
       <input id="msisdn" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16">
+      <div class="fees" id="feeBox" aria-live="polite"></div>
       <button class="btn" id="payMomo" type="button">Payer</button>
       <p class="muted mt center">Aucun compte requis</p>
     </div>
@@ -626,7 +630,24 @@ export const payPage = (nonce: string, sessionId: string, env: string) =>
   const err = (t) => { $('msg').className = 'msg err'; $('msg').textContent = t; };
   const info = (t) => { $('msg').className = 'msg'; $('msg').textContent = t; };
 
-  document.querySelectorAll('.net').forEach((b) => b.addEventListener('click', () => { network = b.dataset.net; document.querySelectorAll('.net').forEach((o) => o.setAttribute('aria-pressed', String(o === b))); }));
+  document.querySelectorAll('.net').forEach((b) => b.addEventListener('click', () => { network = b.dataset.net; document.querySelectorAll('.net').forEach((o) => o.setAttribute('aria-pressed', String(o === b))); renderFees(); }));
+
+  // Full transparency: amount, LightPay fee, operator fee, total, before paying.
+  function renderFees() {
+    const q = session && session.fees && session.fees[network];
+    if (!q) { $('feeBox').hidden = true; $('payMomo').textContent = 'Payer'; return; }
+    const cur = session.currency;
+    const row = (label, value, cls) => { const d = document.createElement('div'); if (cls) d.className = cls; const a = document.createElement('span'); a.textContent = label; const b = document.createElement('span'); b.textContent = value; d.append(a, b); return d; };
+    const approx = q.estimated ? '≈ ' : '';
+    $('feeBox').replaceChildren(
+      row(session.kind === 'DEPOSIT' ? 'Recharge' : 'Montant', LP.money(q.amount, cur)),
+      row('Frais LightPay', LP.money(q.lightpay_fee, cur)),
+      row('Frais opérateur', q.operator_fee === '0' ? 'inclus' : approx + LP.money(q.operator_fee, cur)),
+      row('Total à payer', approx + LP.money(q.total, cur), 'total'),
+    );
+    $('feeBox').hidden = false;
+    $('payMomo').textContent = 'Payer ' + approx + LP.money(q.total, cur);
+  }
   document.querySelectorAll('#methods .opt').forEach((b) => b.addEventListener('click', () => { method = b.dataset.m; document.querySelectorAll('#methods .opt').forEach((o) => o.setAttribute('aria-pressed', String(o === b))); info(''); openMethod(); }));
 
   async function openWallet() {
@@ -651,6 +672,7 @@ export const payPage = (nonce: string, sessionId: string, env: string) =>
     $('desc').textContent = s.kind === 'DEPOSIT' ? '' : [s.description, s.reference].filter(Boolean).join(' · ');
     $('escrow').hidden = !s.escrow;
     $('summary').hidden = false;
+    renderFees();
     if (s.status === 'COMPLETED') {
       stop(); info(''); show('done');
       $('doneTitle').textContent = s.kind === 'DEPOSIT' ? 'Wallet rechargé' : 'Paiement confirmé';
@@ -658,7 +680,9 @@ export const payPage = (nonce: string, sessionId: string, env: string) =>
       else if (s.kind === 'DEPOSIT') { $('back').href = s.environment === 'sandbox' ? '/account?env=sandbox' : '/account'; $('back').textContent = 'Retour à mon compte'; $('back').hidden = false; }
     } else if (s.status === 'PROCESSING') {
       show('waiting');
-      $('waitText').textContent = 'Demande envoyée au ' + (s.last_attempt ? s.last_attempt.msisdn : 'numéro indiqué') + '. Composez votre code secret pour confirmer.';
+      const a = s.last_attempt;
+      const total = a && a.charged ? LP.money(a.charged, s.currency) : (s.fees && a && s.fees[a.network] ? (s.fees[a.network].estimated ? '≈ ' : '') + LP.money(s.fees[a.network].total, s.currency) : '');
+      $('waitText').textContent = 'Demande envoyée au ' + (a ? a.msisdn : 'numéro indiqué') + (total ? ' pour ' + total + ' (frais compris)' : '') + '. Composez votre code secret pour confirmer.';
       start();
     } else if (s.status === 'OPEN') {
       const wasWaiting = !$('waiting').hidden || !$('loading').hidden;

@@ -68,7 +68,10 @@ http
       if (req.method === 'GET' && m) {
         const tx = txs.get(m[2]);
         if (!tx) return send(res, 404, { success: false, error: { message: 'Transaction introuvable', code: 'not_found' }, code: 404 });
-        return send(res, 200, { message: 'fetched', id: tx.id, status: tx.status });
+        // Like SasPay (ADD_ON): the payer is debited amount + 6.5 % fee.
+        const requested = Math.round(Number(tx.body.amount ?? 0));
+        const fee = Math.ceil(requested * 0.065);
+        return send(res, 200, { message: 'fetched', id: tx.id, status: tx.status, requested_amount: `${requested}.00`, client_fee: `${fee}.00`, debited_amount: `${requested + fee}.00`, net_amount: `${requested}.00` });
       }
       return send(res, 404, { success: false, error: { message: 'Not found', code: 'not_found' }, code: 404 });
     });

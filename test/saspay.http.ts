@@ -65,17 +65,24 @@ async function main() {
 
   // 1. Guest pays 35 000 by MTN through SasPay; SasPay's webhook completes it.
   const s1 = await req('POST', '/v1/checkout/sessions', { key: APP_KEY, body: { amount: 35000, payee: conn.id, reference: `SAS-${RUN}-1` }, idem: `sas-${RUN}-1` });
+  const before = (await req('GET', `/v1/checkout/public/sessions/${s1.body.session.id}`)).body.session;
+  const q = before?.fees?.MTN_MOMO_COG;
+  check('fees shown before paying: 35 000 + 5 LightPay + ≈2 276 operator = ≈37 281',
+    q?.amount === '35000' && q?.lightpay_fee === '5' && q?.operator_fee === '2276' && q?.total === '37281' && q?.estimated === true, JSON.stringify(q));
   const start = await req('POST', `/v1/checkout/public/sessions/${s1.body.session.id}/mobile-money`, { body: { msisdn: '06 555 12 33', network: 'MTN_MOMO_COG' } });
   check('collection pushed to SasPay', start.status === 200 && start.body.attempt?.status === 'PENDING', `${start.status} ${start.body.message ?? ''}`);
   const done = await waitSession(s1.body.session.id, (s) => s.status === 'COMPLETED');
   check('SasPay SUCCESS -> session COMPLETED, funds locked for the seller', done?.status === 'COMPLETED');
   const requests = (await (await fetch(`${FAKE}/_requests`)).json()) as any[];
   const softpay = requests.find((r) => r.url === '/api/v1/payments/softpay/' && r.body.customer?.phone === '242065551233');
-  check('request body matches SasPay: CG / mtn_cg / "35000.00" / XAF / ADD_ON',
-    softpay?.body.country === 'CG' && softpay?.body.network === 'mtn_cg' && softpay?.body.amount === '35000.00' && softpay?.body.currency === 'XAF' && softpay?.body.fee_charge_mode === 'ADD_ON',
+  check('SasPay asked for 35 005 (amount + LightPay fee): CG / mtn_cg / XAF / ADD_ON',
+    softpay?.body.country === 'CG' && softpay?.body.network === 'mtn_cg' && softpay?.body.amount === '35005.00' && softpay?.body.currency === 'XAF' && softpay?.body.fee_charge_mode === 'ADD_ON',
     JSON.stringify(softpay?.body ?? {}).slice(0, 160));
   check('Idempotency-Key sent as a UUID', /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(softpay?.idempotencyKey ?? ''), softpay?.idempotencyKey);
   check('SasPay was asked to verify (payload never trusted alone)', requests.some((r) => /\/payments\/.+\/verify\/$/.test(r.url)));
+  check('exact amount debited reported (37 281)', done?.last_attempt?.charged === '37281' && done?.last_attempt?.operator_fee === '2276', JSON.stringify(done?.last_attempt));
+  const seller = (await req('GET', '/v1/me', { user: merchant })).body.wallet;
+  check('seller receives exactly 35 000 (locked), fees never taken from him', seller?.locked_balance === '35000', seller?.locked_balance);
 
   // 2. Refused by SasPay -> the session reopens.
   const s2 = await req('POST', '/v1/checkout/sessions', { key: APP_KEY, body: { amount: 5000, payee: conn.id }, idem: `sas-${RUN}-2` });

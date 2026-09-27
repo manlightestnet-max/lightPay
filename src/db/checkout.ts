@@ -5,6 +5,7 @@ import { query } from './pool.js';
 import { Environment } from '../types/index.js';
 import { MOBILE_NETWORKS, MobileNetwork, RailOperation, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
 import { PayoutRow, sendPayout } from './payouts.js';
+import { FeeQuote, lightpayCollectionFee, quote } from '../payments/fees.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { LightPayUser } from '../security/user-token.js';
 import { getConnection, payeeWallet, requireScope, userWallet } from './connect.js';
@@ -74,6 +75,9 @@ interface Attempt {
   status: 'PENDING' | 'SUCCEEDED' | 'FAILED';
   failure_code: string | null;
   provider_reference: string | null;
+  lightpay_fee: string;
+  provider_fee: string | null;
+  charged_amount: string | null;
   created_at: Date;
 }
 
@@ -202,7 +206,7 @@ export async function publicView(id: string) {
   const [payee] = await query(`SELECT metadata FROM wallets WHERE id = $1`, [session.payee_wallet_id], environment);
   const payeeName = payee?.metadata?.name ?? payee?.metadata?.display_name ?? null;
   const [attempt] = await query(
-    `SELECT status, failure_code, network, msisdn, created_at FROM collection_attempts WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    `SELECT status, failure_code, network, msisdn, created_at, amount, lightpay_fee, provider_fee, charged_amount FROM collection_attempts WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [session.id],
     environment
   );
@@ -222,8 +226,19 @@ export async function publicView(id: string) {
     return_url: session.status === 'COMPLETED' ? session.return_url : null,
     cancel_url: session.cancel_url,
     expires_at: session.expires_at,
+    // What the payer will pay by mobile money, per network (exact once the operator reports it).
+    fees: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(BigInt(session.amount), providerFor(n).name)])) as Record<MobileNetwork, FeeQuote>,
     last_attempt: attempt
-      ? { status: attempt.status, failure_code: attempt.failure_code, network: attempt.network, msisdn: maskMsisdn(attempt.msisdn), at: attempt.created_at }
+      ? {
+          status: attempt.status,
+          failure_code: attempt.failure_code,
+          network: attempt.network,
+          msisdn: maskMsisdn(attempt.msisdn),
+          at: attempt.created_at,
+          lightpay_fee: String(attempt.lightpay_fee),
+          operator_fee: attempt.provider_fee === null ? null : String(attempt.provider_fee),
+          charged: attempt.charged_amount === null ? null : String(attempt.charged_amount),
+        }
       : null,
   };
 }
@@ -252,13 +267,15 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   if (!msisdn) throw new CheckoutError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81', 'INVALID_MSISDN');
 
   const provider = providerFor(network as MobileNetwork);
+  const lightpayFee = lightpayCollectionFee(BigInt(session.amount));
   let attempt: Attempt;
   try {
     attempt = (
       await query(
-        `INSERT INTO collection_attempts (id, session_id, environment, provider, network, msisdn, amount, currency)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [newId('ca_'), session.id, environment, provider.name, network, msisdn, session.amount, session.currency],
+        `INSERT INTO collection_attempts (id, session_id, environment, provider, network, msisdn, amount, currency, lightpay_fee)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        // The provider collects the amount + LightPay's fee; the operator fee comes on top.
+        [newId('ca_'), session.id, environment, provider.name, network, msisdn, (BigInt(session.amount) + lightpayFee).toString(), session.currency, lightpayFee.toString()],
         environment
       )
     )[0];
@@ -316,6 +333,13 @@ async function resolveAttempt(attempt: Attempt) {
       await query(`UPDATE collection_attempts SET provider_reference = $2 WHERE id = $1`, [attempt.id, result.providerReference], attempt.environment);
       if (result.status === 'PENDING') result = await provider.collectionStatus({ ...railOp(attempt), providerReference: result.providerReference });
     }
+    if (result.providerFee !== undefined || result.charged !== undefined) {
+      await query(
+        `UPDATE collection_attempts SET provider_fee = COALESCE($2, provider_fee), charged_amount = COALESCE($3, charged_amount), updated_at = NOW() WHERE id = $1`,
+        [attempt.id, result.providerFee?.toString() ?? null, result.charged?.toString() ?? null],
+        attempt.environment
+      );
+    }
     if (result.status === 'PENDING') return;
     if (result.status === 'FAILED') return await failAttempt(attempt, result.failureCode ?? 'FAILED');
     return await completeCollection(attempt, result.providerReference);
@@ -351,9 +375,15 @@ async function failAttempt(attempt: Attempt, failureCode: string) {
 async function completeCollection(attempt: Attempt, providerReference?: string) {
   const env = attempt.environment;
   const [session] = await query(`SELECT * FROM checkout_sessions WHERE id = $1`, [attempt.session_id], env);
-  const amount = BigInt(attempt.amount);
+  const gross = BigInt(attempt.amount);
+  const lightpayFee = BigInt(attempt.lightpay_fee ?? 0);
+  const amount = gross - lightpayFee; // what the payee / wallet receives
   const fee = BigInt(session.fee_amount);
   const inflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, attempt.currency);
+  const lightpayFees = lightpayFee > 0n ? await lightpayFeeWallet(env, attempt.currency) : null;
+  const feePosting = lightpayFees
+    ? [{ walletId: lightpayFees, direction: 'CREDIT' as const, amount: lightpayFee, description: `Frais LightPay - ${attempt.id}` }]
+    : [];
 
   if (session.kind === 'DEPOSIT') {
     const deposit = await LedgerEngine.executeTransaction({
@@ -366,8 +396,9 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
       reference: session.reference ?? session.id,
       metadata: { checkout_session: session.id, attempt: attempt.id, provider: attempt.provider, network: attempt.network, provider_reference: providerReference, deposit: true },
       postings: [
-        { walletId: inflow, direction: 'DEBIT', amount, description: `Mobile money in [${attempt.network}] - ${attempt.id}` },
+        { walletId: inflow, direction: 'DEBIT', amount: gross, description: `Mobile money in [${attempt.network}] - ${attempt.id}` },
         { walletId: session.payee_wallet_id, direction: 'CREDIT', amount, description: 'Recharge du wallet' },
+        ...feePosting,
       ],
     });
     return closeSession(session, attempt, providerReference, { payerWalletId: null, payerType: 'GUEST', holdId: null, paymentTx: (deposit as any).transactionId ?? (deposit as any).transaction?.id ?? null });
@@ -386,8 +417,9 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
     reference: session.reference ?? session.id,
     metadata: { checkout_session: session.id, attempt: attempt.id, provider: attempt.provider, network: attempt.network, provider_reference: providerReference },
     postings: [
-      { walletId: inflow, direction: 'DEBIT', amount, description: `Mobile money in [${attempt.network}] - ${attempt.id}` },
+      { walletId: inflow, direction: 'DEBIT', amount: gross, description: `Mobile money in [${attempt.network}] - ${attempt.id}` },
       { walletId: payer.id, direction: 'CREDIT', amount, description: `Guest top-up for ${session.id}` },
+      ...feePosting,
     ],
   });
 
@@ -472,6 +504,11 @@ async function closeSession(
 }
 
 // ---------------------------------------------------------------- settlement helpers
+
+/** LightPay's own revenue (fees on mobile-money collections). */
+async function lightpayFeeWallet(environment: Environment, currency: string): Promise<string> {
+  return (await getOrCreateWallet(environment, 'mainapp', 'LIGHTPAY_FEES', 'PLATFORM', currency, { role: 'lightpay_fee_revenue' })).id;
+}
 
 export async function merchantWallet(appId: string, environment: Environment, currency: string): Promise<string> {
   const wallet = await getOrCreateWallet(environment, appId, appId, 'MERCHANT', currency, { role: 'merchant_root' });
