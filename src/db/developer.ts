@@ -24,7 +24,7 @@ export class DeveloperError extends Error {
 
 const MAX_APPS_PER_OWNER = 10;
 
-const APP_COLUMNS = `id, name, webhook_url, redirect_uris, is_active, max_amount_per_tx::text, daily_volume_limit::text,
+const APP_COLUMNS = `id, name, webhook_url, redirect_uris, embed_origins, is_active, max_amount_per_tx::text, daily_volume_limit::text,
   live_key_hint, test_key_hint, keys_rotated_at, contact_email, created_at, updated_at`;
 
 export interface AppView {
@@ -32,6 +32,8 @@ export interface AppView {
   name: string;
   webhook_url: string | null;
   redirect_uris: string[];
+  /** Sites allowed to open the payment dialog (lightpay.js). */
+  embed_origins: string[];
   is_active: boolean;
   max_amount_per_tx: string | null;
   daily_volume_limit: string | null;
@@ -46,6 +48,7 @@ const view = (r: any): AppView => ({
   name: r.name,
   webhook_url: r.webhook_url ?? null,
   redirect_uris: Array.isArray(r.redirect_uris) ? r.redirect_uris : [],
+  embed_origins: Array.isArray(r.embed_origins) ? r.embed_origins : [],
   is_active: r.is_active,
   max_amount_per_tx: r.max_amount_per_tx ?? null,
   daily_volume_limit: r.daily_volume_limit ?? null,
@@ -98,7 +101,11 @@ export async function createApp(uid: string, email: string | null, input: { id?:
   return { app: await ownedApp(uid, id), keys: { live_api_key: c.liveKey, test_api_key: c.testKey, webhook_secret: c.webhookSecret } };
 }
 
-export async function updateApp(uid: string, appId: string, input: { name?: string; webhook_url?: string | null; redirect_uris?: string[] }) {
+export async function updateApp(
+  uid: string,
+  appId: string,
+  input: { name?: string; webhook_url?: string | null; redirect_uris?: string[]; embed_origins?: string[] }
+) {
   await ownedApp(uid, appId);
   if (input.name !== undefined) {
     const name = cleanName(input.name);
@@ -130,7 +137,58 @@ export async function updateApp(uid: string, appId: string, input: { name?: stri
       await bothDatabases(`UPDATE apps SET redirect_uris = '[]'::jsonb, updated_at = NOW() WHERE id = $1`, [appId]);
     }
   }
+  if (input.embed_origins !== undefined) {
+    const list = (Array.isArray(input.embed_origins) ? input.embed_origins : []).map((o) => String(o).trim()).filter(Boolean);
+    if (list.length > 10) throw new DeveloperError('10 sites maximum.', 'INVALID_EMBED_ORIGINS');
+    const origins = [...new Set(list.map(originOf))];
+    await bothDatabases('UPDATE apps SET embed_origins = $2::jsonb, updated_at = NOW() WHERE id = $1', [appId, JSON.stringify(origins)]);
+  }
   return ownedApp(uid, appId);
+}
+
+/** "https://shop.example.com" (https, no path) — or http://localhost for development. */
+function originOf(value: string): string {
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    throw new DeveloperError(`Adresse invalide : ${value}`, 'INVALID_EMBED_ORIGINS');
+  }
+  const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+  if ((u.protocol !== 'https:' && !local) || (u.pathname !== '/' && u.pathname !== '') || u.search || u.hash) {
+    throw new DeveloperError(`Indiquez seulement le domaine, en https (ex. https://ma-boutique.com) : ${value}`, 'INVALID_EMBED_ORIGINS');
+  }
+  return u.origin;
+}
+
+/**
+ * The origin allowed to show this session's payment page in a dialog, or null. Allowed:
+ * the app's declared sites and the origins of its redirect URIs.
+ */
+export async function embedOriginFor(sessionId: string, requested: string): Promise<string | null> {
+  let origin: string;
+  try {
+    origin = new URL(requested).origin;
+  } catch {
+    return null;
+  }
+  if (origin !== requested.replace(/\/$/, '')) return null;
+  const env: Environment = sessionId.startsWith('cs_test_') ? 'sandbox' : 'production';
+  const [row] = await query(
+    `SELECT a.embed_origins, a.redirect_uris FROM checkout_sessions s JOIN apps a ON a.id = s.app_id WHERE s.id = $1`,
+    [sessionId],
+    env
+  );
+  if (!row) return null;
+  const allowed = new Set<string>(Array.isArray(row.embed_origins) ? row.embed_origins : []);
+  (Array.isArray(row.redirect_uris) ? row.redirect_uris : []).forEach((u: string) => {
+    try {
+      allowed.add(new URL(u).origin);
+    } catch {
+      // ignore malformed entries
+    }
+  });
+  return allowed.has(origin) ? origin : null;
 }
 
 /** New live/test keys and webhook secret; the old ones stop working immediately. */

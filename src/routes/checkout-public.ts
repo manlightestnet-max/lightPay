@@ -4,7 +4,8 @@ import { CheckoutError, payWithWallet, publicView, startMobileMoney } from '../d
 import { ConnectError, validateAuthorizeRequest } from '../db/connect.js';
 import { EscrowError } from '../db/escrow.js';
 import { requireUser } from './me.js';
-import { accountPage, connectPage, consolePage, hostedCsp, payPage } from '../pages/hosted.js';
+import { accountPage, connectPage, consolePage, hostedCsp, lightpaySdk, payPage } from '../pages/hosted.js';
+import { embedOriginFor } from '../db/developer.js';
 
 /** Per-IP brake on payment requests (each one rings a phone). */
 const hits = new Map<string, number[]>();
@@ -23,6 +24,9 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9_-]{16,40}$/;
  * Public side of the checkout. The session id is an unguessable capability; nothing here
  * exposes wallet ids, balances or full phone numbers.
  *   GET  /pay/:id | /account | /account/console | /connect   hosted pages
+ *        /pay/:id?embed=1&origin=…  payment dialog (framed by the app's declared sites only)
+ *        /pay/:id?popup=1           wallet sign-in window opened from the dialog
+ *   GET  /lightpay.js                                 script that opens the payment dialog
  *   GET  /v1/checkout/public/authorize                validate an app authorization request
  *   POST /v1/checkout/public/sessions/:id/wallet      pay with a LightPay wallet (signed in)
  *   GET  /v1/checkout/public/sessions/:id             what the page shows (polled)
@@ -79,20 +83,42 @@ export async function checkoutPublicRoutes(fastify: FastifyInstance) {
     }
   });
 
-  const html = (reply: any, render: (nonce: string) => string) => {
+  const html = (reply: any, render: (nonce: string) => string, frameAncestors?: string) => {
     const nonce = crypto.randomBytes(16).toString('base64');
     reply
       .header('Content-Type', 'text/html; charset=utf-8')
       .header('Cache-Control', 'no-store')
       .header('Referrer-Policy', 'no-referrer')
-      .header('Content-Security-Policy', hostedCsp(nonce));
+      .header('Content-Security-Policy', hostedCsp(nonce, frameAncestors));
     return render(nonce);
   };
 
   fastify.get('/pay/:id', async (request, reply) => {
     const { id } = request.params as any;
+    const q = request.query as any;
     const valid = SESSION_ID.test(id);
-    return html(reply, (nonce) => payPage(nonce, valid ? id : '', valid && id.startsWith('cs_test_') ? 'sandbox' : 'production'));
+    const env = valid && id.startsWith('cs_test_') ? 'sandbox' : 'production';
+    // Dialog: only for a site the app declared; anywhere else the page refuses to be framed.
+    const embedOrigin = valid && q.embed === '1' && typeof q.origin === 'string' ? await embedOriginFor(id, q.origin) : null;
+    if (embedOrigin) (request as any).framingAllowed = true;
+    return html(
+      reply,
+      (nonce) => payPage(nonce, valid ? id : '', env, { embedOrigin, popup: q.popup === '1' }),
+      embedOrigin ?? undefined
+    );
+  });
+
+  fastify.get('/lightpay.js', async (request, reply) => {
+    const origin = (
+      process.env.CHECKOUT_BASE_URL ||
+      process.env.PUBLIC_BASE_URL ||
+      `${request.headers['x-forwarded-proto'] || request.protocol}://${request.headers.host}`
+    ).replace(/\/$/, '');
+    reply
+      .header('Content-Type', 'text/javascript; charset=utf-8')
+      .header('Cache-Control', 'public, max-age=300')
+      .header('Cross-Origin-Resource-Policy', 'cross-origin');
+    return lightpaySdk(new URL(origin).origin);
   });
 
   fastify.get('/account', async (request, reply) =>

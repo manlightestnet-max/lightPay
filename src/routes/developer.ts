@@ -37,7 +37,7 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   POST   /v1/me/developer/apps                      create { id, name } -> keys shown once   (recent sign-in)
  *   POST   /v1/me/developer/apps/claim                attach an existing app { secret_key }     (recent sign-in)
  *   GET    /v1/me/developer/apps/:id                  app
- *   PATCH  /v1/me/developer/apps/:id                  { name?, webhook_url?, redirect_uris? }   (recent sign-in for webhook)
+ *   PATCH  /v1/me/developer/apps/:id                  { name?, webhook_url?, redirect_uris?, embed_origins? } (recent sign-in except name)
  *   POST   /v1/me/developer/apps/:id/rotate-keys      new keys shown once                       (recent sign-in)
  *   GET    /v1/me/developer/apps/:id/overview         balances + last 30 days (X-Environment)
  *   GET    /v1/me/developer/apps/:id/sessions         checkout sessions (X-Environment)
@@ -85,7 +85,7 @@ export async function developerRoutes(fastify: FastifyInstance) {
   fastify.patch('/apps/:id', async (request, reply) => {
     const body = (request.body ?? {}) as any;
     // Where LightPay sends events and people: changing it is sensitive.
-    if ((body.webhook_url !== undefined || body.redirect_uris !== undefined) && !recent(request, reply)) return;
+    if ((body.webhook_url !== undefined || body.redirect_uris !== undefined || body.embed_origins !== undefined) && !recent(request, reply)) return;
     try {
       return { app: await updateApp(request.lightpayUser!.uid, (request.params as any).id, body) };
     } catch (err) {

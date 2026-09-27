@@ -315,6 +315,12 @@ ${flow(
       <button class="btn btn-secondary mt" type="button" id="daNameSave">Enregistrer le nom</button>
       <div class="msg" id="daNameMsg" role="status" aria-live="polite"></div>
     </div></section>
+    <section class="panel"><div class="panel-head"><h2 class="panel-title">Sites autorisés à afficher le paiement ${tip('Les sites qui peuvent ouvrir le paiement LightPay dans un dialogue (lightpay.js). Le domaine seul, en https, un par ligne. Les domaines de vos adresses de retour sont autorisés d’office ; ailleurs, le client est redirigé vers la page de paiement.')}</h2></div><div class="panel-body">
+      <textarea class="field-area" id="daEmbeds" spellcheck="false" placeholder="https://ma-boutique.com"></textarea>
+      <button class="btn btn-secondary mt" type="button" id="daEmbedsSave">Enregistrer les sites</button>
+      <div class="msg" id="daEmbedsMsg" role="status" aria-live="polite"></div>
+      <pre class="code mt" id="daEmbedSnippet"></pre>
+    </div></section>
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Adresses de retour (LightPay Connect) ${tip('Où LightPay renvoie une personne après qu’elle a autorisé votre app. Une adresse https par ligne, sans #.')}</h2></div><div class="panel-body">
       <textarea class="field-area" id="daRedirects" spellcheck="false" placeholder="https://mon-site.com/lightpay/callback"></textarea>
       <button class="btn btn-secondary mt" type="button" id="daRedirectsSave">Enregistrer les adresses</button>
@@ -1033,7 +1039,15 @@ ${flow(
       } else if (tab === 'settings') {
         $('daName').value = devApp.name;
         $('daRedirects').value = (devApp.redirect_uris || []).join('\\n');
-        say('daNameMsg', ''); say('daRedirectsMsg', '');
+        $('daEmbeds').value = (devApp.embed_origins || []).join('\\n');
+        $('daEmbedSnippet').textContent = [
+          '<script src="' + location.origin + '/lightpay.js"></' + 'script>',
+          '',
+          '// checkout_url : renvoyée par POST /v1/checkout/sessions (depuis votre serveur)',
+          'const r = await LightPay.pay(checkout_url);',
+          '// r.status : "completed" ou "closed" — confirmez toujours côté serveur (API ou webhook).',
+        ].join('\\n');
+        say('daNameMsg', ''); say('daRedirectsMsg', ''); say('daEmbedsMsg', '');
       }
     }, 'daMsg');
   }
@@ -1066,6 +1080,14 @@ ${flow(
     await loadDevApps();
     say('daNameMsg', 'Nom enregistré.', 'ok');
   }, 'daNameMsg'));
+  $('daEmbedsSave').addEventListener('click', () => guarded(async () => {
+    if (!devApp) return;
+    const origins = $('daEmbeds').value.split('\\n').map((s) => s.trim()).filter(Boolean);
+    const r = await LP.api('PATCH', '/v1/me/developer/apps/' + encodeURIComponent(devApp.id), { embed_origins: origins });
+    devApp = r.app;
+    $('daEmbeds').value = devApp.embed_origins.join('\\n');
+    say('daEmbedsMsg', origins.length ? 'Sites enregistrés.' : 'Aucun site ajouté : seuls les domaines de vos adresses de retour peuvent ouvrir le dialogue.', 'ok');
+  }, 'daEmbedsMsg'));
   $('daRedirectsSave').addEventListener('click', () => guarded(async () => {
     if (!devApp) return;
     const uris = $('daRedirects').value.split('\\n').map((s) => s.trim()).filter(Boolean);

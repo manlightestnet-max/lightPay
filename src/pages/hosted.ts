@@ -8,3 +8,4 @@ export { accountPage } from './hosted/account.js';
 export { consolePage } from './hosted/console-page.js';
 export { connectPage } from './hosted/connect.js';
 export { payPage } from './hosted/pay.js';
+export { lightpaySdk } from './hosted/sdk.js';

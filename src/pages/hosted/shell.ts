@@ -6,7 +6,8 @@ import { iconSvg } from './icons.js';
 export const themeToggle = () =>
   `<button class="icon-btn" type="button" data-theme-toggle aria-label="Changer de thème"><span class="theme-light-icon">${iconSvg('sun')}</span><span class="theme-dark-icon">${iconSvg('moon')}</span></button>`;
 
-export const hostedCsp = (nonce: string) =>
+/** `frameAncestors`: origins allowed to frame the page (payment dialog); none by default. */
+export const hostedCsp = (nonce: string, frameAncestors?: string) =>
   [
     "default-src 'none'",
     `script-src 'nonce-${nonce}'`,
@@ -14,7 +15,7 @@ export const hostedCsp = (nonce: string) =>
     "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com",
     "img-src 'self' data:",
     "form-action 'none'",
-    "frame-ancestors 'none'",
+    `frame-ancestors ${frameAncestors ?? "'none'"}`,
     "base-uri 'none'",
   ].join('; ');
 

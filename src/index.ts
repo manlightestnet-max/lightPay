@@ -68,7 +68,8 @@ server.addHook('onRequest', async (request, reply) => {
 // 3. En-têtes de sécurité HTTP standards
 server.addHook('onSend', async (request, reply) => {
   reply.header('X-Content-Type-Options', 'nosniff');
-  reply.header('X-Frame-Options', 'DENY');
+  // The payment dialog (lightpay.js) is framed only by the app's declared sites, set by its CSP.
+  if (!(request as any).framingAllowed) reply.header('X-Frame-Options', 'DENY');
   reply.header('X-XSS-Protection', '1; mode=block');
 });
 
@@ -88,6 +89,7 @@ server.addHook('onRequest', async (request, reply) => {
   if (
     url === '/health' ||
     url.startsWith('/pay/') ||
+    url === '/lightpay.js' ||
     url.startsWith('/v1/checkout/public/') ||
     url === '/account' ||
     url === '/account/console' ||
@@ -117,6 +119,7 @@ server.addHook('onRequest', async (request, reply) => {
     url === '/v1/merchant/apps/register' ||
     // Hosted payment page and its public API: the session id (unguessable) is the capability.
     url.startsWith('/pay/') ||
+    url === '/lightpay.js' ||
     url.startsWith('/v1/checkout/public/') ||
     // LightPay user space: authenticated by the person's own token (checked in its routes).
     url === '/account' ||
