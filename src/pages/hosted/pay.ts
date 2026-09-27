@@ -44,11 +44,11 @@ const PAY_CSS = `
  * LightPay wallet) → waiting (validate on the phone, polled) → done | closed. The back button
  * always leaves to the merchant (cancel_url), or to the account for a top-up.
  *
- * Modes: `embedOrigin` — shown in the app's dialog (lightpay.js): leaving or finishing tells the
- * app (postMessage to that origin only) instead of navigating; wallet sign-in opens a LightPay
- * window with a visible address. `popup` — that window: it closes itself once paid.
+ * `embedOrigin`: shown in the app's dialog (lightpay.js). Leaving or finishing tells the app
+ * (postMessage to that origin only) instead of navigating; the wallet payment (sign-in included)
+ * happens right in the dialog.
  */
-export const payPage = (nonce: string, sessionId: string, env: string, mode: { embedOrigin?: string | null; popup?: boolean } = {}) => {
+export const payPage = (nonce: string, sessionId: string, env: string, mode: { embedOrigin?: string | null } = {}) => {
   const body = `
 <section class="screen" data-screen="loading">
   ${topbar({ title: 'Paiement', back: true, env })}
@@ -87,16 +87,12 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       <p class="quiet warn" id="walletLow" hidden>${iconSvg('alert')}<span>Solde insuffisant. <a class="link" id="walletTopup" href="/account#/deposit">Recharger mon wallet</a> ou payez par mobile money.</span></p>
       <div class="fees" id="walletFees" hidden></div>
     </div>
-    <div id="walletWindow" hidden>
-      <p class="quiet mt">${iconSvg('lock')}<span>Pour votre sécurité, la connexion à votre wallet se fait dans une fenêtre LightPay dont vous pouvez vérifier l’adresse (checkout.smlab.xyz). Ce paiement se met à jour dès qu’il est validé.</span></p>
-    </div>
 
     <div class="msg" id="msg" role="status" aria-live="polite"></div>
   </div>
   <div class="actions-bar">
     <button class="btn" type="button" id="payMomo" hidden>Payer</button>
     <button class="btn" type="button" id="payWallet" hidden>Payer avec mon wallet</button>
-    <button class="btn" type="button" id="openWalletWindow" hidden>${iconSvg('wallet')}Continuer avec mon wallet</button>
     <p class="secure">${iconSvg('lock')}Paiement sécurisé par LightPay</p>
   </div>
 </section>
@@ -144,7 +140,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
 
   const script = `
   const id = ${JSON.stringify(sessionId)};
-  const MODE = { embed: ${JSON.stringify(mode.embedOrigin ?? null)}, popup: ${mode.popup ? 'true' : 'false'} };
+  const MODE = { embed: ${JSON.stringify(mode.embedOrigin ?? null)} };
   // In the app's dialog: tell the app (its origin only) that the payer is done or left.
   const tell = (type) => { if (MODE.embed) window.parent.postMessage({ source: 'lightpay', type: type, session: id }, MODE.embed); };
   const screen = (name) => showOnly(document.querySelector('[data-screen="' + name + '"]'));
@@ -165,7 +161,6 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   function leave() {
     stop();
     if (MODE.embed) return tell(session && session.status === 'COMPLETED' ? 'completed' : 'closed');
-    if (MODE.popup) { window.close(); if (window.closed) return; }
     if (session && session.cancel_url && session.status !== 'COMPLETED') return location.assign(session.cancel_url);
     if (session && session.status === 'COMPLETED' && session.return_url) return location.assign(session.return_url);
     if (session && session.kind === 'DEPOSIT') return location.assign(accountUrl());
@@ -216,6 +211,8 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       const low = walletBalance < Number(session.amount);
       $('walletLow').hidden = !low;
       $('walletTopup').href = accountUrl('#/deposit');
+      // The account never opens inside the app's dialog: a LightPay tab instead.
+      if (MODE.embed) { $('walletTopup').target = '_blank'; $('walletTopup').rel = 'noopener'; }
       feeRows($('walletFees'), [['Montant', LP.money(session.amount, session.currency)], ['Frais', 'Aucun'], ['Total débité', LP.money(session.amount, session.currency), true]]);
       $('walletFees').hidden = false;
       $('wallet').hidden = false;
@@ -234,24 +231,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   }
   $('walletSwitch').addEventListener('click', () => { LP.signOut(); mountAuth(openWallet, { title: 'Payer avec LightPay', onBack: backFromAuth }); });
 
-  // In the dialog, the wallet sign-in happens in a LightPay window (visible address, anti-phishing).
-  function showWalletWindow() {
-    $('momo').hidden = true; $('payMomo').hidden = true; $('wallet').hidden = true; $('payWallet').hidden = true;
-    $('walletWindow').hidden = false; $('openWalletWindow').hidden = false;
-  }
-  $('openWalletWindow').addEventListener('click', () => {
-    const w = window.open('/pay/' + encodeURIComponent(id) + '?popup=1', 'lightpay-wallet', 'popup=yes,width=460,height=760');
-    if (!w) return say('msg', 'Autorisez l’ouverture de la fenêtre LightPay, ou payez par mobile money.', 'err');
-    say('msg', 'Terminez le paiement dans la fenêtre LightPay.', 'ok');
-    start();
-  });
-  let firstMethod = true;
   function openMethod() {
-    if (firstMethod && MODE.popup && session.methods.indexOf('lightpay_wallet') >= 0) {
-      method = 'lightpay_wallet';
-    }
-    firstMethod = false;
-    $('walletWindow').hidden = true; $('openWalletWindow').hidden = true;
     const both = session.kind === 'PAYMENT' && session.methods.indexOf('mobile_money') >= 0 && session.methods.indexOf('lightpay_wallet') >= 0;
     if (!both) method = session.kind === 'DEPOSIT' || session.methods.indexOf('mobile_money') >= 0 ? 'mobile_money' : 'lightpay_wallet';
     // Only the ways this session accepts are offered; each operator card shows its fees.
@@ -266,8 +246,6 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       $('wallet').hidden = true; $('payWallet').hidden = true;
       $('momo').hidden = false; $('payMomo').hidden = false;
       renderFees();
-    } else if (MODE.embed) {
-      showWalletWindow();
     } else {
       if (LP.signedIn()) openWallet();
       else mountAuth(openWallet, { title: 'Payer avec LightPay', subtitle: 'Connectez-vous pour payer avec votre wallet.', onBack: backFromAuth });
@@ -332,11 +310,6 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       back.addEventListener('click', (e) => { e.preventDefault(); tell('completed'); });
       $('doneText').textContent = 'Paiement confirmé. Vous revenez sur le site dans un instant.';
       setTimeout(() => tell('completed'), 2500);
-    } else if (MODE.popup) {
-      back.href = '#'; back.textContent = 'Fermer';
-      back.addEventListener('click', (e) => { e.preventDefault(); window.close(); });
-      $('doneText').textContent = 'Paiement confirmé. Cette fenêtre va se fermer.';
-      setTimeout(() => window.close(), 2000);
     } else if (s.return_url) {
       back.href = s.return_url; back.textContent = 'Retour au site';
       $('doneText').textContent = 'Vous allez être redirigé vers le site du marchand.';

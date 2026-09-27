@@ -25,7 +25,6 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9_-]{16,40}$/;
  * exposes wallet ids, balances or full phone numbers.
  *   GET  /pay/:id | /account | /account/console | /connect   hosted pages
  *        /pay/:id?embed=1&origin=…  payment dialog (framed by the app's declared sites only)
- *        /pay/:id?popup=1           wallet sign-in window opened from the dialog
  *   GET  /lightpay.js                                 script that opens the payment dialog
  *   GET  /v1/checkout/public/authorize                validate an app authorization request
  *   POST /v1/checkout/public/sessions/:id/wallet      pay with a LightPay wallet (signed in)
@@ -103,7 +102,7 @@ export async function checkoutPublicRoutes(fastify: FastifyInstance) {
     if (embedOrigin) (request as any).framingAllowed = true;
     return html(
       reply,
-      (nonce) => payPage(nonce, valid ? id : '', env, { embedOrigin, popup: q.popup === '1' }),
+      (nonce) => payPage(nonce, valid ? id : '', env, { embedOrigin }),
       embedOrigin ?? undefined
     );
   });
