@@ -1,6 +1,38 @@
 import { shell, topbar } from './shell.js';
 import { iconSvg } from './icons.js';
 
+/** Calm payment screen: amount on its own, methods as an expandable list, colour only on the choice and the button. */
+const PAY_CSS = `
+.pay-amount { padding: 20px 0 4px; }
+.pay-label { font-size: 13px; color: var(--muted); }
+.pay-amount .amount-xl { margin-top: 2px; }
+.pay-desc { margin-top: 4px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.quiet { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.quiet svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+.quiet.warn { color: var(--warn); }
+.methods { margin-top: 22px; border-top: 1px solid var(--line); }
+.method { border-bottom: 1px solid var(--line); }
+.method-head { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 12px 2px; border: 0; background: none; text-align: left; color: inherit; }
+.method-main { flex: 1; min-width: 0; }
+.method-main b { display: block; font-size: 15px; font-weight: 600; }
+.method-main span { display: block; font-size: 13px; color: var(--muted); }
+.method-head .chev { color: var(--faint); transition: transform .2s var(--ease); }
+.method-head[aria-pressed="true"] .chev { transform: rotate(90deg); }
+.method-body { padding: 0 2px 18px 32px; }
+.radio { position: relative; width: 20px; height: 20px; flex-shrink: 0; border-radius: 999px; border: 1.5px solid var(--line-strong); transition: border-color .15s; }
+.radio.sm { width: 18px; height: 18px; margin-left: auto; }
+[aria-pressed="true"] > .radio { border-color: var(--accent); }
+[aria-pressed="true"] > .radio::after { content: ''; position: absolute; inset: 4px; border-radius: 999px; background: var(--accent); }
+.ops { display: grid; }
+.op { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 6px 0; border: 0; background: none; text-align: left; font-size: 14px; font-weight: 550; color: inherit; }
+.op + .op { border-top: 1px solid var(--line); }
+.op-logo { width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; }
+.op-logo.mtn { background: #ffcb05; color: #111111; }
+.op-logo.airtel { background: #e40000; color: #ffffff; }
+.method-body .fees { background: none; border: 0; border-top: 1px dashed var(--line); border-radius: 0; padding: 12px 0 0; }
+.method-body .list .row { min-height: 48px; }
+`;
+
 /**
  * /pay/:id — hosted payment (or wallet top-up) page. States: loading → pay (mobile money or
  * LightPay wallet) → waiting (validate on the phone, polled) → done | closed. The back button
@@ -24,42 +56,47 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       <span class="avatar" id="merchantAvatar" aria-hidden="true"></span>
       <span class="row-main"><span class="row-title" id="merchant"></span><span class="row-sub" id="payee"></span></span>
     </div>
-    <div class="hero mt">
-      <div class="hero-label" id="amountLabel">Montant à payer</div>
+    <div class="pay-amount">
+      <div class="pay-label" id="amountLabel">Montant à payer</div>
       <div class="amount-xl" id="amount"></div>
-      <div class="hero-sub" id="desc" hidden></div>
+      <div class="pay-desc" id="desc" hidden></div>
     </div>
-    <div class="note" id="escrow" hidden>${iconSvg('shield')}<p>Paiement protégé : le vendeur n’est payé qu’une fois votre commande validée.</p></div>
+    <p class="quiet" id="escrow" hidden>${iconSvg('shield')}<span>Paiement protégé : le vendeur n’est payé qu’une fois votre commande validée.</span></p>
 
-    <div class="field" id="methodsBox" hidden><span class="label" id="methodsLabel">Payer avec</span>
-      <div class="seg" role="group" aria-labelledby="methodsLabel">
-        <button class="seg-opt" type="button" data-method="mobile_money" aria-pressed="true">${iconSvg('phone')}Mobile money</button>
-        <button class="seg-opt" type="button" data-method="lightpay_wallet" aria-pressed="false">${iconSvg('wallet')}Wallet LightPay</button>
-      </div>
-    </div>
-
-    <div id="momo" hidden>
-      <div class="field"><span class="label" id="netLabel">Opérateur</span>
-        <div class="seg" role="group" aria-labelledby="netLabel">
-          <button class="seg-opt" type="button" data-net="MTN_MOMO_COG" aria-pressed="true">MTN MoMo</button>
-          <button class="seg-opt" type="button" data-net="AIRTEL_COG" aria-pressed="false">Airtel Money</button>
+    <div class="methods" id="methodsBox" hidden>
+      <div class="method" data-method-item="mobile_money">
+        <button class="method-head" type="button" data-method="mobile_money" aria-pressed="true">
+          <span class="radio" aria-hidden="true"></span>
+          <span class="method-main"><b>Mobile money</b><span>MTN MoMo ou Airtel Money</span></span>
+          ${iconSvg('chevron-right', 'chev')}
+        </button>
+        <div class="method-body" id="momo" hidden>
+          <div class="ops" role="group" aria-label="Opérateur">
+            <button class="op" type="button" data-net="MTN_MOMO_COG" aria-pressed="true"><span class="op-logo mtn" aria-hidden="true">M</span>MTN MoMo<span class="radio sm" aria-hidden="true"></span></button>
+            <button class="op" type="button" data-net="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true">A</span>Airtel Money<span class="radio sm" aria-hidden="true"></span></button>
+          </div>
+          <div class="field"><label for="msisdn">Numéro de téléphone</label><div class="input-prefix"><span>+242</span><input id="msisdn" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div><p class="hint">Vous validerez le paiement sur ce téléphone avec votre code secret.</p></div>
+          <div class="fees" id="feeBox" hidden></div>
         </div>
       </div>
-      <div class="field"><label for="msisdn">Numéro de téléphone</label><div class="input-prefix"><span>+242</span><input id="msisdn" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div><p class="hint">Vous validerez le paiement sur ce téléphone avec votre code secret.</p></div>
-      <div class="fees" id="feeBox" hidden></div>
-    </div>
-
-    <div id="wallet" hidden>
-      <ul class="list mt">
-        <li><div class="row"><span class="avatar" id="walletAvatar" aria-hidden="true"></span><span class="row-main"><span class="row-title" id="walletWho"></span><span class="row-sub">Wallet LightPay</span></span><button class="link" type="button" id="walletSwitch">Changer</button></div></li>
-        <li><div class="row"><span class="row-icon">${iconSvg('wallet')}</span><span class="row-main"><span class="row-title">Solde disponible</span></span><span class="row-end" id="walletBalance"></span></div></li>
-      </ul>
-      <div class="note warn" id="walletLow" hidden>${iconSvg('alert')}<p>Solde insuffisant. <a class="link" id="walletTopup" href="/account#/deposit">Recharger mon wallet</a> ou payez par mobile money.</p></div>
-      <div class="fees" id="walletFees" hidden></div>
-    </div>
-
-    <div id="walletWindow" hidden>
-      <div class="note">${iconSvg('lock')}<p>Pour votre sécurité, la connexion à votre wallet se fait dans une fenêtre LightPay dont vous pouvez vérifier l’adresse (checkout.smlab.xyz). Ce paiement se met à jour dès qu’il est validé.</p></div>
+      <div class="method" data-method-item="lightpay_wallet">
+        <button class="method-head" type="button" data-method="lightpay_wallet" aria-pressed="false">
+          <span class="radio" aria-hidden="true"></span>
+          <span class="method-main"><b>Wallet LightPay</b><span>Avec le solde de votre compte, sans frais</span></span>
+          ${iconSvg('chevron-right', 'chev')}
+        </button>
+        <div class="method-body" id="wallet" hidden>
+          <ul class="list">
+            <li><div class="row"><span class="avatar" id="walletAvatar" aria-hidden="true"></span><span class="row-main"><span class="row-title" id="walletWho"></span><span class="row-sub">Wallet LightPay</span></span><button class="link" type="button" id="walletSwitch">Changer</button></div></li>
+            <li><div class="row"><span class="row-main"><span class="row-title">Solde disponible</span></span><span class="row-end" id="walletBalance"></span></div></li>
+          </ul>
+          <p class="quiet warn" id="walletLow" hidden>${iconSvg('alert')}<span>Solde insuffisant. <a class="link" id="walletTopup" href="/account#/deposit">Recharger mon wallet</a> ou payez par mobile money.</span></p>
+          <div class="fees" id="walletFees" hidden></div>
+        </div>
+        <div class="method-body" id="walletWindow" hidden>
+          <p class="quiet">${iconSvg('lock')}<span>Pour votre sécurité, la connexion à votre wallet se fait dans une fenêtre LightPay dont vous pouvez vérifier l’adresse (checkout.smlab.xyz). Ce paiement se met à jour dès qu’il est validé.</span></p>
+        </div>
+      </div>
     </div>
 
     <div class="msg" id="msg" role="status" aria-live="polite"></div>
@@ -210,7 +247,10 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     $('walletWindow').hidden = true; $('openWalletWindow').hidden = true;
     const both = session.kind === 'PAYMENT' && session.methods.indexOf('mobile_money') >= 0 && session.methods.indexOf('lightpay_wallet') >= 0;
     if (!both) method = session.kind === 'DEPOSIT' || session.methods.indexOf('mobile_money') >= 0 ? 'mobile_money' : 'lightpay_wallet';
-    $('methodsBox').hidden = !both;
+    // One list of methods; only those the session accepts are shown, the chosen one is open.
+    $('methodsBox').hidden = false;
+    document.querySelectorAll('[data-method-item]').forEach((it) => { it.hidden = !both && it.dataset.methodItem !== method; });
+    document.querySelectorAll('[data-method]').forEach((o) => o.setAttribute('aria-pressed', String(o.dataset.method === method)));
     if (method === 'mobile_money') {
       $('wallet').hidden = true; $('payWallet').hidden = true;
       $('momo').hidden = false; $('payMomo').hidden = false;
@@ -340,5 +380,5 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   else load();
 `;
 
-  return shell({ title: 'Paiement', nonce, env, body, script });
+  return shell({ title: 'Paiement', nonce, env, body, script, css: PAY_CSS });
 };
