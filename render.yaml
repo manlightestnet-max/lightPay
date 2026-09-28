@@ -18,3 +18,8 @@ services:
         sync: false
       - key: MASTER_ADMIN_KEY
         generateValue: true
+      # Admin console: LightPay uids allowed (comma-separated) and its own host (admin.smlab.xyz).
+      - key: ADMIN_UIDS
+        sync: false
+      - key: ADMIN_BASE_URL
+        sync: false

@@ -3,7 +3,7 @@
  * Scripts parse · no style= / on*= attributes (CSP) · every id used by the script exists ·
  * nonce on every <style>/<script> · no external URL except Google identity endpoints.
  */
-import { accountPage, connectPage, consolePage, payPage } from '../src/pages/hosted.js';
+import { accountPage, adminPage, connectPage, consolePage, payPage } from '../src/pages/hosted.js';
 
 const NONCE = 'TESTNONCE';
 // Ids created at runtime by the shared sign-in form (mountAuth).
@@ -13,6 +13,7 @@ let failures = 0;
 for (const [name, html] of [
   ['account', accountPage(NONCE, 'sandbox')],
   ['console', consolePage(NONCE, 'sandbox')],
+  ['admin', adminPage(NONCE, 'production')],
   ['pay', payPage(NONCE, 'cs_test_abcdefghijklmnopqrst', 'sandbox')],
   ['connect', connectPage(NONCE, 'production')],
 ] as const) {

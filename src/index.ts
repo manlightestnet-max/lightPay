@@ -17,6 +17,7 @@ import { gatewayRoutes } from './routes/gateways.js';
 import { sdkDistributionRoutes } from './routes/sdk.js';
 import { merchantRoutes } from './routes/merchant.js';
 import { faucetRoutes } from './routes/faucet.js';
+import { adminConsoleRoutes, adminHost } from './routes/admin-console.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
@@ -101,6 +102,22 @@ server.addHook('onRequest', async (request, reply) => {
   return reply.status(404).send({ error: 'Not Found' });
 });
 
+// 3''. Console d'administration (ADMIN_BASE_URL, ex. admin.smlab.xyz) : ce domaine ne sert QUE la
+//      console et son API ; ailleurs, la console n'existe pas. Sans ADMIN_BASE_URL : /admin sur l'API.
+const isAdminPath = (url: string) => url === '/admin' || url.startsWith('/v1/admin-console/');
+server.addHook('onRequest', async (request, reply) => {
+  if (!adminHost) return;
+  const url = request.url.split('?')[0];
+  const onAdminHost = String(request.headers.host ?? '').toLowerCase() === adminHost;
+  if (!onAdminHost) {
+    if (isAdminPath(url)) return reply.status(404).send({ error: 'Not Found' });
+    return;
+  }
+  if (url === '/') return reply.redirect('/admin');
+  if (url === '/health' || isAdminPath(url) || request.method === 'OPTIONS') return;
+  return reply.status(404).send({ error: 'Not Found' });
+});
+
 // 4. ⛔ VERROU GLOBAL D'AUTHENTIFICATION (AUCUNE ENTRÉE SANS BEARER OU CLÉ OFFICIELLE)
 server.addHook('onRequest', async (request, reply) => {
   const url = request.url.split('?')[0];
@@ -126,7 +143,9 @@ server.addHook('onRequest', async (request, reply) => {
     url === '/account/console' ||
     url === '/connect' ||
     url === '/v1/me' ||
-    url.startsWith('/v1/me/')
+    url.startsWith('/v1/me/') ||
+    // Owner's admin console: LightPay sign-in + ADMIN_UIDS, checked in its routes.
+    isAdminPath(url)
   ) {
     return;
   }
@@ -228,6 +247,7 @@ server.register(gatewayRoutes, { prefix: '/v1/gateways' });
 server.register(sdkDistributionRoutes, { prefix: '/v1/sdk' });
 server.register(merchantRoutes, { prefix: '/v1/merchant' });
 server.register(faucetRoutes);
+server.register(adminConsoleRoutes);
 
 async function start() {
   try {
