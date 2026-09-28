@@ -13,6 +13,9 @@ import { Environment } from '../types/index.js';
  *   - wallet main (SYSTEM_MAIN_TREASURY): the owner's own funds, separate from client money.
  * Money moves only through the ledger engine: sending from the main wallet (which can never go
  * below zero) and recharging it with a real mobile-money deposit. No withdrawal from here.
+ * In the test ledger the same wallet is the faucet: the owner issues test money into it (balanced
+ * against SANDBOX_FAUCET_ISSUE, whose negative balance is all the test money ever issued) and
+ * sends it to whoever tests. Issuing is refused in production.
  */
 
 const CURRENCY = 'XAF';
@@ -36,13 +39,17 @@ const SYSTEM_LABELS: Record<string, string> = {
   SYSTEM_GATEWAY_INFLOW: 'Réserve providers',
   SYSTEM_MAIN_TREASURY: 'Wallet main',
   LIGHTPAY_FEES: 'Revenus LightPay',
+  SANDBOX_FAUCET_ISSUE: 'Émission du faucet',
 };
+/** The test ledger names the main wallet after what it is there: the faucet. */
+const labelsFor = (env: Environment) => (env === 'sandbox' ? { ...SYSTEM_LABELS, SYSTEM_MAIN_TREASURY: 'Faucet' } : SYSTEM_LABELS);
 
 const maskPhone = (p: string) => (p.length > 4 ? `${p.slice(0, 2)} ••• ${p.slice(-2)}` : p);
 
 /** How a wallet is named in the console. */
-export const walletLabel = (w: { account_id: string; account_type: string; app_id: string; metadata?: any }) => {
-  if (SYSTEM_LABELS[w.account_id]) return SYSTEM_LABELS[w.account_id];
+export const walletLabel = (w: { account_id: string; account_type: string; app_id: string; metadata?: any }, env: Environment = 'production') => {
+  const labels = labelsFor(env);
+  if (labels[w.account_id]) return labels[w.account_id];
   if (w.account_type === 'USER') return w.metadata?.name || w.metadata?.email || 'Utilisateur LightPay';
   if (w.account_type === 'GUEST') return `Invité ${maskPhone(String(w.metadata?.msisdn ?? w.account_id.replace(/^guest:/, '')))}`;
   if (w.account_type === 'MERCHANT') return `App ${w.app_id}`;
@@ -179,6 +186,7 @@ export async function reserves(env: Environment) {
                 WHEN account_id = 'SYSTEM_GATEWAY_INFLOW' THEN 'reserve'
                 WHEN account_id = 'SYSTEM_MAIN_TREASURY' THEN 'main'
                 WHEN account_id = 'LIGHTPAY_FEES' THEN 'revenue'
+                WHEN account_id = 'SANDBOX_FAUCET_ISSUE' THEN 'issued'
                 WHEN account_type = 'USER' THEN 'users'
                 WHEN account_type = 'GUEST' THEN 'guests'
                 WHEN account_type = 'MERCHANT' THEN 'apps'
@@ -193,7 +201,8 @@ export async function reserves(env: Environment) {
   const b = Object.fromEntries(balances.map((r) => [r.bucket, { available: r.available, locked: r.locked }])) as Record<string, { available: string; locked: string }>;
   const total = (k: string) => (b[k] ? BigInt(b[k].available) + BigInt(b[k].locked) : 0n);
   const reserve = -total('reserve');
-  const covered = ['main', 'revenue', 'users', 'guests', 'apps', 'other'].reduce((s, k) => s + total(k), 0n);
+  // Test money issued by the faucet came in without a provider: it is set aside from the comparison.
+  const covered = ['main', 'revenue', 'users', 'guests', 'apps', 'other', 'issued'].reduce((s, k) => s + total(k), 0n);
   return {
     currency: CURRENCY,
     providers: perProvider.map((p) => ({ ...p, reserve: (BigInt(p.money_in) - BigInt(p.money_out)).toString() })),
@@ -205,6 +214,7 @@ export async function reserves(env: Environment) {
       guests: total('guests').toString(),
       apps: total('apps').toString(),
       other: total('other').toString(),
+      issued: (-total('issued')).toString(),
       locked: Object.values(b).reduce((s, x) => s + BigInt(x.locked), 0n).toString(),
     },
     // Every franc in a wallet came in through a provider: both sides must be equal.
@@ -334,7 +344,7 @@ export async function getTransaction(env: Environment, id: string) {
   );
   return {
     transaction: tx,
-    entries: entries.map(({ metadata, ...e }) => ({ ...e, label: walletLabel({ ...e, metadata }) })),
+    entries: entries.map(({ metadata, ...e }) => ({ ...e, label: walletLabel({ ...e, metadata }, env) })),
   };
 }
 
@@ -395,7 +405,7 @@ export async function sendFromMain(env: Environment, admin: AdminUser, input: { 
       metadata: { kind: 'ADMIN_SEND', admin_uid: admin.uid, to_email: to, note },
       postings: [
         { walletId: main, direction: 'DEBIT', amount, description: `Envoi à ${recipient.metadata?.name || to}${note ? ` · ${note}` : ''}` },
-        { walletId: recipient.id, direction: 'CREDIT', amount, description: `Reçu de LightPay${note ? ` · ${note}` : ''}` },
+        { walletId: recipient.id, direction: 'CREDIT', amount, description: `${env === 'sandbox' ? 'Reçu du faucet' : 'Reçu de LightPay'}${note ? ` · ${note}` : ''}` },
       ],
     });
   } catch (err: any) {
@@ -412,15 +422,51 @@ export async function sendFromMain(env: Environment, admin: AdminUser, input: { 
   return { duplicate: result.duplicate, to: { email: to, name: recipient.metadata?.name ?? null }, amount: amount.toString() };
 }
 
+/**
+ * Test ledger only: the owner issues test money into the faucet. Balanced like any movement:
+ * SANDBOX_FAUCET_ISSUE goes negative by what is issued, the faucet is credited.
+ */
+export async function issueFaucet(env: Environment, admin: AdminUser, amountInput: unknown, idempotencyKey: string) {
+  if (env !== 'sandbox') throw new AdminError('Le faucet n’existe que dans l’environnement de test.', 'FAUCET_TEST_ONLY', 403);
+  const amount = positive(amountInput);
+  if (amount > 100_000_000n) throw new AdminError('100 000 000 FCFA maximum par émission.', 'AMOUNT_TOO_LARGE');
+  const faucet = await LedgerEngine.getOrCreateMainTreasury('mainapp', env, CURRENCY);
+  const [issue] = await query(
+    `INSERT INTO wallets (app_id, account_id, account_type, currency, environment, metadata)
+     VALUES ('mainapp', 'SANDBOX_FAUCET_ISSUE', 'SYSTEM', $1, 'sandbox', '{"role":"faucet_issue"}')
+     ON CONFLICT (app_id, account_id, currency, environment) DO UPDATE SET updated_at = NOW()
+     RETURNING id`,
+    [CURRENCY],
+    env
+  );
+  const result = await LedgerEngine.executeTransaction({
+    appId: 'mainapp',
+    environment: env,
+    idempotencyKey: `faucet-issue:${idempotencyKey}`,
+    type: 'FAUCET',
+    amount,
+    currency: CURRENCY,
+    skipQuotas: true,
+    metadata: { kind: 'FAUCET_ISSUE', admin_uid: admin.uid },
+    postings: [
+      { walletId: issue.id, direction: 'DEBIT', amount, description: 'Émission d’argent de test' },
+      { walletId: faucet, direction: 'CREDIT', amount, description: 'Réserve du faucet' },
+    ],
+  });
+  if (!result.duplicate) await audit(env, admin, 'FAUCET_ISSUE', null, amount, {});
+  return { duplicate: result.duplicate, amount: amount.toString() };
+}
+
 /** A real mobile-money deposit into the main wallet: a LightPay payment page for this amount. */
 export async function rechargeMain(env: Environment, admin: AdminUser, amountInput: unknown, idempotencyKey: string, returnUrl: string | null) {
+  if (env !== 'production') throw new AdminError('En test, le faucet se remplit par émission.', 'USE_FAUCET', 400);
   const amount = positive(amountInput);
   if (amount < minMobileMoneyAmount()) throw new AdminError(`Recharge minimum : ${minMobileMoneyAmount()} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   const main = await LedgerEngine.getOrCreateMainTreasury('mainapp', env, CURRENCY);
   const key = `admin-recharge:${idempotencyKey}`;
   const [existing] = await query(`SELECT id FROM checkout_sessions WHERE app_id = 'mainapp' AND environment = $1 AND idempotency_key = $2`, [env, key], env);
   if (existing) return { session_id: existing.id, checkout_path: `/pay/${existing.id}` };
-  const id = `${env === 'sandbox' ? 'cs_test_' : 'cs_live_'}${crypto.randomBytes(18).toString('base64url')}`;
+  const id = `cs_live_${crypto.randomBytes(18).toString('base64url')}`;
   await query(
     `INSERT INTO checkout_sessions (id, app_id, environment, idempotency_key, kind, amount, fee_amount, currency, description, payee_wallet_id, escrow, methods, return_url, expires_at)
      VALUES ($1, 'mainapp', $2, $3, 'DEPOSIT', $4, 0, $5, 'Recharge du wallet main', $6, FALSE, '["mobile_money"]'::jsonb, $7, NOW() + interval '30 minutes')`,

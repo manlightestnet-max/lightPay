@@ -10,6 +10,7 @@ import {
   getApp,
   getTransaction,
   getUser,
+  issueFaucet,
   listApps,
   listAudit,
   listTransactions,
@@ -33,7 +34,8 @@ import { Environment } from '../types/index.js';
  *   GET  /v1/admin-console/transactions[?type=&app=&q=&before=] · /transactions/:id (ledger entries)
  *   GET  /v1/admin-console/main                 wallet main + its movements
  *   POST /v1/admin-console/main/send            { to, amount, note }   recent sign-in + Idempotency-Key
- *   POST /v1/admin-console/main/recharge        { amount }             recent sign-in + Idempotency-Key
+ *   POST /v1/admin-console/main/recharge        { amount }             production: real deposit page
+ *   POST /v1/admin-console/faucet/issue         { amount }             test only: issue test money into the faucet
  *   GET  /v1/admin-console/audit                admin actions log
  * Access: a LightPay sign-in whose uid is listed in ADMIN_UIDS. X-Environment picks the ledger.
  * There is no withdrawal route here, on purpose.
@@ -170,6 +172,13 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
           const r = await rechargeMain(env, adminOf(request), (request.body as any)?.amount, key, back);
           return { status: 'success', ...r, checkout_url: `${checkout}${r.checkout_path}` };
         } catch (e) { return fail(reply, e); }
+      });
+
+      api.post('/faucet/issue', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const key = idem(request, reply);
+        if (!key) return;
+        try { return { status: 'success', ...(await issueFaucet(envOf(request), adminOf(request), (request.body as any)?.amount, key)) }; } catch (e) { return fail(reply, e); }
       });
 
       api.get('/audit', async (request) => ({ status: 'success', audit: await listAudit(envOf(request), intParam((request.query as any)?.limit, 100, 500)) }));

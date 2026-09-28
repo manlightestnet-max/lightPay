@@ -74,7 +74,7 @@ export const adminPage = (nonce: string, env: string) => {
     ${navItem('apps', 'apps', 'apps', 'Applications')}
     ${navItem('moves', 'moves', 'list', 'Mouvements')}
     <div class="nav-label">Trésorerie</div>
-    ${navItem('main', 'main', 'wallet', 'Wallet main')}
+    ${navItem('main', 'main', 'wallet', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>')}
     ${navItem('audit', 'audit', 'clock', 'Journal admin')}
   </nav>
   <div class="side-foot"><div class="me"><span class="avatar" id="meAvatar" aria-hidden="true"></span><span class="me-main"><span class="me-name" id="meName"></span><span class="me-mail">Administrateur</span></span><button class="icon-btn" type="button" id="signOutSide" aria-label="Se déconnecter" title="Se déconnecter">${iconSvg('logout')}</button></div></div>
@@ -107,7 +107,7 @@ ${page('home', 'Revenus et activité', `
       ${stat('stUsers', 'Utilisateurs', 'stUsersHint')}
       ${stat('stApps', 'Applications', 'stAppsHint')}
       ${stat('stPayments', 'Paiements', 'stPaymentsHint')}
-      ${stat('stMain', 'Wallet main', 'stMainHint')}
+      ${stat('stMain', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>', 'stMainHint')}
     </div>`)}
   ${panel('À partager', '<p class="share" id="shareText"></p>', { actions: '<button class="btn btn-sm btn-secondary" type="button" id="shareCopy">' + iconSvg('copy') + 'Copier</button>' })}
 `)}
@@ -148,9 +148,10 @@ ${page('moves', 'Mouvements', `
   </div>
 `)}
 
-${page('main', 'Wallet main', `
-  ${panel('Votre argent', `<div class="well">${stat('mainBalance', 'Disponible', 'mainHint', true)}</div>
-    <p class="small muted mt">Vos fonds propres, séparés de l’argent des clients. Il ne peut jamais descendre sous zéro et se recharge uniquement par un vrai dépôt mobile money. Aucun retrait possible depuis l’administration.</p>`)}
+${page('main', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>', `
+  ${panel('<span data-real>Votre argent</span><span data-test hidden>Réserve du faucet</span>', `<div class="well">${stat('mainBalance', 'Disponible', 'mainHint', true)}</div>
+    <p class="small muted mt" data-real>Vos fonds propres, séparés de l’argent des clients. Il ne peut jamais descendre sous zéro et se recharge uniquement par un vrai dépôt mobile money. Aucun retrait possible depuis l’administration.</p>
+    <p class="small muted mt" data-test hidden>L’argent que vous distribuez aux testeurs. Vous l’émettez ici, puis vous l’envoyez à un compte par son e-mail. Il ne peut jamais descendre sous zéro.</p>`)}
   <div class="grid-2">
     ${panel('Envoyer à un utilisateur', `
       <form id="sendForm" novalidate>
@@ -160,15 +161,22 @@ ${page('main', 'Wallet main', `
         <div class="msg" id="sendMsg" role="status" aria-live="polite"></div>
         <button class="btn mt" type="submit" id="sendGo">${iconSvg('send')}Envoyer</button>
       </form>`)}
-    ${panel('Recharger', `
+    <div data-test hidden>${panel('Émettre de l’argent de test', `
+      <form id="issueForm" novalidate>
+        <div class="field"><label for="issueAmount">Montant (FCFA)</label><input id="issueAmount" inputmode="numeric" autocomplete="off"></div>
+        <p class="hint">Ajouté à la réserve du faucet, puis à envoyer aux comptes qui testent.</p>
+        <div class="msg" id="issueMsg" role="status" aria-live="polite"></div>
+        <button class="btn btn-secondary mt" type="submit" id="issueGo">${iconSvg('plus')}Émettre</button>
+      </form>`)}</div>
+    <div data-real>${panel('Recharger', `
       <form id="rechargeForm" novalidate>
         <div class="field"><label for="rechargeAmount">Montant (FCFA)</label><input id="rechargeAmount" inputmode="numeric" autocomplete="off"></div>
         <p class="hint">Vous payez par MTN MoMo ou Airtel Money sur la page LightPay : l’argent arrive dans le wallet main une fois validé.</p>
         <div class="msg" id="rechargeMsg" role="status" aria-live="polite"></div>
         <button class="btn btn-secondary mt" type="submit" id="rechargeGo">${iconSvg('plus')}Ouvrir la page de paiement</button>
-      </form>`)}
+      </form>`)}</div>
   </div>
-  ${panel('Mouvements du wallet main', '<div id="mainMoves"></div>', { flush: true })}
+  ${panel('<span data-real>Mouvements du wallet main</span><span data-test hidden>Mouvements du faucet</span>', '<div id="mainMoves"></div>', { flush: true })}
 `)}
 
 ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration', '<div id="auditTable"></div>', { flush: true }))}
@@ -207,7 +215,9 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   const STATUS = { SUCCESS: ['ok', 'réussi'], PENDING: ['warn', 'en cours'], FAILED: ['err', 'échoué'], REVERSED: ['err', 'annulé'] };
   const SOURCE = { deposit: 'Frais de dépôt', payment: 'Frais de paiement', withdrawal: 'Frais de retrait', other: 'Autres' };
   const PROVIDER = { SASPAY: 'SasPay', SIMULATOR: 'Simulateur', AUTRE: 'Sans provider indiqué' };
-  const ACTION = { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Recharge du wallet main' };
+  const ACTION = LP.ENV === 'sandbox'
+    ? { MAIN_SEND: 'Envoi depuis le faucet', FAUCET_ISSUE: 'Émission d’argent de test' }
+    : { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Recharge du wallet main' };
   const pill = (status) => { const s = STATUS[status] || ['', String(status || '').toLowerCase()]; return el('span', { class: 'pill ' + s[0], text: s[1] }); };
   const rows = (host, list) => host.replaceChildren.apply(host, list.map((r) => el('div', { class: r[2] ? 'total' : '' }, [el('span', { text: r[0] }), el('span', { text: r[1] })])));
   const segValue = (name) => { const b = document.querySelector('[data-seg="' + name + '"] [aria-pressed="true"]'); return b ? b.dataset.value : ''; };
@@ -217,6 +227,11 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     const c = nav.current(); if (c) screens[c.name].enter(c.param);
   }));
   document.querySelectorAll('[data-env-badge]').forEach((b) => { b.hidden = LP.ENV !== 'sandbox'; });
+  const TEST = LP.ENV === 'sandbox';
+  // Each environment only speaks of itself: the main wallet is the faucet in the test ledger.
+  document.querySelectorAll('[data-real]').forEach((n) => { n.hidden = TEST; });
+  document.querySelectorAll('[data-test]').forEach((n) => { n.hidden = !TEST; });
+  const MAIN = TEST ? 'Faucet' : 'Wallet main';
 
   function table(host, cols, list, emptyText) {
     if (!list.length) { host.replaceChildren(el('p', { class: 'empty', text: emptyText })); return; }
@@ -331,7 +346,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       $('stUsers').textContent = num(o.users); $('stUsersHint').textContent = '+' + num(o.new_users) + ' sur la période · ' + num(o.guests) + ' invités';
       $('stApps').textContent = num(o.apps); $('stAppsHint').textContent = num(o.connections) + ' comptes connectés';
       $('stPayments').textContent = money(o.payments_volume); $('stPaymentsHint').textContent = num(o.payments) + ' paiements';
-      $('stMain').textContent = money(o.main_balance); $('stMainHint').textContent = 'vos fonds propres';
+      $('stMain').textContent = money(o.main_balance); $('stMainHint').textContent = TEST ? 'à distribuer aux testeurs' : 'vos fonds propres';
       const label = { day: 'Ces dernières 24 h', week: 'Ces 7 derniers jours', month: 'Ces 30 derniers jours', all: 'Depuis le lancement' }[o.period];
       $('shareText').textContent = 'LightPay · ' + label + ' :\\n' + num(o.transactions) + ' transactions réussies\\n' + money(o.money_in) + ' encaissés par mobile money\\n' + num(o.users) + ' utilisateurs · ' + num(o.apps) + ' applications connectées';
     });
@@ -350,7 +365,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
           .concat(r.providers.length > 1 ? [{ cells: [el('b', { text: 'Total' }), '', '', el('b', { text: money(r.reserve_total) })] }] : []),
         'Aucun mouvement avec un provider pour le moment.');
       const h = r.held;
-      rows($('resHeld'), [['Utilisateurs', money(h.users)], ['Invités', money(h.guests)], ['Apps', money(h.apps)], ['Revenus LightPay', money(h.revenue)], ['Wallet main', money(h.main)]]
+      rows($('resHeld'), [['Utilisateurs', money(h.users)], ['Invités', money(h.guests)], ['Apps', money(h.apps)], ['Revenus LightPay', money(h.revenue)], [MAIN, money(h.main)]].concat(TEST && Number(h.issued) ? [['Émis par le faucet', '−' + money(h.issued)]] : [])
         .concat(Number(h.other) ? [['Autres', money(h.other)]] : []).concat([['Dont bloqué en séquestre', money(h.locked)], ['Total', money(r.covered), true]]));
       $('resCheck').replaceChildren(el('p', { class: 'check ' + (r.balanced ? 'ok' : 'err') }, [icon(r.balanced ? 'check' : 'alert'),
         r.balanced ? 'Couvert : réserves ' + money(r.reserve_total) + ' = wallets ' + money(r.covered) + '.' : 'Écart : réserves ' + money(r.reserve_total) + ', wallets ' + money(r.covered) + '.']));
@@ -451,12 +466,12 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   // ---------------------------------------------------------------- wallet main
   let mainBalance = 0;
   async function enterMain() {
-    crumbs('Trésorerie', 'Wallet main');
+    crumbs('Trésorerie', MAIN);
     await load('main', async () => {
       const d = await LP.api('GET', '/v1/admin-console/main');
       mainBalance = Number(d.wallet.available_balance);
       $('mainBalance').textContent = money(d.wallet.available_balance);
-      $('mainHint').textContent = 'vos fonds propres';
+      $('mainHint').textContent = TEST ? 'à distribuer aux testeurs' : 'vos fonds propres';
       table($('mainMoves'), [{ label: 'Mouvement' }, { label: 'Montant', cls: 'num' }, { label: 'Solde après', cls: 'num' }], d.moves.map((m) => ({
         href: '#/moves/' + m.transaction_id,
         cells: [cell(m.description || TYPE[m.type] || m.type, fmtDateTime(m.created_at)), el('span', { class: m.direction === 'CREDIT' ? 'credit' : 'debit', text: (m.direction === 'CREDIT' ? '+' : '−') + money(m.amount) }), money(m.balance_after)],
@@ -470,9 +485,9 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     const to = $('sendTo').value.trim().toLowerCase(); const amount = amountOf('sendAmount');
     if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(to)) return say('sendMsg', 'Adresse e-mail invalide.', 'err');
     if (!amount) return say('sendMsg', 'Montant invalide.', 'err');
-    if (Number(amount) > mainBalance) return say('sendMsg', 'Solde du wallet main insuffisant (' + money(mainBalance) + ').', 'err');
+    if (Number(amount) > mainBalance) return say('sendMsg', 'Solde ' + (TEST ? 'du faucet' : 'du wallet main') + ' insuffisant (' + money(mainBalance) + ').', 'err');
     sendDraft = { to: to, amount: amount, note: $('sendNote').value.trim(), key: LP.uuid() };
-    rows($('confirmRows'), [['À', to], ['Montant', money(amount)], ['Depuis', 'Wallet main'], ['Solde après', money(mainBalance - Number(amount)), true]].concat(sendDraft.note ? [['Motif', sendDraft.note]] : []));
+    rows($('confirmRows'), [['À', to], ['Montant', money(amount)], ['Depuis', MAIN], ['Solde après', money(mainBalance - Number(amount)), true]].concat(sendDraft.note ? [['Motif', sendDraft.note]] : []));
     $('confirmSheet').hidden = false; $('confirmGo').focus();
   });
   $('confirmCancel').addEventListener('click', () => { $('confirmSheet').hidden = true; sendDraft = null; });
@@ -489,6 +504,20 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       say('sendMsg', money(r.amount) + ' envoyés à ' + (r.to.name || r.to.email) + '.', 'ok');
     }, 'sendMsg');
     $('sendGo').disabled = false;
+  });
+  $('issueForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); say('issueMsg', '');
+    const amount = amountOf('issueAmount');
+    if (!amount) return say('issueMsg', 'Montant invalide.', 'err');
+    $('issueGo').disabled = true;
+    const key = LP.uuid();
+    await guarded(async () => {
+      const r = await LP.api('POST', '/v1/admin-console/faucet/issue', { amount: amount }, key);
+      $('issueAmount').value = '';
+      await enterMain();
+      say('issueMsg', money(r.amount) + ' ajoutés au faucet.', 'ok');
+    }, 'issueMsg');
+    $('issueGo').disabled = false;
   });
   $('rechargeForm').addEventListener('submit', async (e) => {
     e.preventDefault(); say('rechargeMsg', '');
