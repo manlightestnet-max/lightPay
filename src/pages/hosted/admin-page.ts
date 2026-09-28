@@ -29,6 +29,18 @@ const ADMIN_CSS = `
 .search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .debit { color: var(--danger); } .credit { color: var(--accent); }
+.console .grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.console .grid-2 > .sticky .panel + .panel { margin-top: 20px; }
+.items { list-style: none; margin: 0; padding: 0; }
+.items li { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+.items li:last-child { border-bottom: 0; }
+.items li[data-href] { cursor: pointer; transition: background .12s; }
+.items li[data-href]:hover { background: var(--raised); }
+.items .cell-main { flex: 1; }
+.items .cell-title, .items .cell-sub { max-width: none; }
+.items .end { flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 14px; }
+.items-empty { padding: 20px; color: var(--muted); font-size: 14px; }
+@media (max-width: 960px) { .console .grid-2 { grid-template-columns: 1fr; } }
 `;
 
 const navItem = (route: string, key: string, icon: string, label: string) =>
@@ -191,10 +203,10 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   const num = (v) => Number(v || 0).toLocaleString('fr-FR');
   const fmtDate = (d) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
   const fmtDateTime = (d) => new Date(d).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-  const TYPE = { COLLECTION: 'Encaissement', PAYMENT: 'Paiement', HOLD: 'Paiement protégé', HOLD_CAPTURE: 'Versé au vendeur', HOLD_RELEASE: 'Séquestre rendu', TRANSFER: 'Transfert', PAYOUT: 'Retrait', REFUND: 'Remboursement', FAUCET: 'Recharge test' };
+  const TYPE = { COLLECTION: 'Encaissement', PAYMENT: 'Paiement', HOLD: 'Paiement protégé', HOLD_CAPTURE: 'Versé au vendeur', HOLD_RELEASE: 'Séquestre rendu', TRANSFER: 'Transfert', PAYOUT: 'Retrait', REFUND: 'Remboursement', FAUCET: 'Recharge faucet' };
   const STATUS = { SUCCESS: ['ok', 'réussi'], PENDING: ['warn', 'en cours'], FAILED: ['err', 'échoué'], REVERSED: ['err', 'annulé'] };
   const SOURCE = { deposit: 'Frais de dépôt', payment: 'Frais de paiement', withdrawal: 'Frais de retrait', other: 'Autres' };
-  const PROVIDER = { SASPAY: 'SasPay', SIMULATOR: 'Simulateur (test)', AUTRE: 'Sans provider indiqué' };
+  const PROVIDER = { SASPAY: 'SasPay', SIMULATOR: 'Simulateur', AUTRE: 'Sans provider indiqué' };
   const ACTION = { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Recharge du wallet main' };
   const pill = (status) => { const s = STATUS[status] || ['', String(status || '').toLowerCase()]; return el('span', { class: 'pill ' + s[0], text: s[1] }); };
   const rows = (host, list) => host.replaceChildren.apply(host, list.map((r) => el('div', { class: r[2] ? 'total' : '' }, [el('span', { text: r[0] }), el('span', { text: r[1] })])));
@@ -222,7 +234,17 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   }
   const cell = (title, sub) => el('span', { class: 'cell-main' }, [el('span', { class: 'cell-title', text: title }), sub ? el('span', { class: 'cell-sub', text: sub }) : null]);
   const detailPanel = (title, children) => el('section', { class: 'panel' }, [el('div', { class: 'panel-head' }, [el('h2', { class: 'panel-title', text: title })]), el('div', { class: 'panel-body' }, children)]);
-  const flushPanel = (title, child) => el('section', { class: 'panel mt' }, [el('div', { class: 'panel-head' }, [el('h2', { class: 'panel-title', text: title })]), el('div', { class: 'panel-flush' }, [child])]);
+  const flushPanel = (title, child) => el('section', { class: 'panel' }, [el('div', { class: 'panel-head' }, [el('h2', { class: 'panel-title', text: title })]), el('div', { class: 'panel-flush' }, [child])]);
+  /** Detail column: one line per item (title + sub on the left, value on the right), never a wide table. */
+  function items(list, emptyText) {
+    if (!list.length) return el('p', { class: 'items-empty', text: emptyText });
+    return el('ul', { class: 'items' }, list.map((it) => {
+      const li = el('li', { 'data-href': it.href || null }, [cell(it.title, it.sub), el('span', { class: 'end' }, [typeof it.end === 'string' ? document.createTextNode(it.end) : it.end])]);
+      if (it.href) { li.tabIndex = 0; li.addEventListener('click', () => { location.hash = it.href; }); li.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.hash = it.href; }); }
+      return li;
+    }));
+  }
+  const signed = (direction, amount) => el('span', { class: direction === 'CREDIT' ? 'credit' : 'debit', text: (direction === 'CREDIT' ? '+' : '−') + money(amount) });
 
   // ---------------------------------------------------------------- shell
   function setMenu(open) { $('side').classList.toggle('open', open); $('scrim').classList.toggle('open', open); $('menuBtn').setAttribute('aria-expanded', String(open)); }
@@ -302,9 +324,9 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       ].concat(Number(r.other.amount) ? [[SOURCE.other, money(r.other.amount)]] : []).concat([['Total', money(o.revenue.total), true]]));
       const faucetOnly = !o.ledger.balanced && o.ledger.unbalanced.length > 0 && o.ledger.unbalanced.every((t) => t.type === 'INITIAL_FAUCET');
       $('ledgerCheck').replaceChildren(el('p', { class: 'check ' + (o.ledger.balanced || faucetOnly ? 'ok' : 'err') }, [icon(o.ledger.balanced || faucetOnly ? 'check' : 'alert'),
-        o.ledger.balanced ? 'Équilibré : chaque débit a son crédit.' : faucetOnly ? 'Seul écart : l’argent de test créé par le faucet (normal en test).' : 'Déséquilibre détecté : à vérifier tout de suite.']));
+        o.ledger.balanced ? 'Équilibré : chaque débit a son crédit.' : faucetOnly ? 'Seul écart : la réserve de départ du faucet.' : 'Déséquilibre détecté : à vérifier tout de suite.']));
       rows($('ledgerRows'), [['Total des débits', money(o.ledger.debit)], ['Total des crédits', money(o.ledger.credit)]]
-        .concat(o.ledger.unbalanced.map((t) => [(t.type === 'INITIAL_FAUCET' ? 'Faucet de test' : TYPE[t.type] || t.type) + ' · ' + fmtDate(t.created_at), (Number(t.gap) > 0 ? '+' : '') + money(t.gap)])));
+        .concat(o.ledger.unbalanced.map((t) => [(t.type === 'INITIAL_FAUCET' ? 'Réserve de départ du faucet' : TYPE[t.type] || t.type) + ' · ' + fmtDate(t.created_at), (Number(t.gap) > 0 ? '+' : '') + money(t.gap)])));
       series = o.daily; drawBars();
       $('stUsers').textContent = num(o.users); $('stUsersHint').textContent = '+' + num(o.new_users) + ' sur la période · ' + num(o.guests) + ' invités';
       $('stApps').textContent = num(o.apps); $('stAppsHint').textContent = num(o.connections) + ' comptes connectés';
@@ -362,9 +384,8 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       const box = el('div', {});
       rows(box, [['E-mail', u.email || '—'], ['Disponible', money(u.available_balance)], ['Bloqué', money(u.locked_balance)], ['Statut', u.status === 'ACTIVE' ? 'actif' : 'fermé'], ['Créé le', fmtDate(u.created_at)]]);
       box.classList.add('rows');
-      const appsHost = el('div', {}); const movesHost = el('div', {});
-      table(appsHost, [{ label: 'App' }, { label: 'Depuis' }, { label: 'État' }], d.apps.map((a) => ({ href: '#/apps/' + a.app_id, cells: [cell(a.app_name, a.app_id), fmtDate(a.created_at), a.status === 'ACTIVE' ? 'connectée' : 'retirée'] })), 'Aucune app connectée.');
-      table(movesHost, [{ label: 'Mouvement' }, { label: 'Montant', cls: 'num' }], d.moves.map((m) => ({ href: '#/moves/' + m.transaction_id, cells: [cell(m.description || TYPE[m.type] || m.type, fmtDateTime(m.created_at)), el('span', { class: m.direction === 'CREDIT' ? 'credit' : 'debit', text: (m.direction === 'CREDIT' ? '+' : '−') + money(m.amount) })] })), 'Aucun mouvement.');
+      const appsHost = items(d.apps.map((a) => ({ href: '#/apps/' + a.app_id, title: a.app_name, sub: 'depuis le ' + fmtDate(a.created_at), end: a.status === 'ACTIVE' ? 'connectée' : 'retirée' })), 'Aucune app connectée.');
+      const movesHost = items(d.moves.map((m) => ({ href: '#/moves/' + m.transaction_id, title: m.description || TYPE[m.type] || m.type, sub: fmtDateTime(m.created_at), end: signed(m.direction, m.amount) })), 'Aucun mouvement.');
       $('userDetail').replaceChildren(detailPanel(u.name || u.email || 'Compte', [box]), flushPanel('Apps connectées', appsHost), flushPanel('Derniers mouvements', movesHost));
     });
   }
@@ -387,9 +408,8 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       const d = await LP.api('GET', '/v1/admin-console/apps/' + encodeURIComponent(id));
       const box = el('div', { class: 'rows' });
       rows(box, [['Identifiant', d.app.id], ['Propriétaire', d.app.owner_email || (d.app.owner_uid ? 'compte LightPay' : 'non rattachée')], ['Utilisateurs connectés', num(d.app.users)], ['Transactions', num(d.app.transactions)], ['Paiements 30 j', money(d.app.volume_30d)], ['Créée le', fmtDate(d.app.created_at)]]);
-      const usersHost = el('div', {}); const walletsHost = el('div', {});
-      table(usersHost, [{ label: 'Compte' }, { label: 'Autorisations' }, { label: 'Solde', cls: 'num' }], d.users.map((u) => ({ href: '#/users/' + u.wallet_id, cells: [cell(u.name || u.email || 'Sans nom', (u.email || '') + (u.status === 'ACTIVE' ? '' : ' · retirée')), (u.scopes || []).join(', '), money(Number(u.available_balance) + Number(u.locked_balance))] })), 'Aucun utilisateur connecté.');
-      table(walletsHost, [{ label: 'Wallet' }, { label: 'Solde', cls: 'num' }], d.wallets.map((w) => ({ cells: [cell(w.account_id, w.account_type + ' · ' + w.currency), money(Number(w.available_balance) + Number(w.locked_balance))] })), 'Aucun wallet propre.');
+      const usersHost = items(d.users.map((u) => ({ href: '#/users/' + u.wallet_id, title: u.name || u.email || 'Sans nom', sub: [u.email, (u.scopes || []).join(', '), u.status === 'ACTIVE' ? '' : 'retirée'].filter(Boolean).join(' · '), end: money(Number(u.available_balance) + Number(u.locked_balance)) })), 'Aucun utilisateur connecté.');
+      const walletsHost = items(d.wallets.map((w) => ({ title: w.account_id, sub: w.account_type + ' · ' + w.currency, end: money(Number(w.available_balance) + Number(w.locked_balance)) })), 'Aucun wallet propre.');
       $('appDetail').replaceChildren(detailPanel(d.app.name, [box]), flushPanel('Utilisateurs rattachés', usersHost), flushPanel('Wallets de l’app', walletsHost));
     });
   }
@@ -423,11 +443,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       const box = el('div', { class: 'rows' });
       rows(box, [['Montant', money(t.amount)], ['Frais', money(t.fee_amount)], ['App', t.app_id], ['Référence', t.reference || '—'], ['Date', fmtDateTime(t.created_at)]]
         .concat(t.metadata && t.metadata.provider ? [['Provider', t.metadata.provider + (t.metadata.network ? ' · ' + t.metadata.network : '')]] : []));
-      const entriesHost = el('div', {});
-      table(entriesHost, [{ label: 'Wallet' }, { label: 'Débit', cls: 'num' }, { label: 'Crédit', cls: 'num' }], d.entries.map((e) => ({
-        href: e.account_type === 'USER' ? '#/users/' + e.wallet_id : null,
-        cells: [cell(e.label, e.description || ''), e.direction === 'DEBIT' ? el('span', { class: 'debit', text: money(e.amount) }) : '', e.direction === 'CREDIT' ? el('span', { class: 'credit', text: money(e.amount) }) : ''],
-      })), 'Aucune écriture.');
+      const entriesHost = items(d.entries.map((e) => ({ href: e.account_type === 'USER' ? '#/users/' + e.wallet_id : null, title: e.label, sub: e.description || '', end: signed(e.direction, e.amount) })), 'Aucune écriture.');
       $('moveDetail').replaceChildren(detailPanel(TYPE[t.type] || t.type, [pill(t.status), box, el('p', { class: 'mono mt', text: t.id })]), flushPanel('Écritures (partie double)', entriesHost));
     });
   }
@@ -440,7 +456,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       const d = await LP.api('GET', '/v1/admin-console/main');
       mainBalance = Number(d.wallet.available_balance);
       $('mainBalance').textContent = money(d.wallet.available_balance);
-      $('mainHint').textContent = LP.ENV === 'sandbox' ? 'argent de test' : 'argent réel';
+      $('mainHint').textContent = 'vos fonds propres';
       table($('mainMoves'), [{ label: 'Mouvement' }, { label: 'Montant', cls: 'num' }, { label: 'Solde après', cls: 'num' }], d.moves.map((m) => ({
         href: '#/moves/' + m.transaction_id,
         cells: [cell(m.description || TYPE[m.type] || m.type, fmtDateTime(m.created_at)), el('span', { class: m.direction === 'CREDIT' ? 'credit' : 'debit', text: (m.direction === 'CREDIT' ? '+' : '−') + money(m.amount) }), money(m.balance_after)],
