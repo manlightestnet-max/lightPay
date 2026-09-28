@@ -79,6 +79,9 @@ html.console-page .foot { display: none; }
 /* ---------- panels ---------- */
 .panel { border: 1px solid var(--line); border-radius: 18px; background: var(--card); min-width: 0; }
 .stack > * + * { margin-top: 20px; }
+/* Blocks placed directly in a page never touch: the same 20px between every panel, grid and stack. */
+.page > :is(.panel, .grid-2, .stack, .well) + :is(.panel, .grid-2, .stack, .well) { margin-top: 20px; }
+.grid-2 > * > :is(.panel, .stack) + :is(.panel, .stack) { margin-top: 20px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 12px; padding: 16px 20px; }
 .panel-title { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 700; letter-spacing: -.01em; min-width: 0; }
 .panel-title .count { color: var(--faint); font-weight: 550; font-variant-numeric: tabular-nums; }
