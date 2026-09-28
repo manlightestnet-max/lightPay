@@ -5,8 +5,7 @@ import {
   DeveloperError,
   appBalance,
   appOverview,
-  appWithdraw,
-  appWithdrawQuote,
+  appTransferToOwner,
   appSessions,
   appWebhookLogs,
   claimApp,
@@ -46,9 +45,9 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   GET    /v1/me/developer/apps/:id/sessions         checkout sessions (X-Environment)
  *   GET    /v1/me/developer/apps/:id/webhooks         webhook deliveries (X-Environment)
  *   POST   /v1/me/developer/apps/:id/webhooks/test    signed `ping` to the webhook URL
- *   GET    /v1/me/developer/apps/:id/balance          the app's wallet: balance, movements, withdrawals (X-Environment)
- *   GET    /v1/me/developer/apps/:id/withdraw/quote   ?amount=&network= fees before withdrawing
- *   POST   /v1/me/developer/apps/:id/withdraw         { amount, msisdn, network } to mobile money (recent sign-in + Idempotency-Key)
+ *   GET    /v1/me/developer/apps/:id/balance          the app's wallet: balance and movements (X-Environment)
+ *   POST   /v1/me/developer/apps/:id/transfer         { amount } to the owner's own LightPay wallet (recent sign-in + Idempotency-Key)
+ *                                                      — never straight to an operator: the owner withdraws from their account
  */
 export async function developerRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireUser);
@@ -149,21 +148,12 @@ export async function developerRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/apps/:id/withdraw/quote', async (request, reply) => {
-    const q = request.query as any;
-    try {
-      return { quote: appWithdrawQuote(q?.amount, q?.network) };
-    } catch (err) {
-      return fail(reply, err);
-    }
-  });
-
-  fastify.post('/apps/:id/withdraw', async (request, reply) => {
+  fastify.post('/apps/:id/transfer', async (request, reply) => {
     if (!recent(request, reply)) return;
     const key = String(request.headers['idempotency-key'] ?? '');
     if (!/^[A-Za-z0-9_-]{8,100}$/.test(key)) return reply.status(400).send({ error: 'IDEMPOTENCY_KEY_REQUIRED', message: 'Missing Idempotency-Key header' });
     try {
-      return { withdrawal: await appWithdraw(request.lightpayUser!.uid, (request.params as any).id, envOf(request), (request.body ?? {}) as any, key) };
+      return { transfer: await appTransferToOwner(request.lightpayUser!, (request.params as any).id, envOf(request), (request.body as any)?.amount, key) };
     } catch (err) {
       return fail(reply, err);
     }

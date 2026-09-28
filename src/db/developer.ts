@@ -5,10 +5,10 @@ import { setRedirectUris } from './connect.js';
 import { APP_ID_PATTERN, isReservedAppId } from '../security/app-identity.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { Environment } from '../types/index.js';
-import { MOBILE_NETWORKS, MobileNetwork, normalizeCongoMsisdn, providerFor } from '../payments/mobile-money.js';
-import { lightpayPayoutFee, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
-import { sendPayout } from './payouts.js';
-import { maskMsisdn } from './checkout.js';
+import { LedgerEngine } from './ledger.js';
+import { userWallet } from './connect.js';
+import { logActivity } from './activity.js';
+import { LightPayUser } from '../security/user-token.js';
 
 /**
  * Developer space: the apps a LightPay account owns. Everything is scoped to the owner
@@ -312,85 +312,53 @@ const appWallet = async (appId: string, env: Environment) =>
 export async function appBalance(uid: string, appId: string, env: Environment) {
   await ownedApp(uid, appId);
   const wallet = await appWallet(appId, env);
-  if (!wallet) return { wallet: { available_balance: '0', locked_balance: '0', currency: 'XAF' }, moves: [], withdrawals: [] };
-  const [moves, withdrawals] = await Promise.all([
-    query(
-      `SELECT le.transaction_id, le.direction, le.amount::text, le.balance_after::text, le.description, le.created_at, t.type, t.reference
-       FROM ledger_entries le JOIN transactions t ON t.id = le.transaction_id
-       WHERE le.wallet_id = $1 ORDER BY le.created_at DESC LIMIT 50`,
-      [wallet.id],
-      env
-    ),
-    query(
-      `SELECT id, status, amount::text, network, msisdn, failure_code, created_at FROM payouts WHERE wallet_id = $1 ORDER BY created_at DESC LIMIT 20`,
-      [wallet.id],
-      env
-    ),
-  ]);
-  return {
-    wallet: { available_balance: wallet.available_balance, locked_balance: wallet.locked_balance, currency: wallet.currency },
-    moves,
-    withdrawals: withdrawals.map((w) => ({ ...w, msisdn: maskMsisdn(w.msisdn) })),
-  };
+  if (!wallet) return { wallet: { available_balance: '0', locked_balance: '0', currency: 'XAF' }, moves: [] };
+  const moves = await query(
+    `SELECT le.transaction_id, le.direction, le.amount::text, le.balance_after::text, le.description, le.created_at, t.type, t.reference
+     FROM ledger_entries le JOIN transactions t ON t.id = le.transaction_id
+     WHERE le.wallet_id = $1 ORDER BY le.created_at DESC LIMIT 50`,
+    [wallet.id],
+    env
+  );
+  return { wallet: { available_balance: wallet.available_balance, locked_balance: wallet.locked_balance, currency: wallet.currency }, moves };
 }
 
 /**
- * The owner takes the app's money out to a mobile-money number: same rails, minimum and fees as
- * any LightPay withdrawal. Only available money leaves; the app's own quotas still apply.
+ * The app's money only ever goes to its owner's own LightPay wallet (never straight to an operator):
+ * from there the owner withdraws like any LightPay user, with the usual controls and fees.
  */
-export async function appWithdraw(
-  uid: string,
-  appId: string,
-  env: Environment,
-  input: { amount: unknown; msisdn: unknown; network: unknown },
-  idempotencyKey: string
-) {
-  await ownedApp(uid, appId);
-  const s = String(input.amount ?? '').trim();
-  if (!/^\d{1,12}$/.test(s) || BigInt(s) <= 0n) throw new DeveloperError('Montant invalide.', 'INVALID_AMOUNT');
-  const amount = BigInt(s);
-  if (amount < minWithdrawalAmount()) throw new DeveloperError(`Retrait minimum : ${minWithdrawalAmount()} FCFA.`, 'BELOW_MINIMUM');
-  const network = String(input.network ?? '') as MobileNetwork;
-  if (!MOBILE_NETWORKS.includes(network)) throw new DeveloperError('Choisissez MTN MoMo ou Airtel Money.', 'INVALID_NETWORK');
-  const msisdn = normalizeCongoMsisdn(String(input.msisdn ?? ''));
-  if (!msisdn) throw new DeveloperError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN');
-  const wallet = await appWallet(appId, env);
-  const provider = providerFor(network).name;
-  const operatorFee = providerPayoutFee(provider, amount);
-  const lightpayFee = lightpayPayoutFee(amount);
-  if (!wallet || BigInt(wallet.available_balance) < amount + operatorFee + lightpayFee) {
-    throw new DeveloperError(
-      `Solde de l’app insuffisant : ce retrait coûte ${amount + operatorFee + lightpayFee} FCFA frais compris (${operatorFee} opérateur + ${lightpayFee} LightPay).`,
-      'INSUFFICIENT_FUNDS',
-      402
-    );
-  }
-  try {
-    const p = await sendPayout({
-      environment: env,
-      appId,
-      walletId: wallet.id,
-      msisdn,
-      network,
-      amount,
-      operatorFee,
-      lightpayFee,
-      currency: 'XAF',
-      reason: 'WITHDRAWAL',
-      reference: `app-withdraw:${appId}:${idempotencyKey}`,
-      description: `Retrait de l’app vers ${maskMsisdn(msisdn)}`,
-      metadata: { app_withdrawal: true, owner_uid: uid },
-    });
-    return { id: p.id, status: p.status, amount: String(p.amount), to: maskMsisdn(p.msisdn), network: p.network, failure_code: p.failure_code ?? null };
-  } catch (err: any) {
-    throw new DeveloperError(String(err?.message ?? 'Retrait impossible pour le moment.'), 'WITHDRAWAL_FAILED', 400);
-  }
-}
-
-export function appWithdrawQuote(amountInput: unknown, networkInput: unknown) {
+export async function appTransferToOwner(user: LightPayUser, appId: string, env: Environment, amountInput: unknown, idempotencyKey: string) {
+  await ownedApp(user.uid, appId);
   const s = String(amountInput ?? '').trim();
   if (!/^\d{1,12}$/.test(s) || BigInt(s) <= 0n) throw new DeveloperError('Montant invalide.', 'INVALID_AMOUNT');
-  const network = String(networkInput ?? '') as MobileNetwork;
-  if (!MOBILE_NETWORKS.includes(network)) throw new DeveloperError('Choisissez MTN MoMo ou Airtel Money.', 'INVALID_NETWORK');
-  return withdrawalQuote(BigInt(s), providerFor(network).name, 'XAF');
+  const amount = BigInt(s);
+  const wallet = await appWallet(appId, env);
+  if (!wallet || BigInt(wallet.available_balance) < amount) {
+    throw new DeveloperError(`Solde de l’app insuffisant (disponible ${wallet?.available_balance ?? 0} FCFA).`, 'INSUFFICIENT_FUNDS', 402);
+  }
+  const owner = await userWallet(env, user, 'XAF');
+  if (owner.status !== 'ACTIVE') throw new DeveloperError('Votre compte LightPay est fermé.', 'ACCOUNT_CLOSED', 403);
+  const ref = `app-to-owner:${appId}:${idempotencyKey}`;
+  const result = await LedgerEngine.executeTransaction({
+    appId,
+    environment: env,
+    idempotencyKey: ref,
+    type: 'TRANSFER',
+    amount,
+    currency: 'XAF',
+    // The owner's own money moving between their two wallets: not app volume.
+    skipQuotas: true,
+    metadata: { kind: 'APP_TO_OWNER', app_id: appId, owner_uid: user.uid },
+    postings: [
+      { walletId: wallet.id, direction: 'DEBIT', amount, description: 'Virement vers le compte du propriétaire' },
+      { walletId: owner.id, direction: 'CREDIT', amount, description: `Depuis l’app ${appId}` },
+    ],
+  });
+  if (!result.duplicate) {
+    await logActivity(env, {
+      walletId: owner.id, kind: 'TRANSFER', direction: 'IN', status: 'SUCCEEDED', amount, total: amount, currency: 'XAF',
+      counterparty: `App ${appId}`, refType: 'transfer', refId: ref, metadata: { app_id: appId },
+    });
+  }
+  return { duplicate: result.duplicate, amount: amount.toString() };
 }
