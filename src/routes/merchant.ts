@@ -1,8 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { query } from '../db/pool.js';
-import { LedgerEngine, LedgerPosting } from '../db/ledger.js';
 import { requireAppAuth } from '../middleware/app-auth.js';
-import { encrypt3Des } from './gateways.js';
 import { isReservedAppId } from '../security/app-identity.js';
 import { generateAppCredentials, getOrCreateMerchantWallet } from '../db/apps.js';
 
@@ -80,147 +78,14 @@ export async function merchantRoutes(fastify: FastifyInstance) {
       })
     );
 
-    protectedRoutes.post('/disbursements/payout', async (request: FastifyRequest, reply: FastifyReply) => {
-      const appId = request.appData!.id;
-      const environment = request.appData!.environment || 'production';
-      const body = (request.body as any) || {};
-
-      const {
-        amount,
-        phone,
-        network,
-        name = 'Marchand LightPay',
-        currency = 'CREDIT',
-        country = 'CG',
-        description = 'Retrait Marchand Mobile Money',
-      } = body;
-
-      if (!amount || parseInt(amount, 10) <= 0) {
-        return reply.status(400).send({ error: 'Montant de retrait invalide' });
-      }
-      if (!phone) {
-        return reply.status(400).send({ error: 'Numéro de téléphone destinataire requis' });
-      }
-
-      // Résolution du serviceCode
-      let serviceCode = body.service_code || body.serviceCode;
-      if (!serviceCode) {
-        const net = (network || '').toUpperCase();
-        if (net === 'AIRTEL' || net === 'AIRTEL_COG') {
-          serviceCode = 'AIRTEL_COG';
-        } else {
-          serviceCode = 'MTN_MOMO_COG';
-        }
-      }
-
-      const payoutAmount = BigInt(amount);
-      const merchantWallet = await getOrCreateMerchantWallet(appId, environment, currency);
-
-      if (BigInt(merchantWallet.available_balance) < payoutAmount) {
-        return reply.status(400).send({
-          error: 'INSUFFICIENT_MERCHANT_BALANCE',
-          message: `Solde marchand insuffisant (${merchantWallet.available_balance} ${currency}) pour effectuer un retrait de ${amount} ${currency}.`,
-        });
-      }
-
-      // Wallet de transit passerelle de mainapp
-      const gatewayOutflowId = await LedgerEngine.getOrCreateGatewayInflow('mainapp', environment, currency);
-      const requestId = `payout-${appId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      const idempotencyKey = `PAYOUT_${appId}_${requestId}`;
-
-      try {
-        // Débit comptable du compte marchand de l'application
-        const ledgerResult = await LedgerEngine.executeTransaction({
-          appId,
-          idempotencyKey,
-          type: 'DISBURSEMENT',
-          environment,
-          amount: payoutAmount,
-          currency,
-          reference: `PAYOUT_${serviceCode}_${requestId}`,
-          metadata: {
-            recipient_phone: phone,
-            recipient_name: name,
-            network: serviceCode,
-            environment,
-            country,
-            app_id: appId,
-          },
-          postings: [
-            {
-              walletId: merchantWallet.id,
-              direction: 'DEBIT',
-              amount: payoutAmount,
-              description: `Retrait Marchand vers ${serviceCode} (${phone})`,
-            },
-            {
-              walletId: gatewayOutflowId,
-              direction: 'CREDIT',
-              amount: payoutAmount,
-              description: `Sortie caisse Mobile Money [${serviceCode}] pour ${appId}`,
-            },
-          ],
-        });
-
-        // Déclenchement passerelle 3DES si clés configurées
-        const gatewayPublicKey = process.env.GATEWAY_PUBLIC_KEY || '';
-        const gatewayBearerToken = process.env.GATEWAY_BEARER_TOKEN || '';
-        const gatewayEncryptionKey = process.env.GATEWAY_ENCRYPTION_KEY || '';
-        const gatewayBaseUrl = (process.env.GATEWAY_BASE_URL || 'https://gate.klasapps.com').replace(/\/+$/, '');
-        const merchantWalletId = parseInt(process.env.GATEWAY_WALLET_ID || '12', 10);
-
-        let gatewayResponse: any = null;
-
-        if (gatewayPublicKey && gatewayBearerToken && gatewayEncryptionKey) {
-          const plainPayload = {
-            country,
-            amount: amount.toString(),
-            accountName: name,
-            serviceCode,
-            requestId,
-            description,
-            currency: 'XAF',
-            accountNumber: phone,
-            type: 'mobile_money',
-            debitAmount: amount.toString(),
-            walletId: merchantWalletId,
-            payoutType: 'USD_MOMO',
-          };
-
-          const encryptedMessage = encrypt3Des(JSON.stringify(plainPayload), gatewayEncryptionKey);
-          const endpointUrl = `${gatewayBaseUrl}/wallet/merchant/bank/transfer/request/v3?encryption=NEW`;
-
-          try {
-            const res = await fetch(endpointUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-auth-token': gatewayPublicKey,
-                'Authorization': `Bearer ${gatewayBearerToken}`,
-              },
-              body: JSON.stringify({ message: encryptedMessage }),
-            });
-            gatewayResponse = await res.json().catch(() => ({ status_code: res.status }));
-          } catch (apiErr: any) {
-            gatewayResponse = { error: apiErr.message, note: 'Échec de transmission passerelle' };
-          }
-        }
-
-        return reply.status(201).send({
-          status: 'success',
-          message: `Retrait de ${amount} ${currency} vers ${phone} (${serviceCode}) initié avec succès.`,
-          request_id: requestId,
-          network: serviceCode,
-          ledger_transaction: ledgerResult,
-          gateway_response: gatewayResponse || { mode: 'ledger_reserved_awaiting_dispatch' },
-        });
-      } catch (err: any) {
-        return reply.status(400).send({
-          status: 'error',
-          error: err.message,
-        });
-      }
-    });
+    // Closed: the app's owner withdraws from the LightPay console (Développeurs → app → Solde),
+    // on the current mobile-money rails with the usual fees.
+    protectedRoutes.post('/disbursements/payout', async (_request: FastifyRequest, reply: FastifyReply) =>
+      reply.status(410).send({
+        error: 'GONE',
+        message: 'Retirez le solde de votre app depuis votre console LightPay : Développeurs → votre app → Solde.',
+      })
+    );
 
     /**
      * 4. RELEVÉ COMPTABLE DU MARCHAND (Collections & Disbursements)

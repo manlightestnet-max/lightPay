@@ -309,6 +309,35 @@ ${flow(
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Paiements <span class="count" id="daPayCount"></span></h2>${envBadge}</div><div class="panel-flush" id="daPayList"></div></section>
   </div>
 
+  <div data-tab="balance" class="stack" hidden>
+    <section class="panel"><div class="panel-head"><h2 class="panel-title">Solde de l’app ${tip('Ce que votre app a encaissé pour elle-même et ses commissions (fee_amount). Cet argent vous appartient : vous le retirez vers MTN MoMo ou Airtel Money.')}</h2>${envBadge}</div>
+      <div class="panel-body"><div class="well">
+        ${stat({ id: 'dbAvail', label: 'Disponible', hint: 'retirable maintenant', accent: true })}
+        ${stat({ id: 'dbLocked', label: 'Bloqué', hint: 'en séquestre' })}
+      </div></div>
+    </section>
+    <div class="grid-2">
+      <section class="panel"><div class="panel-head"><h2 class="panel-title">Mouvements</h2></div><div class="panel-flush" id="dbMoves"></div></section>
+      <section class="panel"><div class="panel-head"><h2 class="panel-title">Retirer</h2></div><div class="panel-body">
+        <form id="dbForm" novalidate>
+          <div class="field"><span class="label" id="dbNetLabel">Vers</span>
+            <div class="seg" role="group" aria-labelledby="dbNetLabel">
+              <button class="seg-opt" type="button" data-db-net="MTN_MOMO_COG" aria-pressed="true">MTN MoMo</button>
+              <button class="seg-opt" type="button" data-db-net="AIRTEL_COG" aria-pressed="false">Airtel Money</button>
+            </div>
+          </div>
+          <div class="field"><label for="dbPhone">Numéro qui reçoit</label><div class="input-prefix"><span>+242</span><input id="dbPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
+          <div class="field"><label for="dbAmount">Montant à recevoir (FCFA)</label><input id="dbAmount" inputmode="numeric" autocomplete="off" placeholder="0"></div>
+          <div class="fees" id="dbFees" hidden></div>
+          <div class="msg" id="dbMsg" role="status" aria-live="polite"></div>
+          <button class="btn mt" type="submit" id="dbGo" disabled>${iconSvg('withdraw')}Retirer</button>
+        </form>
+        <div class="section-head mt-lg" id="dbListHead" hidden><h2>Derniers retraits</h2></div>
+        <ul class="list" id="dbList"></ul>
+      </div></section>
+    </div>
+  </div>
+
   <div data-tab="settings" class="stack" hidden>
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Informations</h2></div><div class="panel-body">
       <div class="field"><label for="daName">Nom affiché aux clients</label><input id="daName" maxlength="60" autocomplete="off"></div>
@@ -958,7 +987,7 @@ ${flow(
   }, 'newAppMsg'));
 
   // one app
-  const TABS = [['overview', 'Aperçu'], ['keys', 'Clés API'], ['webhooks', 'Webhooks'], ['payments', 'Paiements'], ['settings', 'Paramètres']];
+  const TABS = [['overview', 'Aperçu'], ['balance', 'Solde'], ['keys', 'Clés API'], ['webhooks', 'Webhooks'], ['payments', 'Paiements'], ['settings', 'Paramètres']];
   const SESSION_STATUS = { COMPLETED: ['ok', 'Payé'], OPEN: ['', 'Ouvert'], PROCESSING: ['warn', 'En cours'], EXPIRED: ['', 'Expiré'], CANCELLED: ['', 'Annulé'] };
   const HOOK_STATUS = { SENT: ['ok', 'Livré'], PENDING: ['warn', 'En attente'], FAILED: ['err', 'Échec'], SKIPPED: ['', 'Sans URL'] };
   let devApp = null;
@@ -984,6 +1013,75 @@ ${flow(
       '# → { "session": { "checkout_url": "…/pay/cs_test_…" } }',
     ].join('\\n');
   }
+  // ---------------------------------------------------------------- the app's own wallet (Solde)
+  const DB_STATUS = { SUCCEEDED: ['ok', 'envoyé'], PENDING: ['warn', 'en cours'], FAILED: ['err', 'échoué · restitué'] };
+  let dbNet = 'MTN_MOMO_COG', dbQuote = null, dbAvailable = 0, dbKey = null, dbSeq = 0;
+  async function loadDevBalance() {
+    const b = await LP.api('GET', '/v1/me/developer/apps/' + encodeURIComponent(devApp.id) + '/balance');
+    dbAvailable = Number(b.wallet.available_balance);
+    $('dbAvail').textContent = LP.money(b.wallet.available_balance, 'XAF');
+    $('dbLocked').textContent = LP.money(b.wallet.locked_balance, 'XAF');
+    table($('dbMoves'), [{ label: 'Mouvement' }, { label: 'Montant', cls: 'num' }], b.moves.map((m) => ({
+      cells: [cellMain(el('span', { class: 'row-icon' }, [icon(m.direction === 'CREDIT' ? 'receive' : 'send')]), m.description || m.type, fmtDateTime(m.created_at)),
+        el('span', { class: m.direction === 'CREDIT' ? 'in' : '', text: (m.direction === 'CREDIT' ? '+' : '−') + LP.money(m.amount, 'XAF') })],
+    })), 'Aucun mouvement : les commissions de votre app arriveront ici.');
+    $('dbListHead').hidden = !b.withdrawals.length;
+    $('dbList').replaceChildren.apply($('dbList'), b.withdrawals.map((w) => {
+      const st = DB_STATUS[w.status] || ['', w.status];
+      return el('li', {}, [el('div', { class: 'row' }, [el('span', { class: 'row-main' }, [el('span', { class: 'row-title', text: LP.money(w.amount, 'XAF') + ' vers ' + w.msisdn }), el('span', { class: 'row-sub', text: fmtDateTime(w.created_at) })]), el('span', { class: 'pill ' + st[0], text: st[1] })])]);
+    }));
+    dbCheck();
+  }
+  document.querySelectorAll('[data-db-net]').forEach((b) => b.addEventListener('click', () => {
+    dbNet = b.dataset.dbNet;
+    document.querySelectorAll('[data-db-net]').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
+    loadDbQuote();
+  }));
+  function dbCheck() {
+    const phone = digits($('dbPhone').value).replace(/^242/, '');
+    const q = dbQuote;
+    $('dbGo').disabled = true;
+    if (!q) return;
+    if (Number(q.amount) < Number(q.minimum)) return say('dbMsg', 'Retrait minimum : ' + LP.money(q.minimum, 'XAF') + '.', 'err');
+    if (Number(q.total) > dbAvailable) return say('dbMsg', 'Solde de l’app insuffisant : ce retrait coûte ' + LP.money(q.total, 'XAF') + ' frais compris (disponible ' + LP.money(dbAvailable, 'XAF') + ').', 'err');
+    if (!/^0[4-6]\d{7}$/.test(phone)) return say('dbMsg', 'Entrez le numéro à 9 chiffres qui reçoit l’argent.', phone ? 'err' : undefined);
+    say('dbMsg', '');
+    $('dbGo').disabled = false;
+  }
+  const loadDbQuote = debounce(async () => {
+    const amount = digits($('dbAmount').value);
+    const seq = ++dbSeq;
+    dbKey = null;
+    if (!amount) { dbQuote = null; $('dbFees').hidden = true; dbCheck(); say('dbMsg', ''); return; }
+    try {
+      const r = await LP.api('GET', '/v1/me/developer/apps/' + encodeURIComponent(devApp.id) + '/withdraw/quote?amount=' + amount + '&network=' + dbNet);
+      if (seq !== dbSeq) return;
+      dbQuote = r.quote;
+      feeRows($('dbFees'), [['Vous recevez', LP.money(dbQuote.amount, 'XAF')], ['Frais opérateur', LP.money(dbQuote.operator_fee, 'XAF')], ['Frais LightPay', LP.money(dbQuote.lightpay_fee, 'XAF')], ['Total débité du solde de l’app', LP.money(dbQuote.total, 'XAF'), true]]);
+      $('dbFees').hidden = false;
+      dbCheck();
+    } catch (e) { if (e.signIn) signIn(); else say('dbMsg', e.message, 'err'); }
+  }, 300);
+  $('dbAmount').addEventListener('input', () => { $('dbGo').disabled = true; loadDbQuote(); });
+  $('dbPhone').addEventListener('input', () => { dbKey = null; dbCheck(); });
+  $('dbForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!dbQuote || $('dbGo').disabled) return;
+    // One key per withdrawal filled in: a double tap or a retry after re-auth never pays twice.
+    if (!dbKey) dbKey = LP.uuid();
+    const body = { amount: dbQuote.amount, msisdn: digits($('dbPhone').value).replace(/^242/, ''), network: dbNet };
+    $('dbGo').disabled = true;
+    await guarded(async () => {
+      const r = await LP.api('POST', '/v1/me/developer/apps/' + encodeURIComponent(devApp.id) + '/withdraw', body, dbKey);
+      dbKey = null; dbQuote = null;
+      $('dbAmount').value = ''; $('dbFees').hidden = true;
+      await loadDevBalance();
+      const w = r.withdrawal;
+      say('dbMsg', w.status === 'FAILED' ? 'Retrait refusé par l’opérateur : le montant a été restitué au solde de l’app.' : LP.money(w.amount, 'XAF') + ' envoyés vers ' + w.to + (w.status === 'PENDING' ? ' (en cours de traitement).' : '.'), w.status === 'FAILED' ? 'err' : 'ok');
+    }, 'dbMsg');
+    if (dbQuote) dbCheck();
+  });
+
   async function enterDevApp(param) {
     const parts = String(param || '').split('/');
     const id = parts[0];
@@ -1032,6 +1130,8 @@ ${flow(
             el('span', { class: 'pill ' + st[0], text: st[1] }),
           ] };
         }), 'Aucun événement envoyé pour l’instant.');
+      } else if (tab === 'balance') {
+        await loadDevBalance();
       } else if (tab === 'payments') {
         const s = await LP.api('GET', '/v1/me/developer/apps/' + encodeURIComponent(id) + '/sessions?limit=100');
         $('daPayCount').textContent = String(s.sessions.length);

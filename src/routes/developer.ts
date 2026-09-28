@@ -3,7 +3,10 @@ import { isRecentSignIn } from '../security/user-token.js';
 import { requireUser } from './me.js';
 import {
   DeveloperError,
+  appBalance,
   appOverview,
+  appWithdraw,
+  appWithdrawQuote,
   appSessions,
   appWebhookLogs,
   claimApp,
@@ -43,6 +46,9 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   GET    /v1/me/developer/apps/:id/sessions         checkout sessions (X-Environment)
  *   GET    /v1/me/developer/apps/:id/webhooks         webhook deliveries (X-Environment)
  *   POST   /v1/me/developer/apps/:id/webhooks/test    signed `ping` to the webhook URL
+ *   GET    /v1/me/developer/apps/:id/balance          the app's wallet: balance, movements, withdrawals (X-Environment)
+ *   GET    /v1/me/developer/apps/:id/withdraw/quote   ?amount=&network= fees before withdrawing
+ *   POST   /v1/me/developer/apps/:id/withdraw         { amount, msisdn, network } to mobile money (recent sign-in + Idempotency-Key)
  */
 export async function developerRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireUser);
@@ -129,6 +135,35 @@ export async function developerRoutes(fastify: FastifyInstance) {
   fastify.post('/apps/:id/webhooks/test', async (request, reply) => {
     try {
       return await sendTestWebhook(request.lightpayUser!.uid, (request.params as any).id, envOf(request));
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // The app's own wallet: its commissions and what it collected for itself.
+  fastify.get('/apps/:id/balance', async (request, reply) => {
+    try {
+      return await appBalance(request.lightpayUser!.uid, (request.params as any).id, envOf(request));
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/apps/:id/withdraw/quote', async (request, reply) => {
+    const q = request.query as any;
+    try {
+      return { quote: appWithdrawQuote(q?.amount, q?.network) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.post('/apps/:id/withdraw', async (request, reply) => {
+    if (!recent(request, reply)) return;
+    const key = String(request.headers['idempotency-key'] ?? '');
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(key)) return reply.status(400).send({ error: 'IDEMPOTENCY_KEY_REQUIRED', message: 'Missing Idempotency-Key header' });
+    try {
+      return { withdrawal: await appWithdraw(request.lightpayUser!.uid, (request.params as any).id, envOf(request), (request.body ?? {}) as any, key) };
     } catch (err) {
       return fail(reply, err);
     }
