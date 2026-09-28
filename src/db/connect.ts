@@ -51,6 +51,16 @@ const DEFAULT_CURRENCY = 'XAF';
  * Read first: a plain read never writes (balance polling must not contend with payments);
  * the profile is only rewritten when the name or e-mail actually changed.
  */
+/** The person's LightPay wallet if they opened one, without ever creating it. */
+export async function findUserWallet(environment: Environment, user: LightPayUser, currency = DEFAULT_CURRENCY) {
+  const [existing] = await query(
+    `SELECT available_balance::text, status FROM wallets WHERE app_id = 'mainapp' AND account_id = $1 AND currency = $2 AND environment = $3`,
+    [`user:${user.uid}`, currency, environment],
+    environment
+  );
+  return existing ?? null;
+}
+
 export async function userWallet(environment: Environment, user: LightPayUser, currency = DEFAULT_CURRENCY) {
   const [existing] = await query(
     `SELECT * FROM wallets WHERE app_id = 'mainapp' AND account_id = $1 AND currency = $2 AND environment = $3`,

@@ -154,6 +154,8 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   };
   const failText = (code) => FAIL[code] || (code && code.indexOf('PROVIDER_') === 0 ? 'L’opérateur a refusé ce paiement (' + code.slice(9).toLowerCase().replace(/_/g, ' ') + '). Réessayez ou changez de numéro.' : 'Le paiement a échoué. Réessayez.');
   const NET_NAME = { MTN_MOMO_COG: 'MTN MoMo', AIRTEL_COG: 'Airtel Money' };
+  // false: the person signed in on the app has no LightPay wallet, so only mobile money is offered.
+  let payerHasWallet = null;
   let session = null, method = 'mobile_money', network = 'MTN_MOMO_COG', poll = null, lastAttemptAt = null, paidWithWallet = false, walletBalance = null;
   const accountUrl = (hash) => (LP.ENV === 'sandbox' ? '/account?env=sandbox' : '/account') + (hash || '');
 
@@ -232,7 +234,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   $('walletSwitch').addEventListener('click', () => { LP.signOut(); mountAuth(openWallet, { title: 'Payer avec LightPay', onBack: backFromAuth }); });
 
   function openMethod() {
-    const both = session.kind === 'PAYMENT' && session.methods.indexOf('mobile_money') >= 0 && session.methods.indexOf('lightpay_wallet') >= 0;
+    const both = session.kind === 'PAYMENT' && session.methods.indexOf('mobile_money') >= 0 && session.methods.indexOf('lightpay_wallet') >= 0 && payerHasWallet !== false;
     if (!both) method = session.kind === 'DEPOSIT' || session.methods.indexOf('mobile_money') >= 0 ? 'mobile_money' : 'lightpay_wallet';
     // Only the ways this session accepts are offered; each operator card shows its fees.
     $('methodsBox').hidden = false;
@@ -368,7 +370,12 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     const d = e.data || {};
     if (d.source !== 'lightpay-app' || d.type !== 'identity' || d.session !== id || typeof d.idToken !== 'string') return;
     if (!LP.lend(d.idToken)) return;
-    if (session && session.status === 'OPEN' && method === 'lightpay_wallet') { screen('pay'); openMethod(); }
+    LP.api('GET', '/v1/checkout/public/sessions/' + encodeURIComponent(id) + '/payer').then((r) => {
+      payerHasWallet = Boolean(r.has_wallet);
+      // No LightPay account: the wallet is not offered, the payer simply pays by mobile money.
+      if (session && session.status === 'OPEN' && !document.querySelector('[data-screen="pay"]').hidden) openMethod();
+      else if (session && session.status === 'OPEN' && method === 'lightpay_wallet') { screen('pay'); openMethod(); }
+    }).catch(() => {});
   });
 
   $('retry').addEventListener('click', () => { say('msg', ''); screen('pay'); openMethod(); });

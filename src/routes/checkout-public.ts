@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { FastifyInstance } from 'fastify';
 import { CheckoutError, payWithWallet, publicView, startMobileMoney } from '../db/checkout.js';
-import { ConnectError, validateAuthorizeRequest } from '../db/connect.js';
+import { ConnectError, findUserWallet, validateAuthorizeRequest } from '../db/connect.js';
 import { EscrowError } from '../db/escrow.js';
 import { requireUser } from './me.js';
 import { accountPage, connectPage, consolePage, hostedCsp, lightpaySdk, payPage } from '../pages/hosted.js';
@@ -30,6 +30,7 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9_-]{16,40}$/;
  *   POST /v1/checkout/public/sessions/:id/wallet      pay with a LightPay wallet (signed in)
  *   GET  /v1/checkout/public/sessions/:id             what the page shows (polled)
  *   POST /v1/checkout/public/sessions/:id/mobile-money   { msisdn, network }
+ *   GET  /v1/checkout/public/sessions/:id/payer          signed in: has a LightPay wallet? (never opens one)
  */
 export async function checkoutPublicRoutes(fastify: FastifyInstance) {
   fastify.get('/v1/checkout/public/sessions/:id', async (request, reply) => {
@@ -67,6 +68,15 @@ export async function checkoutPublicRoutes(fastify: FastifyInstance) {
     } catch (err: any) {
       return reply.status(err instanceof ConnectError ? err.statusCode : 400).send({ error: err.code || 'INVALID_REQUEST', message: err.message });
     }
+  });
+
+  // Does this signed-in person already have a LightPay wallet? (never opens one)
+  fastify.get('/v1/checkout/public/sessions/:id/payer', { preHandler: requireUser }, async (request, reply) => {
+    const { id } = request.params as any;
+    if (!SESSION_ID.test(id)) return reply.status(404).send({ error: 'Session not found' });
+    const w = await findUserWallet(id.startsWith('cs_test_') ? 'sandbox' : 'production', request.lightpayUser!);
+    reply.header('Cache-Control', 'no-store');
+    return { status: 'success', has_wallet: Boolean(w && w.status === 'ACTIVE') };
   });
 
   // Signed-in LightPay user pays from their wallet.
