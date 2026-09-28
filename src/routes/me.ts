@@ -198,6 +198,7 @@ export async function meRoutes(fastify: FastifyInstance) {
         state: b.state ? String(b.state).slice(0, 512) : undefined,
         codeChallenge: String(b.code_challenge ?? ''),
         chargeLimit: b.charge_limit ? BigInt(b.charge_limit) : undefined,
+        acceptTerms: b.accept_terms === true,
       });
       return { status: 'success', ...result };
     } catch (err) {

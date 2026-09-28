@@ -506,7 +506,7 @@ ${flow(
       case 'PAYMENT': return 'Paiement · ' + who;
       case 'CHARGE': return 'Débit par ' + who;
       case 'SALE': return 'Vente · ' + who;
-      case 'COMMISSION': return 'Commission · ' + who;
+      case 'COMMISSION': return 'Commission automatique · ' + who;
       case 'REFUND': return a.direction === 'IN' ? 'Remboursement · ' + who : 'Remboursement envoyé';
       default: return a.kind;
     }
@@ -771,6 +771,11 @@ ${flow(
     const rows = [['Montant', LP.money(a.amount, a.currency)]];
     if (a.fees && a.fees !== '0') rows.push(['Frais', LP.money(a.fees, a.currency)]);
     if (a.total && a.total !== a.amount) rows.push([incoming ? 'Net reçu' : 'Total', LP.money(a.total, a.currency)]);
+    if (a.kind === 'COMMISSION') {
+      if (a.metadata && a.metadata.sale_amount) rows.push(['Sur la vente de', LP.money(a.metadata.sale_amount, a.currency)]);
+      rows.push(['Retenue', 'Automatique, à la validation de la vente']);
+      rows.push(['Autorisée', 'En connectant votre wallet à ' + (a.counterparty || 'l’app')]);
+    }
     if (a.counterparty) rows.push([incoming ? 'De' : a.kind === 'DEPOSIT' || a.kind === 'WITHDRAWAL' ? 'Via' : 'À', a.counterparty]);
     if (a.metadata && a.metadata.via) rows.push(['Via', a.metadata.via]);
     if (a.metadata && a.metadata.reference) rows.push(['Référence', a.metadata.reference]);

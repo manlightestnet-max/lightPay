@@ -157,6 +157,10 @@ export const accountPage = (nonce: string, env: string) => {
     <div class="center mt"><span class="avatar avatar-lg" id="appAvatar" aria-hidden="true"></span><h2 class="title mt" id="appName"></h2><p class="small muted" id="appSince"></p></div>
     <div class="section-head"><h2>Ce que l’app peut faire</h2></div>
     <ul class="list" id="appScopes"></ul>
+    <div id="appTermsBox" hidden>
+      <div class="section-head"><h2 id="appTermsHead">Conditions acceptées</h2></div>
+      <ul class="terms" id="appTerms"></ul>
+    </div>
     <div id="appLimitBox" hidden>
       <div class="field"><label for="appLimit">Montant maximum par débit (FCFA)</label><input id="appLimit" inputmode="numeric" autocomplete="off"></div>
       <button class="btn btn-secondary mt" type="button" id="appLimitSave">Enregistrer la limite</button>
@@ -256,7 +260,7 @@ export const accountPage = (nonce: string, env: string) => {
       case 'PAYMENT': return 'Paiement · ' + who;
       case 'CHARGE': return 'Débit par ' + who;
       case 'SALE': return 'Vente · ' + who;
-      case 'COMMISSION': return 'Commission · ' + who;
+      case 'COMMISSION': return 'Commission automatique · ' + who;
       case 'REFUND': return a.direction === 'IN' ? 'Remboursement · ' + who : 'Remboursement envoyé';
       default: return a.kind;
     }
@@ -517,6 +521,11 @@ export const accountPage = (nonce: string, env: string) => {
       const rows = [['Montant', LP.money(a.amount, a.currency)]];
       if (a.fees && a.fees !== '0') rows.push(['Frais', LP.money(a.fees, a.currency)]);
       if (a.total && a.total !== a.amount) rows.push([incoming ? 'Net reçu' : 'Total', LP.money(a.total, a.currency)]);
+      if (a.kind === 'COMMISSION') {
+        if (a.metadata && a.metadata.sale_amount) rows.push(['Sur la vente de', LP.money(a.metadata.sale_amount, a.currency)]);
+        rows.push(['Retenue', 'Automatique, à la validation de la vente']);
+        rows.push(['Autorisée', 'En connectant votre wallet à ' + (a.counterparty || 'l’app')]);
+      }
       if (a.counterparty) rows.push([incoming ? 'De' : a.kind === 'DEPOSIT' || a.kind === 'WITHDRAWAL' ? 'Via' : 'À', a.counterparty]);
       if (a.metadata && a.metadata.via) rows.push(['Via', a.metadata.via]);
       if (a.metadata && a.metadata.reference) rows.push(['Référence', a.metadata.reference]);
@@ -567,6 +576,12 @@ export const accountPage = (nonce: string, env: string) => {
       })));
       $('appLimitBox').hidden = !c.scopes.includes('charge');
       $('appLimit').value = c.charge_limit || '';
+      const terms = (c.consent && c.consent.terms) || [];
+      $('appTermsBox').hidden = !terms.length;
+      if (terms.length) {
+        $('appTermsHead').textContent = 'Conditions acceptées le ' + new Date(c.consent.accepted_at).toLocaleString('fr-FR');
+        $('appTerms').replaceChildren.apply($('appTerms'), terms.map((t) => el('li', { text: t })));
+      }
     }, 'appMsg');
   }
   $('appLimitSave').addEventListener('click', () => guarded(async () => {

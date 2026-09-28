@@ -206,6 +206,10 @@ a.row:hover .row-title, button.row:hover .row-title { text-decoration: underline
 .note svg { width: 18px; height: 18px; color: var(--accent); margin-top: 1px; }
 .note.warn { background: var(--warn-soft); } .note.warn svg { color: var(--warn); }
 .msg { margin-top: 12px; font-size: 13px; min-height: 0; }
+.terms { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+.terms li + li { margin-top: 6px; }
+.agree { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; font-size: 14px; cursor: pointer; }
+.agree input { width: 18px; height: 18px; margin: 1px 0 0; flex-shrink: 0; accent-color: var(--accent); }
 .amount-bad { margin-top: 6px; font-size: 13px; color: var(--danger); }
 [data-amount][aria-invalid="true"] { border-color: var(--danger); }
 .msg:empty { margin-top: 0; }

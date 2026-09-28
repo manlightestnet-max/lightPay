@@ -34,6 +34,11 @@ export const connectPage = (nonce: string, env: string) => {
       <input id="limit" inputmode="numeric" autocomplete="off" value="50000">
       <p class="hint">Au-delà, chaque paiement vous sera demandé sur la page LightPay.</p>
     </div>
+    <div id="termsBox" hidden>
+      <div class="section-head"><h2>Conditions de <span id="termsApp"></span></h2></div>
+      <ul class="terms" id="terms"></ul>
+      <label class="agree"><input type="checkbox" id="agree"><span>J’accepte que <span id="agreeApp"></span> retienne automatiquement sa commission sur mes ventes.</span></label>
+    </div>
     <div class="note">${iconSvg('shield')}<p>L’app ne voit jamais votre mot de passe. Vous pourrez retirer cet accès à tout moment depuis votre compte LightPay.</p></div>
     <div class="msg" id="msg" role="status" aria-live="polite"></div>
   </div>
@@ -66,6 +71,12 @@ export const connectPage = (nonce: string, env: string) => {
     $('appName').textContent = valid.app.name;
     $('scopes').replaceChildren.apply($('scopes'), valid.scopes.map((s) => listRow({ icon: SCOPE_ICON[s.scope] || 'check', iconClass: 'in', title: s.label })));
     $('limitBox').hidden = !valid.scopes.some((s) => s.scope === 'charge');
+    const terms = valid.terms || [];
+    $('termsBox').hidden = !terms.length;
+    $('termsApp').textContent = valid.app.name;
+    $('agreeApp').textContent = valid.app.name;
+    $('terms').replaceChildren.apply($('terms'), terms.map((t) => el('li', { text: t })));
+    $('agree').checked = false;
     say('msg', '');
     screen('consent');
   }
@@ -80,7 +91,9 @@ export const connectPage = (nonce: string, env: string) => {
         limit = digits($('limit').value);
         if (!limit || Number(limit) <= 0) { say('msg', 'Indiquez un montant maximum par débit.', 'err'); return; }
       }
-      const r = await LP.api('POST', '/v1/me/connect/approve', Object.assign({}, req, { charge_limit: limit }));
+      const needsAgree = (valid.terms || []).length > 0;
+      if (needsAgree && !$('agree').checked) { say('msg', 'Cochez la case pour accepter les conditions de ' + valid.app.name + '.', 'err'); return; }
+      const r = await LP.api('POST', '/v1/me/connect/approve', Object.assign({}, req, { charge_limit: limit, accept_terms: needsAgree }));
       location.assign(r.redirect);
     } catch (e) {
       if (e.signIn) signInThen(); else say('msg', e.message, 'err');

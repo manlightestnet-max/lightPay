@@ -236,7 +236,8 @@ export class Escrow {
         if (fee > 0n && (await isPersonWallet(p.environment, settled.wallet_id))) {
           await logActivity(p.environment, {
             walletId: settled.wallet_id, kind: 'COMMISSION', direction: 'OUT', status: 'SUCCEEDED', amount: fee, total: fee,
-            currency: settled.currency, counterparty: app, refType: 'hold_commission', refId: settled.id, metadata: { reference: settled.reference },
+            currency: settled.currency, counterparty: app, refType: 'hold_commission', refId: settled.id,
+            metadata: { reference: settled.reference, sale_amount: settled.amount },
           });
         }
       } else {

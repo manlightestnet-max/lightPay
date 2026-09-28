@@ -22,6 +22,21 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   charge: 'Débiter votre wallet pour vos achats',
 };
 
+/** Consent text version: bump it when a clause changes (kept with each acceptance). */
+export const CONSENT_VERSION = 1;
+
+/**
+ * Clauses the person must accept explicitly (a box to tick), stored word for word with the
+ * connection: what they agreed to, in case of a dispute.
+ */
+export const consentTerms = (appName: string, scopes: Scope[]): string[] =>
+  scopes.includes('payee')
+    ? [
+        `${appName} retient automatiquement sa commission sur chaque vente validée, selon ses conditions vendeur.`,
+        `Chaque commission automatique apparaît dans votre activité LightPay, liée à sa vente. LightPay ne prend aucun frais sur vos ventes.`,
+      ]
+    : [];
+
 export class ConnectError extends Error {
   constructor(message: string, public code: string, public statusCode = 400) {
     super(message);
@@ -144,6 +159,8 @@ export interface ApproveInput {
   state?: string;
   codeChallenge: string;
   chargeLimit?: bigint;
+  /** The person ticked the clauses (consentTerms). */
+  acceptTerms?: boolean;
 }
 
 const parseScopes = (scopes: string[]): Scope[] => {
@@ -163,24 +180,35 @@ export async function validateAuthorizeRequest(environment: Environment, input: 
   }
   if (!/^[A-Za-z0-9_-]{43}$/.test(input.codeChallenge)) throw new ConnectError('code_challenge must be a S256 PKCE challenge', 'INVALID_PKCE');
   const scopes = parseScopes(input.scopes);
-  return { app: { id: app.id, name: app.name }, scopes: scopes.map((s) => ({ scope: s, label: SCOPE_LABELS[s] })) };
+  return {
+    app: { id: app.id, name: app.name },
+    scopes: scopes.map((s) => ({ scope: s, label: SCOPE_LABELS[s] })),
+    terms: consentTerms(app.name, scopes),
+  };
 }
 
 /** The person approves: connection created (or updated) and a one-time code issued. */
 export async function approve(environment: Environment, user: LightPayUser, input: ApproveInput) {
-  await validateAuthorizeRequest(environment, input);
+  const { app, terms } = await validateAuthorizeRequest(environment, input);
+  if (terms.length && input.acceptTerms !== true) {
+    throw new ConnectError('Cochez la case pour accepter les conditions de l’app.', 'TERMS_NOT_ACCEPTED');
+  }
+  const consent = terms.length ? { version: CONSENT_VERSION, app: app.name, terms, accepted_at: new Date().toISOString() } : null;
   const scopes = parseScopes(input.scopes);
   const chargeLimit = scopes.includes('charge') ? input.chargeLimit ?? 0n : 0n;
   if (scopes.includes('charge') && chargeLimit <= 0n) throw new ConnectError('A charge limit is required to allow charges', 'CHARGE_LIMIT_REQUIRED');
   const wallet = await userWallet(environment, user);
 
   const [connection] = await query(
-    `INSERT INTO connections (id, app_id, environment, wallet_id, user_uid, scopes, charge_limit)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO connections (id, app_id, environment, wallet_id, user_uid, scopes, charge_limit, consent)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (app_id, environment, wallet_id) WHERE status = 'ACTIVE'
-     DO UPDATE SET scopes = EXCLUDED.scopes, charge_limit = EXCLUDED.charge_limit, updated_at = NOW()
+     DO UPDATE SET scopes = EXCLUDED.scopes, charge_limit = EXCLUDED.charge_limit, consent = COALESCE(EXCLUDED.consent, connections.consent), updated_at = NOW()
      RETURNING *`,
-    [`conn_${crypto.randomBytes(16).toString('base64url')}`, input.appId, environment, wallet.id, user.uid, JSON.stringify(scopes), chargeLimit.toString()],
+    [
+      `conn_${crypto.randomBytes(16).toString('base64url')}`, input.appId, environment, wallet.id, user.uid, JSON.stringify(scopes), chargeLimit.toString(),
+      consent ? JSON.stringify(consent) : null,
+    ],
     environment
   );
 
@@ -243,7 +271,7 @@ export async function connectionView(c: Connection) {
 
 export async function listUserConnections(environment: Environment, user: LightPayUser) {
   return query(
-    `SELECT c.id, c.app_id, a.name AS app_name, c.scopes, c.charge_limit::text, c.status, c.created_at, c.revoked_at
+    `SELECT c.id, c.app_id, a.name AS app_name, c.scopes, c.charge_limit::text, c.status, c.consent, c.created_at, c.revoked_at
      FROM connections c JOIN apps a ON a.id = c.app_id
      WHERE c.user_uid = $1 AND c.environment = $2 ORDER BY c.created_at DESC`,
     [user.uid, environment],
