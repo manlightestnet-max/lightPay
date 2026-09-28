@@ -117,7 +117,7 @@ ${flow(
   'deposit',
   'Recharger',
   `<label class="label mt" for="depAmount">Montant à recharger</label>
-    <div class="amount-wrap"><input class="amount-input" id="depAmount" inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur">FCFA · minimum 200</div></div>
+    <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur">FCFA · minimum 200</div></div>
     <div class="field"><span class="label" id="depNetLabel">Payer avec</span>
       <div class="seg" role="group" aria-labelledby="depNetLabel">
         <button class="seg-opt" type="button" data-dep-net="MTN_MOMO_COG" aria-pressed="true">MTN MoMo</button>
@@ -135,7 +135,7 @@ ${flow(
   'Envoyer',
   `<div class="field"><label for="sendTo">Destinataire (e-mail LightPay)</label><input id="sendTo" type="email" autocomplete="off" inputmode="email" placeholder="nom@exemple.com"></div>
     <label class="label mt-lg" for="sendAmount">Montant</label>
-    <div class="amount-wrap"><input class="amount-input" id="sendAmount" inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="sendAvail">FCFA</div></div>
+    <div class="amount-wrap"><input class="amount-input" id="sendAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="sendAvail">FCFA</div></div>
     <div class="field"><label for="sendNote">Message (facultatif)</label><input id="sendNote" maxlength="140" autocomplete="off" placeholder="Ex. : loyer de mars"></div>
     <div class="msg" id="sendMsg" role="status" aria-live="polite"></div>
     <div class="note">${iconSvg('bolt')}<p>Gratuit et instantané entre comptes LightPay.</p></div>`,
@@ -167,7 +167,7 @@ ${flow(
     </div>
     <div class="field"><label for="wdPhone">Numéro qui reçoit</label><div class="input-prefix"><span>+242</span><input id="wdPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
     <label class="label mt-lg" for="wdAmount">Montant à recevoir</label>
-    <div class="amount-wrap"><input class="amount-input" id="wdAmount" inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="wdAvail">FCFA</div></div>
+    <div class="amount-wrap"><input class="amount-input" id="wdAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="wdAvail">FCFA</div></div>
     <div class="fees" id="wdFees" hidden></div>
     <div class="msg" id="wdMsg" role="status" aria-live="polite"></div>
     <div class="section-head" id="wdListHead" hidden><h2>Derniers retraits</h2></div>
@@ -321,7 +321,7 @@ ${flow(
       <section class="panel"><div class="panel-head"><h2 class="panel-title">Virer vers mon compte</h2></div><div class="panel-body">
         <form id="dbForm" novalidate>
           <p class="small muted">Le solde de l’app va uniquement sur votre compte LightPay principal. Vous le retirez ensuite vers MTN MoMo ou Airtel Money depuis votre compte, comme d’habitude.</p>
-          <div class="field"><label for="dbAmount">Montant (FCFA)</label><input id="dbAmount" inputmode="numeric" autocomplete="off" placeholder="0"></div>
+          <div class="field"><label for="dbAmount">Montant (FCFA)</label><input id="dbAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"></div>
           <p class="small mt"><button class="link" type="button" id="dbAll">Tout virer</button></p>
           <div class="msg" id="dbMsg" role="status" aria-live="polite"></div>
           <button class="btn mt" type="submit" id="dbGo" disabled>${iconSvg('send')}Virer vers mon compte</button>
@@ -577,7 +577,7 @@ ${flow(
   }));
   function renderDepFees() {
     const q = depQuotes && depQuotes[depNet];
-    const amount = Number(digits($('depAmount').value));
+    const amount = Number(amountDigits($('depAmount').value));
     $('depGo').disabled = true;
     if (!amount) { $('depFees').hidden = true; say('depMsg', ''); return; }
     if (!q) return;
@@ -594,7 +594,7 @@ ${flow(
     $('depGo').disabled = false;
   }
   const loadDepQuote = debounce(async () => {
-    const amount = digits($('depAmount').value);
+    const amount = amountDigits($('depAmount').value);
     if (!amount) { depQuotes = null; renderDepFees(); return; }
     try { depQuotes = (await LP.api('GET', '/v1/me/deposits/quote?amount=' + amount)).quotes; renderDepFees(); }
     catch (e) { if (e.signIn) signIn(); else say('depMsg', e.message, 'err'); }
@@ -603,7 +603,7 @@ ${flow(
   $('depGo').addEventListener('click', () => guarded(async () => {
     $('depGo').disabled = true;
     try {
-      const r = await LP.api('POST', '/v1/me/deposits', { amount: digits($('depAmount').value) }, LP.uuid());
+      const r = await LP.api('POST', '/v1/me/deposits', { amount: amountDigits($('depAmount').value) }, LP.uuid());
       location.assign(r.checkout_path);
     } finally { $('depGo').disabled = false; }
   }, 'depMsg'));
@@ -617,7 +617,7 @@ ${flow(
   }
   $('sendNext').addEventListener('click', () => {
     const to = $('sendTo').value.trim();
-    const amount = Number(digits($('sendAmount').value));
+    const amount = Number(amountDigits($('sendAmount').value));
     if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(to)) return say('sendMsg', 'Entrez l’e-mail LightPay du destinataire.', 'err');
     if (!amount) return say('sendMsg', 'Entrez un montant.', 'err');
     if (amount > available()) return say('sendMsg', 'Montant supérieur à votre solde disponible (' + LP.money(available(), cur()) + ').', 'err');
@@ -682,7 +682,7 @@ ${flow(
     $('wdFees').hidden = false;
   }
   const loadWdQuote = debounce(async () => {
-    const amount = digits($('wdAmount').value);
+    const amount = amountDigits($('wdAmount').value);
     const seq = ++wdSeq;
     if (!amount) { wdQuote = null; renderWdFees(); wdCheck(); say('wdMsg', ''); return; }
     try {
@@ -1019,7 +1019,7 @@ ${flow(
     dbCheck();
   }
   function dbCheck() {
-    const amount = Number(digits($('dbAmount').value));
+    const amount = Number(amountDigits($('dbAmount').value));
     $('dbGo').disabled = true;
     if (!amount) return;
     if (amount > dbAvailable) return say('dbMsg', 'Solde de l’app insuffisant (disponible ' + LP.money(dbAvailable, 'XAF') + ').', 'err');
@@ -1033,7 +1033,7 @@ ${flow(
     if ($('dbGo').disabled) return;
     // One key per transfer filled in: a double tap or a retry after re-auth never moves it twice.
     if (!dbKey) dbKey = LP.uuid();
-    const amount = digits($('dbAmount').value);
+    const amount = amountDigits($('dbAmount').value);
     $('dbGo').disabled = true;
     await guarded(async () => {
       const r = await LP.api('POST', '/v1/me/developer/apps/' + encodeURIComponent(devApp.id) + '/transfer', { amount: amount }, dbKey);

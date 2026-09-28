@@ -206,6 +206,8 @@ a.row:hover .row-title, button.row:hover .row-title { text-decoration: underline
 .note svg { width: 18px; height: 18px; color: var(--accent); margin-top: 1px; }
 .note.warn { background: var(--warn-soft); } .note.warn svg { color: var(--warn); }
 .msg { margin-top: 12px; font-size: 13px; min-height: 0; }
+.amount-bad { margin-top: 6px; font-size: 13px; color: var(--danger); }
+[data-amount][aria-invalid="true"] { border-color: var(--danger); }
 .msg:empty { margin-top: 0; }
 .msg.err { color: var(--danger); } .msg.ok { color: var(--accent); }
 .state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 32px 16px; }

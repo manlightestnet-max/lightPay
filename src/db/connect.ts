@@ -157,7 +157,10 @@ const parseScopes = (scopes: string[]): Scope[] => {
 /** Checks the request before showing the consent screen (and again on approval). */
 export async function validateAuthorizeRequest(environment: Environment, input: Omit<ApproveInput, 'chargeLimit'>) {
   const app = await activeApp(input.appId, environment);
-  if (!(app.redirect_uris ?? []).includes(input.redirectUri)) throw new ConnectError('redirect_uri is not registered for this app', 'INVALID_REDIRECT_URI');
+  if (!(app.redirect_uris ?? []).includes(input.redirectUri)) {
+    // The exact address, so the app's developer sees what to declare (Paramètres → Adresses de retour).
+    throw new ConnectError(`Adresse de retour non déclarée par cette app : ${input.redirectUri}`, 'INVALID_REDIRECT_URI');
+  }
   if (!/^[A-Za-z0-9_-]{43}$/.test(input.codeChallenge)) throw new ConnectError('code_challenge must be a S256 PKCE challenge', 'INVALID_PKCE');
   const scopes = parseScopes(input.scopes);
   return { app: { id: app.id, name: app.name }, scopes: scopes.map((s) => ({ scope: s, label: SCOPE_LABELS[s] })) };

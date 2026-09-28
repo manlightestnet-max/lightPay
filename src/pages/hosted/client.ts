@@ -160,6 +160,19 @@ export const CLIENT = (env: string) => `
   }
   const initials = (s) => String(s || '?').replace(/@.*/, '').split(/[\\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
   const digits = (v) => String(v || '').replace(/\\D/g, '');
+  // Amounts are whole FCFA (no centimes): spaces are fine (1 000), anything else makes the amount
+  // invalid — "100,50" must never become 10050.
+  const amountDigits = (v) => { const s = String(v || '').replace(/[\\s\\u00a0\\u202f]/g, ''); return /^\\d+$/.test(s) ? s : ''; };
+  document.addEventListener('input', function (e) {
+    const t = e.target;
+    if (!t || !t.hasAttribute || !t.hasAttribute('data-amount')) return;
+    const bad = /[^\\d\\s\\u00a0\\u202f]/.test(t.value);
+    t.setAttribute('aria-invalid', bad ? 'true' : 'false');
+    const box = t.closest('.amount-wrap, .input-prefix') || t;
+    let warn = box.nextElementSibling && box.nextElementSibling.classList.contains('amount-bad') ? box.nextElementSibling : null;
+    if (bad && !warn) { warn = el('p', { class: 'amount-bad', role: 'alert', text: 'Montant en FCFA entiers, sans virgule ni point (ex. 1000).' }); box.after(warn); }
+    if (!bad && warn) warn.remove();
+  }, true);
   const debounce = (fn, ms) => { let t = null; return function () { const a = arguments; clearTimeout(t); t = setTimeout(function () { fn.apply(null, a); }, ms); }; };
   function say(target, text, kind) {
     const n = typeof target === 'string' ? $(target) : target;

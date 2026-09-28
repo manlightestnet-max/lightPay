@@ -156,21 +156,21 @@ ${page('main', '<span data-real>Wallet main</span><span data-test hidden>Faucet<
     ${panel('Envoyer à un utilisateur', `
       <form id="sendForm" novalidate>
         <div class="field"><label for="sendTo">E-mail du compte LightPay</label><input id="sendTo" type="email" autocomplete="off"></div>
-        <div class="field"><label for="sendAmount">Montant (FCFA)</label><input id="sendAmount" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="sendAmount">Montant (FCFA)</label><input id="sendAmount" data-amount inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="sendNote">Motif (facultatif)</label><input id="sendNote" maxlength="140" autocomplete="off"></div>
         <div class="msg" id="sendMsg" role="status" aria-live="polite"></div>
         <button class="btn mt" type="submit" id="sendGo">${iconSvg('send')}Envoyer</button>
       </form>`)}
     <div data-test hidden>${panel('Émettre de l’argent de test', `
       <form id="issueForm" novalidate>
-        <div class="field"><label for="issueAmount">Montant (FCFA)</label><input id="issueAmount" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="issueAmount">Montant (FCFA)</label><input id="issueAmount" data-amount inputmode="numeric" autocomplete="off"></div>
         <p class="hint">Ajouté à la réserve du faucet, puis à envoyer aux comptes qui testent.</p>
         <div class="msg" id="issueMsg" role="status" aria-live="polite"></div>
         <button class="btn btn-secondary mt" type="submit" id="issueGo">${iconSvg('plus')}Émettre</button>
       </form>`)}</div>
     <div data-real>${panel('Recharger', `
       <form id="rechargeForm" novalidate>
-        <div class="field"><label for="rechargeAmount">Montant (FCFA)</label><input id="rechargeAmount" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="rechargeAmount">Montant (FCFA)</label><input id="rechargeAmount" data-amount inputmode="numeric" autocomplete="off"></div>
         <p class="hint">Vous payez par MTN MoMo ou Airtel Money sur la page LightPay : l’argent arrive dans le wallet main une fois validé.</p>
         <div class="msg" id="rechargeMsg" role="status" aria-live="polite"></div>
         <button class="btn btn-secondary mt" type="submit" id="rechargeGo">${iconSvg('plus')}Ouvrir la page de paiement</button>
@@ -478,7 +478,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       })), 'Aucun mouvement pour le moment.');
     });
   }
-  const amountOf = (id) => { const v = digits($(id).value); return v && Number(v) > 0 ? v : null; };
+  const amountOf = (id) => { const v = amountDigits($(id).value); return v && Number(v) > 0 ? v : null; };
   let sendDraft = null;
   $('sendForm').addEventListener('submit', (e) => {
     e.preventDefault(); say('sendMsg', '');
