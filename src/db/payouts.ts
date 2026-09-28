@@ -78,6 +78,8 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   const outflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, input.currency);
   const payoutId = `po_${crypto.randomBytes(18).toString('base64url')}`;
   const provider = providerFor(input.network);
+  // The simulator pays nobody: real money never "leaves" through it (nothing is debited).
+  if (env === 'production' && provider.name === 'simulator') throw new Error('Le mobile money est indisponible pour le moment. Réessayez plus tard.');
   const operatorFee = input.operatorFee ?? 0n;
   const lightpayFee = input.lightpayFee ?? 0n;
   if (input.amount <= 0n || operatorFee < 0n || lightpayFee < 0n) throw new Error('Invalid payout amounts');

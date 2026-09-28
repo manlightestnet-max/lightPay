@@ -280,6 +280,10 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
     throw new CheckoutError(err.message, err.code || 'QUOTA_EXCEEDED', 403);
   }
   const provider = providerFor(network as MobileNetwork);
+  // The simulator invents money: it never collects for the real ledger.
+  if (environment === 'production' && provider.name === 'simulator') {
+    throw new CheckoutError('Le mobile money est indisponible pour le moment. Réessayez plus tard.', 'PROVIDER_NOT_CONFIGURED', 503);
+  }
   const lightpayFee = lightpayCollectionFee(BigInt(session.amount));
   let attempt: Attempt;
   try {
