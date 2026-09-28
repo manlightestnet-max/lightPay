@@ -17,13 +17,16 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
   var ORIGIN = ${JSON.stringify(checkoutOrigin)};
   var PAY_PATH = /^\\/pay\\/cs_(test|live)_[A-Za-z0-9_-]{16,40}$/;
   var READY_TIMEOUT_MS = 7000;
+  // A refused frame (site not declared) still fires "load", without ever saying ready.
+  var AFTER_LOAD_MS = 1200;
   var open = null;
 
   var CSS = [
     ':host { all: initial; }',
     '.backdrop { position: fixed; inset: 0; z-index: 2147483646; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; animation: fade .18s ease; }',
     '.frame { position: relative; width: 440px; max-width: 100%; height: min(760px, calc(100dvh - 32px)); border-radius: 20px; overflow: hidden; background: #141416; box-shadow: 0 30px 80px -20px rgba(0,0,0,.6); animation: rise .22s cubic-bezier(.2,.7,.2,1); }',
-    'iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; }',
+    'iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; opacity: 0; transition: opacity .15s; }',
+    '.loaded iframe { opacity: 1; }',
     '.spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }',
     '.spin::after { content: ""; width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(255,255,255,.15); border-top-color: #34d399; animation: spin .9s linear infinite; }',
     '.loaded .spin { display: none; }',
@@ -97,16 +100,20 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
         resolve({ status: status, session: session });
       }
       // Not allowed to show the dialog here (site not declared) or blocked: full-page payment.
-      var timer = setTimeout(function () {
+      // The frame stays invisible until LightPay says ready, so a refused frame is never shown.
+      function fallback() {
         if (ready || done) return;
         done = true;
+        clearTimeout(timer);
         window.removeEventListener('message', onMessage);
         document.removeEventListener('keydown', onKey);
         document.documentElement.style.overflow = overflow;
         if (host.parentNode) host.parentNode.removeChild(host);
         open = null;
         location.assign(url.toString());
-      }, READY_TIMEOUT_MS);
+      }
+      var timer = setTimeout(fallback, READY_TIMEOUT_MS);
+      iframe.addEventListener('load', function () { setTimeout(fallback, AFTER_LOAD_MS); });
 
       window.addEventListener('message', onMessage);
       document.addEventListener('keydown', onKey);
