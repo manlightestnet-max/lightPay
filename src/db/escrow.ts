@@ -154,8 +154,8 @@ export class Escrow {
     // Journal: the seller sees the sale as locked until the order is validated.
     if (hold && !result.duplicate && (await isPersonWallet(p.environment, hold.wallet_id))) {
       await logActivity(p.environment, {
-        walletId: hold.wallet_id, kind: 'SALE', direction: 'IN', status: 'LOCKED', amount: hold.amount, fees: hold.fee_amount,
-        total: (BigInt(hold.amount) - BigInt(hold.fee_amount)).toString(), currency: hold.currency, counterparty: await appName(p.environment, p.appId),
+        walletId: hold.wallet_id, kind: 'SALE', direction: 'IN', status: 'LOCKED', amount: hold.amount, fees: '0',
+        total: hold.amount, currency: hold.currency, counterparty: await appName(p.environment, p.appId),
         reason: 'Paiement bloqué jusqu’à la validation de la commande.', refType: 'hold', refId: hold.id, metadata: { reference: hold.reference },
       });
     }
@@ -184,12 +184,21 @@ export class Escrow {
       throw new EscrowError('fee_wallet_id is required to capture a hold with a fee', 'FEE_WALLET_REQUIRED');
     }
 
+    const app = kind === 'capture' && fee > 0n ? await appName(p.environment, p.appId) : null;
+    // The sale and the app's commission are two lines on the beneficiary's statement (like a
+    // transfer and its fee), in one atomic transaction. The credit comes before the debit on the
+    // same wallet (postings keep this order), so the commission never needs money already there.
     const postings =
       kind === 'capture'
         ? [
-            { walletId: snapshot.wallet_id, direction: 'DEBIT' as const, bucket: 'LOCKED' as const, amount, description: `Escrow captured - Ref: ${ref}` },
-            { walletId: snapshot.wallet_id, direction: 'CREDIT' as const, amount: amount - fee, description: `Escrow funds available - Ref: ${ref}` },
-            ...(fee > 0n ? [{ walletId: p.feeWalletId!, direction: 'CREDIT' as const, amount: fee, description: `Platform fee - Ref: ${ref}` }] : []),
+            { walletId: snapshot.wallet_id, direction: 'DEBIT' as const, bucket: 'LOCKED' as const, amount, description: `Vente validée · Réf ${ref}` },
+            { walletId: snapshot.wallet_id, direction: 'CREDIT' as const, amount, description: `Vente · Réf ${ref}` },
+            ...(fee > 0n
+              ? [
+                  { walletId: snapshot.wallet_id, direction: 'DEBIT' as const, amount: fee, description: `Commission ${app} · Réf ${ref}` },
+                  { walletId: p.feeWalletId!, direction: 'CREDIT' as const, amount: fee, description: `Commission · Réf ${ref}` },
+                ]
+              : []),
           ]
         : [
             { walletId: snapshot.wallet_id, direction: 'DEBIT' as const, bucket: 'LOCKED' as const, amount, description: `Escrow released - Ref: ${ref}` },
@@ -224,6 +233,12 @@ export class Escrow {
     if (settled && !result.duplicate) {
       if (kind === 'capture') {
         await updateActivity(p.environment, 'hold', settled.id, { walletId: settled.wallet_id, status: 'SUCCEEDED' });
+        if (fee > 0n && (await isPersonWallet(p.environment, settled.wallet_id))) {
+          await logActivity(p.environment, {
+            walletId: settled.wallet_id, kind: 'COMMISSION', direction: 'OUT', status: 'SUCCEEDED', amount: fee, total: fee,
+            currency: settled.currency, counterparty: app, refType: 'hold_commission', refId: settled.id, metadata: { reference: settled.reference },
+          });
+        }
       } else {
         await updateActivity(p.environment, 'hold', settled.id, {
           walletId: settled.wallet_id, status: 'REFUNDED', reasonCode: 'REFUNDED_TO_BUYER', reason: 'Commande annulée : le montant a été rendu à l’acheteur.',

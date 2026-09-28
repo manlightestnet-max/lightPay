@@ -495,8 +495,7 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
       skipQuotas: true,
       postings: [
         { walletId: payer.id, direction: 'DEBIT', amount },
-        { walletId: session.payee_wallet_id, direction: 'CREDIT', amount: amount - fee },
-        ...(fee > 0n ? [{ walletId: merchant, direction: 'CREDIT' as const, amount: fee }] : []),
+        ...salePostings(session.payee_wallet_id, merchant, amount, fee, await appName(env, session.app_id), session.reference ?? session.id),
       ],
     });
     paymentTx = (paid as any).transactionId ?? (paid as any).transaction?.id ?? null;
@@ -541,6 +540,20 @@ async function closeSession(
 }
 
 // ---------------------------------------------------------------- settlement helpers
+
+/**
+ * A direct sale on the payee's statement: the full amount in, then the app's commission out as its
+ * own line (credit first on the same wallet: postings keep this order).
+ */
+const salePostings = (payee: string, appWallet: string, amount: bigint, fee: bigint, app: string, ref: string) => [
+  { walletId: payee, direction: 'CREDIT' as const, amount, description: `Vente · Réf ${ref}` },
+  ...(fee > 0n
+    ? [
+        { walletId: payee, direction: 'DEBIT' as const, amount: fee, description: `Commission ${app} · Réf ${ref}` },
+        { walletId: appWallet, direction: 'CREDIT' as const, amount: fee, description: `Commission · Réf ${ref}` },
+      ]
+    : []),
+];
 
 export async function merchantWallet(appId: string, environment: Environment, currency: string): Promise<string> {
   const wallet = await getOrCreateWallet(environment, appId, appId, 'MERCHANT', currency, { role: 'merchant_root' });
@@ -665,8 +678,7 @@ export async function payWithWallet(id: string, user: LightPayUser) {
         currency: session.currency, reference: session.reference ?? session.id, metadata: { checkout_session: session.id },
         postings: [
           { walletId: payer.id, direction: 'DEBIT', amount },
-          { walletId: session.payee_wallet_id, direction: 'CREDIT', amount: amount - fee },
-          ...(fee > 0n ? [{ walletId: merchant, direction: 'CREDIT' as const, amount: fee }] : []),
+          ...salePostings(session.payee_wallet_id, merchant, amount, fee, await appName(env, session.app_id), session.reference ?? session.id),
         ],
       });
       paymentTx = (paid as any).transactionId ?? (paid as any).transaction?.id ?? null;

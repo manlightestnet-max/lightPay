@@ -496,7 +496,7 @@ ${flow(
     PENDING: ['warn', 'En cours'], SUCCEEDED: ['ok', 'Réussi'], FAILED: ['err', 'Refusé'], LOCKED: ['warn', 'Bloqué'],
     REFUNDED: ['', 'Remboursé'], EXPIRED: ['', 'Expiré'], CANCELLED: ['', 'Annulé'],
   };
-  const KIND_ICON = { DEPOSIT: 'plus', TRANSFER: 'send', WITHDRAWAL: 'withdraw', PAYMENT: 'send', CHARGE: 'send', SALE: 'receive', REFUND: 'receive' };
+  const KIND_ICON = { DEPOSIT: 'plus', TRANSFER: 'send', WITHDRAWAL: 'withdraw', PAYMENT: 'send', CHARGE: 'send', SALE: 'receive', REFUND: 'receive', COMMISSION: 'send' };
   function actTitle(a) {
     const who = a.counterparty || '';
     switch (a.kind) {
@@ -506,6 +506,7 @@ ${flow(
       case 'PAYMENT': return 'Paiement · ' + who;
       case 'CHARGE': return 'Débit par ' + who;
       case 'SALE': return 'Vente · ' + who;
+      case 'COMMISSION': return 'Commission · ' + who;
       case 'REFUND': return a.direction === 'IN' ? 'Remboursement · ' + who : 'Remboursement envoyé';
       default: return a.kind;
     }

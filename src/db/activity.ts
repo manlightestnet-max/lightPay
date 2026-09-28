@@ -10,7 +10,8 @@ import { Environment } from '../types/index.js';
  * A line is keyed by (wallet, ref_type, ref_id): retries, webhooks and sweeps update it.
  */
 
-export type ActivityKind = 'DEPOSIT' | 'TRANSFER' | 'WITHDRAWAL' | 'PAYMENT' | 'CHARGE' | 'SALE' | 'REFUND';
+/** COMMISSION: what the app took on a sale, shown as its own line (never as LightPay fees). */
+export type ActivityKind = 'DEPOSIT' | 'TRANSFER' | 'WITHDRAWAL' | 'PAYMENT' | 'CHARGE' | 'SALE' | 'REFUND' | 'COMMISSION';
 export type ActivityStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED' | 'LOCKED' | 'REFUNDED' | 'EXPIRED' | 'CANCELLED';
 
 export interface ActivityInput {
