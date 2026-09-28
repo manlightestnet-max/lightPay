@@ -520,7 +520,20 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     screens: screens,
   });
 
-  function signIn() { mountAuth(boot, { subtitle: 'Administration LightPay : accès réservé.' }); }
+  function authAside() {
+    const point = (text) => el('li', {}, [icon('check'), text]);
+    return el('aside', { class: 'auth-aside' }, [
+      el('span', { class: 'pill-brand' }, [el('span', { class: 'brand-mark' }, [icon('bolt')]), 'Administration']),
+      el('h2', { text: 'Le tableau de bord de LightPay.' }),
+      el('p', { text: 'Vos revenus, les réserves chez chaque provider, les comptes, les apps et chaque mouvement du grand livre.' }),
+      el('ul', { class: 'auth-points' }, [
+        point('Accès réservé aux comptes autorisés.'),
+        point('Mot de passe redemandé avant tout mouvement d’argent.'),
+        point('Chaque action est enregistrée dans le journal.'),
+      ]),
+    ]);
+  }
+  function signIn() { mountAuth(boot, { title: 'Connexion administrateur', subtitle: 'Avec votre compte LightPay.', aside: authAside(), noSignUp: true }); }
   async function boot() {
     try {
       const r = await LP.api('GET', '/v1/admin-console/me');

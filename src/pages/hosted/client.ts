@@ -23,7 +23,7 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  *   createNav({ root, screens: { name: { parent, enter(param) } }, resolve(route) -> [name, param], onRootBack })
  *     -> { start(), go(route, replace?), back(), home(), current() }   (hash routes #/route; the
  *        browser back button and every [data-back] button use the same history)
- *   mountAuth(onDone, { title?, subtitle?, onBack?, aside? })   sign in / sign up / reset, in <section id="auth">
+ *   mountAuth(onDone, { title?, subtitle?, onBack?, aside?, noSignUp? })   sign in / sign up / reset, in <section id="auth">
  *     (aside: a brand panel shown beside the form on wide screens)
  */
 export const CLIENT = (env: string) => `
@@ -298,7 +298,7 @@ export const CLIENT = (env: string) => `
       const passF = mode === 'reset' ? null : field('lp-pass', 'Mot de passe', 'password', mode === 'in' ? 'current-password' : 'new-password');
       const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
       const btn = el('button', { class: 'btn', type: 'submit', text: mode === 'in' ? 'Se connecter' : mode === 'up' ? 'Créer mon compte' : 'Envoyer le lien' });
-      const switcher = el('p', { class: 'small muted center mt-lg' }, mode === 'in'
+      const switcher = o.noSignUp && mode === 'in' ? null : el('p', { class: 'small muted center mt-lg' }, mode === 'in'
         ? ['Pas encore de compte ? ', el('button', { class: 'link', type: 'button', text: 'Créer un compte', on: { click: () => { mode = 'up'; render(); } } })]
         : ['Déjà un compte ? ', el('button', { class: 'link', type: 'button', text: 'Se connecter', on: { click: () => { mode = 'in'; render(); } } })]);
       const forgot = mode === 'in' ? el('p', { class: 'small mt' }, [el('button', { class: 'link', type: 'button', text: 'Mot de passe oublié ?', on: { click: () => { mode = 'reset'; render(); } } })]) : null;
@@ -324,6 +324,8 @@ export const CLIENT = (env: string) => `
         finally { btn.disabled = false; }
       });
       if (o.aside) box.replaceChildren(o.aside, el('div', { class: 'auth-main' }, [bar, form]));
+      // Console layout without a brand panel: the form stays a centred column.
+      else if (document.documentElement.classList.contains('console-page')) box.replaceChildren(el('div', { class: 'auth-main' }, [bar, form]));
       else box.replaceChildren(bar, form);
       showOnly(box);
       const first = fields[0]; if (first) first.focus();
