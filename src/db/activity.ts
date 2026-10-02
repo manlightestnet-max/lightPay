@@ -35,7 +35,7 @@ export interface ActivityInput {
 export const REASONS: Record<string, string> = {
   INSUFFICIENT_FUNDS: 'Solde disponible insuffisant.',
   BELOW_MINIMUM: 'Montant inférieur au minimum autorisé.',
-  BELOW_MOBILE_MONEY_MINIMUM: 'Le mobile money accepte au minimum 200 FCFA.',
+  BELOW_MOBILE_MONEY_MINIMUM: 'Le mobile money accepte au minimum 1 000 FCFA.',
   INVALID_AMOUNT: 'Montant invalide.',
   INVALID_MSISDN: 'Numéro de téléphone invalide.',
   INVALID_NETWORK: 'Opérateur non pris en charge.',

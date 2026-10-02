@@ -117,7 +117,7 @@ ${flow(
   'deposit',
   'Recharger',
   `<label class="label mt" for="depAmount">Montant à recharger</label>
-    <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur">FCFA · minimum 200</div></div>
+    <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur">FCFA · minimum 1 000</div></div>
     <div class="field"><span class="label" id="depNetLabel">Payer avec</span>
       <div class="seg" role="group" aria-labelledby="depNetLabel">
         <button class="seg-opt" type="button" data-dep-net="MTN_MOMO_COG" aria-pressed="true">MTN MoMo</button>
