@@ -53,6 +53,9 @@ export const REASONS: Record<string, string> = {
   PROVIDER_EXPIRED: 'La demande a expiré sans validation.',
   REFUND_BELOW_FEES: 'Montant trop faible pour couvrir les frais de l’opérateur.',
   DISPUTED: 'Litige en cours : fonds gelés jusqu’à la décision.',
+  // Our side, not the person's: the provider refused our server (configuration to fix).
+  IP_NOT_WHITELISTED: 'Le service de retrait est momentanément indisponible. Réessayez plus tard.',
+  PROVIDER_REFUSED: 'Le service de retrait est momentanément indisponible. Réessayez plus tard.',
 };
 
 export const reasonFor = (code?: string | null, fallback?: string | null) =>
