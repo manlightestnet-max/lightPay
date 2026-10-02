@@ -4,7 +4,7 @@
  *   LightPay fee   max(LIGHTPAY_MOMO_FEE_MIN, ceil(amount × LIGHTPAY_MOMO_FEE_BPS / 10 000))
  *                  default: 5 FCFA minimum, 0 % — added on top, paid by the payer
  *   Operator fee   charged by the provider on top (SasPay ADD_ON). Shown as an estimate
- *                  (SASPAY_COLLECTION_FEE_BPS, default 600 = 6 %) until the provider
+ *                  (SASPAY_COLLECTION_FEE_BPS, default 650 = 6,5 %) until the provider
  *                  reports the exact amount debited.
  *
  * The payee (or the wallet being topped up) always receives the requested amount.
@@ -25,7 +25,7 @@ export function lightpayCollectionFee(amount: bigint): bigint {
 
 /** Estimated operator fee for a provider, on the amount it is asked to collect. */
 export function providerFeeEstimate(provider: string, collected: bigint): bigint {
-  if (provider === 'saspay') return ceilBps(collected, int(process.env.SASPAY_COLLECTION_FEE_BPS, 600));
+  if (provider === 'saspay') return ceilBps(collected, int(process.env.SASPAY_COLLECTION_FEE_BPS, 650));
   return 0n;
 }
 
@@ -58,9 +58,8 @@ export function quote(amount: bigint, provider: string): FeeQuote {
 
 // ---------------------------------------------------------------- payouts (withdrawals, refunds)
 //
-//   Operator fee   SasPay Congo, charged on top from our SasPay balance (ADD_ON):
-//                  SASPAY_PAYOUT_FEE_BPS (600 = 6 %) / SASPAY_PAYOUT_FEE_MIN (0). Test setting:
-//                  compare with the fee SasPay actually reports, then adjust.
+//   Operator fee   SasPay Congo (its published pricing): max(4 %, 700 XAF), charged on top from
+//                  our SasPay balance (ADD_ON) — SASPAY_PAYOUT_FEE_BPS (400) / SASPAY_PAYOUT_FEE_MIN (700)
 //   LightPay fee   max(LIGHTPAY_PAYOUT_FEE_MIN (5), amount × LIGHTPAY_PAYOUT_FEE_BPS (0))
 //   The person receives exactly the amount asked; the wallet is debited amount + both fees.
 //   Refunds carry no LightPay fee: the guest gets the largest amount the refund can cover.
@@ -77,8 +76,8 @@ export function lightpayPayoutFee(amount: bigint): bigint {
 /** Operator fee on a payout of `amount` (what the phone receives). */
 export function providerPayoutFee(provider: string, amount: bigint): bigint {
   if (provider !== 'saspay') return 0n;
-  const byRate = ceilBps(amount, int(process.env.SASPAY_PAYOUT_FEE_BPS, 600));
-  const min = BigInt(int(process.env.SASPAY_PAYOUT_FEE_MIN, 0));
+  const byRate = ceilBps(amount, int(process.env.SASPAY_PAYOUT_FEE_BPS, 400));
+  const min = BigInt(int(process.env.SASPAY_PAYOUT_FEE_MIN, 700));
   return byRate > min ? byRate : min;
 }
 
