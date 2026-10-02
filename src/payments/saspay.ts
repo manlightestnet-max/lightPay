@@ -79,6 +79,8 @@ export class SasPayProvider implements MobileMoneyProvider {
     const json: any = await res.json().catch(() => ({}));
     if (!res.ok || json?.success === false) {
       const err = json?.error ?? {};
+      // SasPay's own words, for the server logs (its error object never carries our key).
+      console.error('[SASPAY]', method, path, `HTTP ${res.status}`, JSON.stringify(json?.error ?? json));
       throw new SasPayError(typeof err.message === 'string' ? err.message : `SasPay HTTP ${res.status}`, res.status, err.code);
     }
     // Some endpoints wrap in { success, data }, others return the object directly.
