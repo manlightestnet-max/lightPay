@@ -109,6 +109,7 @@ html, body { height: 100%; overflow: hidden; }
 .icon-btn { width: 44px; height: 44px; flex-shrink: 0; border: 0; border-radius: 999px; background: transparent; display: inline-flex; align-items: center; justify-content: center; color: var(--text); transition: background .15s; }
 .icon-btn:hover { background: var(--raised); }
 .icon-btn svg { width: 22px; height: 22px; }
+.amount-cur.below { color: var(--warn); font-weight: 650; }
 .badge { font-size: 11px; font-weight: 650; padding: 3px 9px; border-radius: 999px; color: var(--warn); background: var(--warn-soft); }
 
 /* ---------- type ---------- */

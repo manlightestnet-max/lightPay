@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { LightPayUser, UserTokenError, isRecentSignIn, verifyUserToken } from '../security/user-token.js';
 import { ConnectError, SCOPE_LABELS, approve, listUserConnections, revokeConnection, userWallet, walletStatement } from '../db/connect.js';
 import { closeAccount, listWithdrawals, quoteWithdrawal, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
-import { quote } from '../payments/fees.js';
+import { minMobileMoneyAmount, minWithdrawalAmount, quote } from '../payments/fees.js';
 import { getActivity, listActivity } from '../db/activity.js';
 import { MOBILE_NETWORKS, providerFor } from '../payments/mobile-money.js';
 import { Environment } from '../types/index.js';
@@ -91,6 +91,8 @@ export async function meRoutes(fastify: FastifyInstance) {
         locked_balance: String(wallet.locked_balance),
         status: wallet.status,
       },
+      // Minimums set by the admin, shown before anything is typed.
+      limits: { deposit_min: minMobileMoneyAmount(envOf(request)).toString(), withdrawal_min: minWithdrawalAmount(envOf(request)).toString() },
       environment: envOf(request),
       recent_sign_in: isRecentSignIn(user),
     };
@@ -196,7 +198,7 @@ export async function meRoutes(fastify: FastifyInstance) {
   fastify.get('/withdrawals/quote', async (request, reply) => {
     const q = request.query as any;
     try {
-      return { status: 'success', quote: quoteWithdrawal(q.amount, q.network) };
+      return { status: 'success', quote: quoteWithdrawal(envOf(request), q.amount, q.network) };
     } catch (err) {
       return fail(reply, err);
     }
@@ -206,7 +208,7 @@ export async function meRoutes(fastify: FastifyInstance) {
     const raw = String((request.query as any).amount ?? '');
     if (!/^\d{1,12}$/.test(raw) || BigInt(raw) <= 0n) return reply.status(400).send({ error: 'INVALID_AMOUNT', message: 'Montant invalide.' });
     const amount = BigInt(raw);
-    return { status: 'success', quotes: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(amount, providerFor(n).name)])) };
+    return { status: 'success', quotes: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(envOf(request), amount, providerFor(n).name)])) };
   });
 
   fastify.delete('/', async (request, reply) => {

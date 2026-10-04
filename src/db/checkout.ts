@@ -230,7 +230,7 @@ export async function publicView(id: string) {
     cancel_url: session.cancel_url,
     expires_at: session.expires_at,
     // What the payer will pay by mobile money, per network (exact once the operator reports it).
-    fees: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(BigInt(session.amount), providerFor(n).name)])) as Record<MobileNetwork, FeeQuote>,
+    fees: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(session.environment, BigInt(session.amount), providerFor(n).name)])) as Record<MobileNetwork, FeeQuote>,
     last_attempt: attempt
       ? {
           status: attempt.status,
@@ -268,8 +268,8 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   if (!MOBILE_NETWORKS.includes(network as MobileNetwork)) throw new CheckoutError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
   const msisdn = normalizeCongoMsisdn(msisdnInput);
   if (!msisdn) throw new CheckoutError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81', 'INVALID_MSISDN');
-  if (BigInt(session.amount) < minMobileMoneyAmount()) {
-    throw new CheckoutError(`Le mobile money accepte au minimum ${minMobileMoneyAmount()} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
+  if (BigInt(session.amount) < minMobileMoneyAmount(environment)) {
+    throw new CheckoutError(`Le mobile money accepte au minimum ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   }
 
   // App quotas are checked BEFORE the phone is asked to pay: money already collected must
@@ -284,7 +284,7 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   if (environment === 'production' && provider.name === 'simulator') {
     throw new CheckoutError('Le mobile money est indisponible pour le moment. Réessayez plus tard.', 'PROVIDER_NOT_CONFIGURED', 503);
   }
-  const lightpayFee = lightpayCollectionFee(BigInt(session.amount));
+  const lightpayFee = lightpayCollectionFee(environment, BigInt(session.amount));
   let attempt: Attempt;
   try {
     attempt = (
@@ -581,7 +581,7 @@ export async function refundGuestPayer(hold: HoldRecord) {
   // the guest gets the largest amount that, fee included, fits in what they paid.
   const total = BigInt(hold.amount);
   const provider = providerFor(network).name;
-  const sendable = refundSendable(total, provider);
+  const sendable = refundSendable(env, total, provider);
   if (sendable <= 0n) {
     // Nothing can be sent without losing money: the amount stays in the guest wallet (bound to
     // this number) and the app is told, so it can settle with the customer another way.
@@ -593,7 +593,7 @@ export async function refundGuestPayer(hold: HoldRecord) {
       to: maskMsisdn(msisdn),
       network,
       failure_code: 'REFUND_BELOW_FEES',
-      operator_fee: providerPayoutFee(provider, 1n).toString(),
+      operator_fee: providerPayoutFee(env, provider, 1n).toString(),
     });
     return { status: 'FAILED', failure_code: 'REFUND_BELOW_FEES', amount: '0', operator_fee: '0', total: hold.amount, to: maskMsisdn(msisdn), network };
   }

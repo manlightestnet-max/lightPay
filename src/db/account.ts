@@ -52,7 +52,7 @@ const activeWallet = async (environment: Environment, user: LightPayUser) => {
 /** Top-up of my own wallet: a DEPOSIT session paid on the hosted page by mobile money. */
 export async function selfDeposit(environment: Environment, user: LightPayUser, amountInput: unknown, idempotencyKey: string) {
   const amount = positive(amountInput);
-  if (amount < minMobileMoneyAmount()) throw new ConnectError(`Recharge minimum : ${minMobileMoneyAmount()} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
+  if (amount < minMobileMoneyAmount(environment)) throw new ConnectError(`Recharge minimum : ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   const wallet = await activeWallet(environment, user);
   const existing = (
     await query(`SELECT id FROM checkout_sessions WHERE app_id = 'mainapp' AND environment = $1 AND idempotency_key = $2`, [environment, `self:${user.uid}:${idempotencyKey}`], environment)
@@ -128,15 +128,15 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   } catch (err: any) {
     throw await refused(err);
   }
-  const minimum = minWithdrawalAmount();
+  const minimum = minWithdrawalAmount(environment);
   if (amount < minimum) throw await refused(new ConnectError(`Retrait minimum : ${minimum} FCFA.`, 'BELOW_MINIMUM'));
   const network = String(input.network ?? '') as MobileNetwork;
   if (!MOBILE_NETWORKS.includes(network)) throw await refused(new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK'));
   const msisdn = normalizeCongoMsisdn(String(input.msisdn ?? ''));
   if (!msisdn) throw await refused(new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN'));
   const provider = providerFor(network).name;
-  const operatorFee = providerPayoutFee(provider, amount);
-  const lightpayFee = lightpayPayoutFee(amount);
+  const operatorFee = providerPayoutFee(environment, provider, amount);
+  const lightpayFee = lightpayPayoutFee(environment, amount);
   if (BigInt(wallet.available_balance) < amount + operatorFee + lightpayFee) {
     throw await refused(new ConnectError(
       `Solde insuffisant : ce retrait coûte ${amount + operatorFee + lightpayFee} FCFA frais compris (${operatorFee} opérateur + ${lightpayFee} LightPay).`,
@@ -237,9 +237,9 @@ export async function closeAccount(user: LightPayUser) {
 }
 
 /** What a withdrawal will cost, before doing it (same computation as withdraw()). */
-export function quoteWithdrawal(amountInput: unknown, networkInput: unknown) {
+export function quoteWithdrawal(environment: Environment, amountInput: unknown, networkInput: unknown) {
   const amount = positive(amountInput);
   const network = String(networkInput ?? '') as MobileNetwork;
   if (!MOBILE_NETWORKS.includes(network)) throw new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
-  return withdrawalQuote(amount, providerFor(network).name, 'XAF');
+  return withdrawalQuote(environment, amount, providerFor(network).name, 'XAF');
 }

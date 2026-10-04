@@ -46,7 +46,7 @@ export const accountPage = (nonce: string, env: string) => {
   ${bar('Recharger')}
   <div class="content">
     <label class="label" for="depAmount">Montant à recharger</label>
-    <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur">FCFA · minimum 1 000</div></div>
+    <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="depMin">FCFA</div></div>
     <div class="field"><span class="label" id="depNetLabel">Payer avec</span>
       <div class="seg" role="group" aria-labelledby="depNetLabel">
         <button class="seg-opt" type="button" data-dep-net="MTN_MOMO_COG" aria-pressed="true">MTN MoMo</button>
@@ -287,6 +287,8 @@ export const accountPage = (nonce: string, env: string) => {
   }
 
   // ---------------------------------------------------------------- home
+  // Minimums set by the admin (from /v1/me).
+  const lim = (k) => Number(me && me.limits ? me.limits[k] : 0);
   async function loadMe() {
     me = await LP.api('GET', '/v1/me');
     const name = me.user.name || (me.user.email || '').split('@')[0];
@@ -294,6 +296,7 @@ export const accountPage = (nonce: string, env: string) => {
     $('homeName').textContent = 'Bonjour ' + name;
     $('homeEmail').textContent = me.user.email || '';
     $('homeAvailable').textContent = LP.money(me.wallet.available_balance, cur());
+    $('depMin').textContent = 'FCFA · minimum ' + lim('deposit_min').toLocaleString('fr-FR');
     $('homeLocked').textContent = LP.money(me.wallet.locked_balance, cur()) + ' bloqués';
     const closed = me.wallet.status !== 'ACTIVE';
     $('homeClosed').hidden = !closed;
@@ -325,7 +328,11 @@ export const accountPage = (nonce: string, env: string) => {
     const q = depQuotes && depQuotes[depNet];
     const amount = Number(amountDigits($('depAmount').value));
     $('depGo').disabled = true;
-    if (!amount) { $('depFees').hidden = true; say('depMsg', ''); return; }
+    if (!amount) { $('depFees').hidden = true; $('depMin').classList.remove('below'); say('depMsg', ''); return; }
+    // Below the minimum: no fees and no error, only the minimum highlighted (the button stays off).
+    const min = q ? Number(q.minimum) : lim('deposit_min');
+    $('depMin').classList.toggle('below', amount < min);
+    if (amount < min) { $('depFees').hidden = true; say('depMsg', ''); return; }
     if (!q) return;
     const approx = q.estimated ? '≈ ' : '';
     feeRows($('depFees'), [
@@ -335,7 +342,6 @@ export const accountPage = (nonce: string, env: string) => {
       ['Total à payer', approx + LP.money(q.total, cur()), true],
     ]);
     $('depFees').hidden = false;
-    if (amount < Number(q.minimum)) { say('depMsg', 'Le mobile money accepte au minimum ' + LP.money(q.minimum, cur()) + '.', 'err'); return; }
     say('depMsg', '');
     $('depGo').disabled = false;
   }
@@ -406,8 +412,10 @@ export const accountPage = (nonce: string, env: string) => {
     const phone = digits($('wdPhone').value).replace(/^242/, '');
     const q = wdQuote;
     $('wdNext').disabled = true;
+    const below = Boolean(q) && Number(q.amount) < Number(q.minimum);
+    $('wdAvail').classList.toggle('below', below);
     if (!q) return;
-    if (Number(q.amount) < Number(q.minimum)) return say('wdMsg', 'Retrait minimum : ' + LP.money(q.minimum, cur()) + '.', 'err');
+    if (below) { $('wdFees').hidden = true; return say('wdMsg', ''); }
     if (Number(q.total) > available()) return say('wdMsg', 'Solde insuffisant : ce retrait coûte ' + LP.money(q.total, cur()) + ' frais compris (disponible ' + LP.money(available(), cur()) + ').', 'err');
     if (!/^0[4-6]\\d{7}$/.test(phone)) return say('wdMsg', 'Entrez le numéro à 9 chiffres qui reçoit l’argent.', phone ? 'err' : undefined);
     say('wdMsg', '');
@@ -437,7 +445,7 @@ export const accountPage = (nonce: string, env: string) => {
   $('wdAmount').addEventListener('input', () => { $('wdNext').disabled = true; loadWdQuote(); });
   $('wdPhone').addEventListener('input', wdCheck);
   async function enterWithdraw() {
-    $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur());
+    $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR');
     wdCheck();
     try {
       const r = await LP.api('GET', '/v1/me/withdrawals');

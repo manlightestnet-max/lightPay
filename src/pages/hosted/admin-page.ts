@@ -5,7 +5,7 @@ import { CONSOLE_CSS } from './console.js';
 /**
  * /admin — the owner's console (LightPay sign-in listed in ADMIN_UIDS). Revenue first, then the
  * provider reserves, users, apps, every movement, the main wallet and the admin log.
- * Hash routes: #/home · #/reserves · #/users[/<wallet>] · #/apps[/<id>] · #/moves[/<tx>] · #/main · #/audit
+ * Hash routes: #/home · #/reserves · #/users[/<wallet>] · #/apps[/<id>] · #/moves[/<tx>] · #/main · #/fees · #/audit
  * ?env=sandbox for the test ledger. No withdrawal from here, on purpose.
  */
 
@@ -56,6 +56,9 @@ const page = (screen: string, title: string, inner: string, actions = '') => `
 </div></section>`;
 const panel = (title: string, body: string, opts: { id?: string; actions?: string; flush?: boolean; foot?: string } = {}) =>
   `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2>${opts.actions ?? ''}</div><div class="${opts.flush ? 'panel-flush' : 'panel-body'}"${opts.id ? ` id="${opts.id}"` : ''}>${body}</div>${opts.foot ? `<div class="panel-foot">${opts.foot}</div>` : ''}</section>`;
+/** One fee setting: amounts in FCFA, rates typed in % (stored in basis points). */
+const feeField = (key: string, label: string, unit: 'fcfa' | 'pct', hint = '') =>
+  `<div class="field"><label for="fee_${key}">${label} (${unit === 'pct' ? '%' : 'FCFA'})</label><input id="fee_${key}" data-fee="${key}" data-unit="${unit}" inputmode="decimal" autocomplete="off">${hint ? `<p class="hint">${hint}</p>` : ''}</div>`;
 const stat = (id: string, label: string, hintId: string, accent = false) =>
   `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value${accent ? ' accent' : ''}" id="${id}">—</div><div class="stat-hint" id="${hintId}"></div></div>`;
 
@@ -75,6 +78,8 @@ export const adminPage = (nonce: string, env: string) => {
     ${navItem('moves', 'moves', 'list', 'Mouvements')}
     <div class="nav-label">Trésorerie</div>
     ${navItem('main', 'main', 'wallet', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>')}
+    <div class="nav-label">Réglages</div>
+    ${navItem('fees', 'fees', 'settings', 'Frais et minimums')}
     ${navItem('audit', 'audit', 'clock', 'Journal admin')}
   </nav>
   <div class="side-foot"><div class="me"><span class="avatar" id="meAvatar" aria-hidden="true"></span><span class="me-main"><span class="me-name" id="meName"></span><span class="me-mail">Administrateur</span></span><button class="icon-btn" type="button" id="signOutSide" aria-label="Se déconnecter" title="Se déconnecter">${iconSvg('logout')}</button></div></div>
@@ -179,6 +184,29 @@ ${page('main', '<span data-real>Wallet main</span><span data-test hidden>Faucet<
   ${panel('<span data-real>Mouvements du wallet main</span><span data-test hidden>Mouvements du faucet</span>', '<div id="mainMoves"></div>', { flush: true })}
 `)}
 
+${page('fees', 'Frais et minimums', `
+  <form id="feesForm" novalidate>
+  <div class="grid-2">
+    ${panel('Recharges et paiements mobile money', `
+      ${feeField('deposit_min', 'Montant minimum', 'fcfa', 'Plus petite recharge ou plus petit paiement accepté.')}
+      ${feeField('deposit_lightpay_fee_min', 'Frais LightPay minimum', 'fcfa')}
+      ${feeField('deposit_lightpay_fee_bps', 'Frais LightPay', 'pct', 'Le plus grand des deux s’applique.')}
+      ${feeField('deposit_operator_fee_bps', 'Frais opérateur estimés', 'pct', 'Affichés avant le paiement. Le montant exact vient de l’opérateur.')}
+      <div class="rows mt" id="feesDepEx"></div>`)}
+    ${panel('Retraits', `
+      ${feeField('withdrawal_min', 'Montant minimum', 'fcfa', 'Plus petit retrait accepté.')}
+      ${feeField('withdrawal_lightpay_fee_min', 'Frais LightPay minimum', 'fcfa')}
+      ${feeField('withdrawal_lightpay_fee_bps', 'Frais LightPay', 'pct', 'Le plus grand des deux s’applique.')}
+      ${feeField('withdrawal_operator_fee_min', 'Frais opérateur minimum', 'fcfa')}
+      ${feeField('withdrawal_operator_fee_bps', 'Frais opérateur', 'pct', 'Ce que le provider prend sur chaque envoi.')}
+      <div class="rows mt" id="feesWdEx"></div>`)}
+  </div>
+  <div class="msg" id="feesSaveMsg" role="status" aria-live="polite"></div>
+  <button class="btn mt" type="submit" id="feesGo">${iconSvg('check')}Enregistrer</button>
+  <p class="hint">Appliqué tout de suite, à cet environnement seulement. Chaque changement est inscrit au journal admin.</p>
+  </form>
+`)}
+
 ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration', '<div id="auditTable"></div>', { flush: true }))}
 
   </div>
@@ -218,6 +246,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   const ACTION = LP.ENV === 'sandbox'
     ? { MAIN_SEND: 'Envoi depuis le faucet', FAUCET_ISSUE: 'Émission d’argent de test' }
     : { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Recharge du wallet main' };
+  ACTION.FEES_UPDATE = 'Frais et minimums modifiés';
   const pill = (status) => { const s = STATUS[status] || ['', String(status || '').toLowerCase()]; return el('span', { class: 'pill ' + s[0], text: s[1] }); };
   const rows = (host, list) => host.replaceChildren.apply(host, list.map((r) => el('div', { class: r[2] ? 'total' : '' }, [el('span', { text: r[0] }), el('span', { text: r[1] })])));
   const segValue = (name) => { const b = document.querySelector('[data-seg="' + name + '"] [aria-pressed="true"]'); return b ? b.dataset.value : ''; };
@@ -533,6 +562,55 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     $('rechargeGo').disabled = false;
   });
 
+  // ---------------------------------------------------------------- fees and minimums
+  const feeInputs = () => Array.prototype.slice.call(document.querySelectorAll('[data-fee]'));
+  const pctText = (bps) => String(bps / 100).replace('.', ',');
+  function feeValue(input) {
+    const raw = input.value.trim().replace(/\\s/g, '').replace(',', '.');
+    if (!raw || !/^\\d+(\\.\\d+)?$/.test(raw)) return NaN;
+    const n = Number(raw);
+    if (input.dataset.unit === 'pct') { const bps = Math.round(n * 100); return Math.abs(bps - n * 100) < 1e-6 ? bps : NaN; }
+    return Number.isInteger(n) ? n : NaN;
+  }
+  function readFees() {
+    const out = {}; let bad = null;
+    feeInputs().forEach((i) => { const v = feeValue(i); if (isNaN(v) && !bad) bad = i; out[i.dataset.fee] = v; });
+    return { settings: out, bad: bad };
+  }
+  const byRate = (amount, bps) => Math.ceil(amount * bps / 10000);
+  function feesPreview() {
+    const r = readFees();
+    if (r.bad) { $('feesDepEx').replaceChildren(); $('feesWdEx').replaceChildren(); return; }
+    const s = r.settings;
+    const dep = Math.max(s.deposit_min, 1000);
+    const dLp = Math.max(s.deposit_lightpay_fee_min, byRate(dep, s.deposit_lightpay_fee_bps));
+    const dOp = byRate(dep + dLp, s.deposit_operator_fee_bps);
+    rows($('feesDepEx'), [['Exemple : recharge de', money(dep)], ['Frais LightPay', money(dLp)], ['Frais opérateur (estimés)', money(dOp)], ['Le client paie', money(dep + dLp + dOp), true]]);
+    const wd = Math.max(s.withdrawal_min, 1000);
+    const wLp = Math.max(s.withdrawal_lightpay_fee_min, byRate(wd, s.withdrawal_lightpay_fee_bps));
+    const wOp = Math.max(s.withdrawal_operator_fee_min, byRate(wd, s.withdrawal_operator_fee_bps));
+    rows($('feesWdEx'), [['Exemple : retrait de', money(wd)], ['Frais LightPay', money(wLp)], ['Frais opérateur', money(wOp)], ['Débité du wallet', money(wd + wLp + wOp), true]]);
+  }
+  function fillFees(s) { feeInputs().forEach((i) => { const v = s[i.dataset.fee]; i.value = i.dataset.unit === 'pct' ? pctText(v) : String(v); }); feesPreview(); }
+  feeInputs().forEach((i) => i.addEventListener('input', () => { say('feesSaveMsg', ''); feesPreview(); }));
+  async function enterFees() {
+    crumbs('Réglages', 'Frais et minimums');
+    await load('fees', async () => { fillFees((await LP.api('GET', '/v1/admin-console/fees')).settings); say('feesSaveMsg', ''); });
+  }
+  $('feesForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); say('feesSaveMsg', '');
+    const r = readFees();
+    if (r.bad) { r.bad.focus(); return say('feesSaveMsg', 'Valeur invalide : ' + r.bad.labels[0].textContent + '. Nombre entier en FCFA, pourcentage avec 2 décimales au plus.', 'err'); }
+    if (r.settings.deposit_min < 1 || r.settings.withdrawal_min < 1) return say('feesSaveMsg', 'Les minimums doivent être d’au moins 1 FCFA.', 'err');
+    $('feesGo').disabled = true;
+    await guarded(async () => {
+      const saved = await LP.api('PUT', '/v1/admin-console/fees', r.settings);
+      fillFees(saved.settings);
+      say('feesSaveMsg', 'Enregistré : appliqué dès maintenant.', 'ok');
+    }, 'feesSaveMsg');
+    $('feesGo').disabled = false;
+  });
+
   // ---------------------------------------------------------------- admin log
   async function enterAudit() {
     crumbs('Trésorerie', 'Journal admin');
@@ -553,6 +631,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     apps: { parent: 'home', enter: withNav('apps', enterApps) },
     moves: { parent: 'home', enter: withNav('moves', enterMoves) },
     main: { parent: 'home', enter: withNav('main', enterMain) },
+    fees: { parent: 'home', enter: withNav('fees', enterFees) },
     audit: { parent: 'home', enter: withNav('audit', enterAudit) },
     denied: { enter: () => {} },
   };

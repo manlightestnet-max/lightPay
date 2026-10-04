@@ -22,6 +22,8 @@ import {
   sendFromMain,
 } from '../db/admin-console.js';
 import { Environment } from '../types/index.js';
+import { DEFAULT_FEE_SETTINGS, FeeSettingsError, feeSettings, loadFeeSettings, saveFeeSettings, validateFeeSettings } from '../payments/fee-settings.js';
+import { auditAction } from '../db/admin-console.js';
 
 /**
  * Owner's admin console.
@@ -36,6 +38,8 @@ import { Environment } from '../types/index.js';
  *   POST /v1/admin-console/main/send            { to, amount, note }   recent sign-in + Idempotency-Key
  *   POST /v1/admin-console/main/recharge        { amount }             production: real deposit page
  *   POST /v1/admin-console/faucet/issue         { amount }             test only: issue test money into the faucet
+ *   GET  /v1/admin-console/fees                 fees and minimums of this ledger (+ the defaults)
+ *   PUT  /v1/admin-console/fees                 { …all settings }   recent sign-in; applied at once, logged
  *   GET  /v1/admin-console/audit                admin actions log
  * Access: a LightPay sign-in whose uid is listed in ADMIN_UIDS. X-Environment picks the ledger.
  * There is no withdrawal route here, on purpose.
@@ -179,6 +183,27 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         const key = idem(request, reply);
         if (!key) return;
         try { return { status: 'success', ...(await issueFaucet(envOf(request), adminOf(request), (request.body as any)?.amount, key)) }; } catch (e) { return fail(reply, e); }
+      });
+
+      api.get('/fees', async (request) => {
+        const env = envOf(request);
+        return { status: 'success', settings: await loadFeeSettings(env).catch(() => feeSettings(env)), defaults: DEFAULT_FEE_SETTINGS };
+      });
+      api.put('/fees', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        let next;
+        try {
+          next = validateFeeSettings(request.body);
+        } catch (e) {
+          if (e instanceof FeeSettingsError) return reply.status(400).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
+        const admin = adminOf(request);
+        const { before, after } = await saveFeeSettings(env, next, admin.email || admin.uid);
+        const changed = Object.fromEntries(Object.keys(after).filter((k) => (before as any)[k] !== (after as any)[k]).map((k) => [k, { from: (before as any)[k], to: (after as any)[k] }]));
+        if (Object.keys(changed).length) await auditAction(env, admin, 'FEES_UPDATE', null, null, { changed });
+        return { status: 'success', settings: after };
       });
 
       api.get('/audit', async (request) => ({ status: 'success', audit: await listAudit(envOf(request), intParam((request.query as any)?.limit, 100, 500)) }));

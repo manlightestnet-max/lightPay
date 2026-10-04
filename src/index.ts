@@ -20,6 +20,7 @@ import { faucetRoutes } from './routes/faucet.js';
 import { adminConsoleRoutes, adminHost } from './routes/admin-console.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
+import { refreshFeeSettings } from './payments/fee-settings.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
 import crypto from 'crypto';
 import { query } from './db/pool.js';
@@ -253,6 +254,9 @@ async function start() {
   try {
     console.log('[STARTUP] Initializing LightPay Headless Core Engine...');
     await runMigrations();
+    // Fees and minimums come from the admin's settings; re-read every minute.
+    await refreshFeeSettings();
+    setInterval(() => void refreshFeeSettings(), 60_000).unref();
 
     await server.listen({
       port: config.port,

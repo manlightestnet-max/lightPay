@@ -360,7 +360,7 @@ export async function mainOverview(env: Environment) {
   return { wallet: w, moves };
 }
 
-const audit = (env: Environment, admin: AdminUser, action: string, target: string | null, amount: bigint | null, detail: Record<string, unknown>) =>
+export const auditAction = (env: Environment, admin: AdminUser, action: string, target: string | null, amount: bigint | null, detail: Record<string, unknown>) =>
   query(
     `INSERT INTO admin_audit (id, environment, admin_uid, admin_email, action, target, amount, currency, detail)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -417,7 +417,7 @@ export async function sendFromMain(env: Environment, admin: AdminUser, input: { 
       walletId: recipient.id, kind: 'TRANSFER', direction: 'IN', status: 'SUCCEEDED', amount, total: amount, currency: CURRENCY,
       counterparty: 'LightPay', refType: 'transfer', refId: ref, metadata: { note },
     });
-    await audit(env, admin, 'MAIN_SEND', to, amount, { note, transaction: (result as any).transactionId ?? (result as any).transaction?.id ?? null });
+    await auditAction(env, admin, 'MAIN_SEND', to, amount, { note, transaction: (result as any).transactionId ?? (result as any).transaction?.id ?? null });
   }
   return { duplicate: result.duplicate, to: { email: to, name: recipient.metadata?.name ?? null }, amount: amount.toString() };
 }
@@ -453,7 +453,7 @@ export async function issueFaucet(env: Environment, admin: AdminUser, amountInpu
       { walletId: faucet, direction: 'CREDIT', amount, description: 'Réserve du faucet' },
     ],
   });
-  if (!result.duplicate) await audit(env, admin, 'FAUCET_ISSUE', null, amount, {});
+  if (!result.duplicate) await auditAction(env, admin, 'FAUCET_ISSUE', null, amount, {});
   return { duplicate: result.duplicate, amount: amount.toString() };
 }
 
@@ -461,7 +461,7 @@ export async function issueFaucet(env: Environment, admin: AdminUser, amountInpu
 export async function rechargeMain(env: Environment, admin: AdminUser, amountInput: unknown, idempotencyKey: string, returnUrl: string | null) {
   if (env !== 'production') throw new AdminError('En test, le faucet se remplit par émission.', 'USE_FAUCET', 400);
   const amount = positive(amountInput);
-  if (amount < minMobileMoneyAmount()) throw new AdminError(`Recharge minimum : ${minMobileMoneyAmount()} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
+  if (amount < minMobileMoneyAmount(env)) throw new AdminError(`Recharge minimum : ${minMobileMoneyAmount(env)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   const main = await LedgerEngine.getOrCreateMainTreasury('mainapp', env, CURRENCY);
   const key = `admin-recharge:${idempotencyKey}`;
   const [existing] = await query(`SELECT id FROM checkout_sessions WHERE app_id = 'mainapp' AND environment = $1 AND idempotency_key = $2`, [env, key], env);
@@ -473,6 +473,6 @@ export async function rechargeMain(env: Environment, admin: AdminUser, amountInp
     [id, env, key, amount.toString(), CURRENCY, main, returnUrl],
     env
   );
-  await audit(env, admin, 'MAIN_RECHARGE', id, amount, {});
+  await auditAction(env, admin, 'MAIN_RECHARGE', id, amount, {});
   return { session_id: id, checkout_path: `/pay/${id}` };
 }
