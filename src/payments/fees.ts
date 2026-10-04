@@ -65,8 +65,8 @@ export function quote(amount: bigint, provider: string): FeeQuote {
 //   The person receives exactly the amount asked; the wallet is debited amount + both fees.
 //   Refunds carry no LightPay fee: the guest gets the largest amount the refund can cover.
 
-/** Smallest withdrawal (below it the operator fee makes no sense). */
-export const minWithdrawalAmount = (): bigint => BigInt(int(process.env.WITHDRAWAL_MIN_AMOUNT, 1000));
+/** Smallest withdrawal (SasPay's own payout minimum is 200 XAF). */
+export const minWithdrawalAmount = (): bigint => BigInt(int(process.env.WITHDRAWAL_MIN_AMOUNT, 200));
 
 export function lightpayPayoutFee(amount: bigint): bigint {
   const min = BigInt(int(process.env.LIGHTPAY_PAYOUT_FEE_MIN, 5));

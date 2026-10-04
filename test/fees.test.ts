@@ -1,6 +1,6 @@
 /**
  * Fee arithmetic (no database, no network). Run: npx tsx test/fees.test.ts
- * Defaults: collection LightPay fee 5 min; payout: SasPay 4 %, LightPay 5; withdrawal min 1000.
+ * Defaults: collection LightPay fee 5 min; payout: SasPay 4 %, LightPay 5; withdrawal min 200.
  */
 import {
   lightpayCollectionFee,
@@ -23,7 +23,7 @@ check('LightPay payout fee: 5 minimum', lightpayPayoutFee(1000n) === 5n);
 check('SasPay payout fee: 4 %, no floor (500 -> 20, as measured live)', providerPayoutFee('saspay', 500n) === 20n && providerPayoutFee('saspay', 1000n) === 40n);
 check('SasPay payout fee: 4 % rounded up', providerPayoutFee('saspay', 17_501n) === 701n && providerPayoutFee('saspay', 50_000n) === 2000n);
 check('simulator payout fee: 0', providerPayoutFee('simulator', 50_000n) === 0n);
-check('withdrawal minimum 1000', minWithdrawalAmount() === 1000n);
+check('withdrawal minimum 200', minWithdrawalAmount() === 200n);
 
 const wq = withdrawalQuote(5000n, 'saspay', 'XAF');
 check('withdraw 5 000 via SasPay: 200 + 5 -> total 5 205', wq.amount === '5000' && wq.operator_fee === '200' && wq.lightpay_fee === '5' && wq.total === '5205', JSON.stringify(wq));

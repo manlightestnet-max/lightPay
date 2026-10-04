@@ -77,9 +77,9 @@ async function scenario(env: 'sandbox' | 'production', appKey: string) {
 
   // 3. Withdraw to mobile money.
   const small = await req('POST', '/v1/me/withdrawals', { user: alice, body: { amount: 100, msisdn: '066000003', network: 'AIRTEL_COG' }, idem: key('small') });
-  check('withdrawal minimum 1 000', small.status === 400 && small.body.error === 'BELOW_MINIMUM');
+  check('withdrawal minimum 200', small.status === 400 && small.body.error === 'BELOW_MINIMUM');
   const wq = await req('GET', '/v1/me/withdrawals/quote?amount=8000&network=MTN_MOMO_COG', { user: alice });
-  check('withdrawal quote: 8 000 received, 0 operator + 5 LightPay = 8 005 debited', wq.body.quote?.amount === '8000' && wq.body.quote?.operator_fee === '0' && wq.body.quote?.lightpay_fee === '5' && wq.body.quote?.total === '8005' && wq.body.quote?.minimum === '1000', JSON.stringify(wq.body.quote));
+  check('withdrawal quote: 8 000 received, 0 operator + 5 LightPay = 8 005 debited', wq.body.quote?.amount === '8000' && wq.body.quote?.operator_fee === '0' && wq.body.quote?.lightpay_fee === '5' && wq.body.quote?.total === '8005' && wq.body.quote?.minimum === '200', JSON.stringify(wq.body.quote));
   const dq = await req('GET', '/v1/me/deposits/quote?amount=5000', { user: alice });
   check('deposit quote per operator: 5 000 + 5 LightPay', dq.body.quotes?.MTN_MOMO_COG?.total === '5005' && dq.body.quotes?.AIRTEL_COG?.lightpay_fee === '5', JSON.stringify(dq.body.quotes?.MTN_MOMO_COG));
   const badQuote = await req('GET', '/v1/me/withdrawals/quote?amount=abc&network=MTN_MOMO_COG', { user: alice });
