@@ -58,8 +58,9 @@ export function quote(amount: bigint, provider: string): FeeQuote {
 
 // ---------------------------------------------------------------- payouts (withdrawals, refunds)
 //
-//   Operator fee   SasPay Congo (its published pricing): max(4 %, 700 XAF), charged on top from
-//                  our SasPay balance (ADD_ON) — SASPAY_PAYOUT_FEE_BPS (400) / SASPAY_PAYOUT_FEE_MIN (700)
+//   Operator fee   SasPay Congo: 4 % of the amount, charged on top from our SasPay balance (ADD_ON)
+//                  — SASPAY_PAYOUT_FEE_BPS (400) / SASPAY_PAYOUT_FEE_MIN (0). Measured on a real
+//                  payout (500 XAF -> 20 XAF fee): the 700 XAF floor on their pricing page is not applied.
 //   LightPay fee   max(LIGHTPAY_PAYOUT_FEE_MIN (5), amount × LIGHTPAY_PAYOUT_FEE_BPS (0))
 //   The person receives exactly the amount asked; the wallet is debited amount + both fees.
 //   Refunds carry no LightPay fee: the guest gets the largest amount the refund can cover.
@@ -77,7 +78,7 @@ export function lightpayPayoutFee(amount: bigint): bigint {
 export function providerPayoutFee(provider: string, amount: bigint): bigint {
   if (provider !== 'saspay') return 0n;
   const byRate = ceilBps(amount, int(process.env.SASPAY_PAYOUT_FEE_BPS, 400));
-  const min = BigInt(int(process.env.SASPAY_PAYOUT_FEE_MIN, 700));
+  const min = BigInt(int(process.env.SASPAY_PAYOUT_FEE_MIN, 0));
   return byRate > min ? byRate : min;
 }
 

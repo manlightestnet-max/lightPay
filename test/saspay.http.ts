@@ -118,7 +118,7 @@ async function main() {
 
   const bad = await req('POST', '/v1/me/withdrawals', { user, body: { amount: 7000, msisdn: '06 555 00 09', network: 'MTN_MOMO_COG' }, idem: `saswd1${RUN}` });
   check('withdrawal sent, PENDING at SasPay', bad.body.withdrawal?.status === 'PENDING', `${bad.status} ${JSON.stringify(bad.body).slice(0, 120)}`);
-  check('7 000 + 700 SasPay + 5 LightPay leave the wallet while pending', (await req('GET', '/v1/me', { user })).body.wallet?.available_balance === '12295' && bad.body.withdrawal?.total === '7705');
+  check('7 000 + 280 SasPay + 5 LightPay leave the wallet while pending', (await req('GET', '/v1/me', { user })).body.wallet?.available_balance === '12715' && bad.body.withdrawal?.total === '7285');
   let restored = false;
   for (let i = 0; i < 20 && !restored; i++) {
     await sleep(700);
