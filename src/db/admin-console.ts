@@ -66,39 +66,56 @@ const mainBalance = async (env: Environment) => {
 
 // ---------------------------------------------------------------- overview (revenue first)
 
+/**
+ * A payout the provider refused is debited, then given back whole by a REFUND carrying
+ * metadata.payout: both cancel out and are left out of revenue, volumes and counts.
+ * A payout fee given back afterwards (REFUND with metadata.payout_id) lowers what was paid out.
+ */
+const NOT_CANCELLED = `NOT (t.type = 'REFUND' AND t.metadata ? 'payout')
+  AND t.id NOT IN (SELECT transaction_id FROM payouts WHERE status = 'FAILED' AND transaction_id IS NOT NULL)`;
+const FEE_GIVEN_BACK = `(t.type = 'REFUND' AND t.metadata ? 'payout_id')`;
+/** Shown status: a refused payout is "annulé", its give-back "restitution". */
+const SHOWN_STATUS = `CASE
+    WHEN t.type = 'PAYOUT' AND EXISTS (SELECT 1 FROM payouts p WHERE p.transaction_id = t.id AND p.status = 'FAILED') THEN 'REVERSED'
+    WHEN t.type = 'REFUND' AND t.metadata ? 'payout' THEN 'GIVEN_BACK'
+    ELSE t.status END`;
+
 export async function overview(env: Environment, period: Period) {
   const from = since(period);
   const [revenue, flows, counts, daily, ledger, main] = await Promise.all([
-    // LightPay's own revenue: credits into its fee wallet, by what produced them.
+    // LightPay's own revenue: what its fee wallet kept, by what produced it.
     query(
       `SELECT CASE
-                WHEN t.type = 'PAYOUT' THEN 'withdrawal'
+                WHEN t.type = 'PAYOUT' OR ${FEE_GIVEN_BACK} THEN 'withdrawal'
                 WHEN t.type = 'COLLECTION' AND (t.metadata->>'deposit') = 'true' THEN 'deposit'
                 WHEN t.type = 'COLLECTION' THEN 'payment'
                 ELSE 'other' END AS source,
-              COALESCE(SUM(le.amount), 0)::text AS amount, COUNT(*)::int AS count
+              COALESCE(SUM(CASE WHEN le.direction = 'CREDIT' THEN le.amount ELSE -le.amount END), 0)::text AS amount,
+              COUNT(*) FILTER (WHERE le.direction = 'CREDIT')::int AS count
        FROM ledger_entries le
        JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'LIGHTPAY_FEES' AND w.currency = $1
        JOIN transactions t ON t.id = le.transaction_id AND t.status = 'SUCCESS'
-       WHERE le.direction = 'CREDIT' AND le.created_at >= ${from}
+       WHERE le.created_at >= ${from} AND ${NOT_CANCELLED}
        GROUP BY 1`,
       [CURRENCY],
       env
     ),
     // Money in from / out to the providers (the transit account's movements).
     query(
-      `SELECT COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'DEBIT'), 0)::text AS money_in,
-              COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'CREDIT'), 0)::text AS money_out,
-              COUNT(*) FILTER (WHERE le.direction = 'DEBIT')::int AS ins,
+      `SELECT COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'DEBIT' AND NOT ${FEE_GIVEN_BACK}), 0)::text AS money_in,
+              (COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'CREDIT'), 0)
+                - COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'DEBIT' AND ${FEE_GIVEN_BACK}), 0))::text AS money_out,
+              COUNT(*) FILTER (WHERE le.direction = 'DEBIT' AND NOT ${FEE_GIVEN_BACK})::int AS ins,
               COUNT(*) FILTER (WHERE le.direction = 'CREDIT')::int AS outs
        FROM ledger_entries le
        JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'SYSTEM_GATEWAY_INFLOW' AND w.currency = $1
-       WHERE le.created_at >= ${from}`,
+       JOIN transactions t ON t.id = le.transaction_id
+       WHERE le.created_at >= ${from} AND ${NOT_CANCELLED}`,
       [CURRENCY],
       env
     ),
     query(
-      `SELECT (SELECT COUNT(*) FROM transactions WHERE status = 'SUCCESS' AND created_at >= ${from})::int AS transactions,
+      `SELECT (SELECT COUNT(*) FROM transactions t WHERE t.status = 'SUCCESS' AND t.created_at >= ${from} AND ${NOT_CANCELLED})::int AS transactions,
               (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE status = 'SUCCESS' AND type IN ('PAYMENT', 'HOLD') AND created_at >= ${from})::text AS payments_volume,
               (SELECT COUNT(*) FROM transactions WHERE status = 'SUCCESS' AND type IN ('PAYMENT', 'HOLD') AND created_at >= ${from})::int AS payments,
               (SELECT COUNT(*) FROM wallets WHERE account_type = 'USER' AND app_id = 'mainapp')::int AS users,
@@ -112,9 +129,11 @@ export async function overview(env: Environment, period: Period) {
     // Last 30 days, one bar per day: successful transactions and revenue.
     query(
       `SELECT to_char(d, 'YYYY-MM-DD') AS day,
-              (SELECT COUNT(*) FROM transactions t WHERE t.status = 'SUCCESS' AND t.created_at >= d AND t.created_at < d + INTERVAL '1 day')::int AS transactions,
-              (SELECT COALESCE(SUM(le.amount), 0) FROM ledger_entries le JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'LIGHTPAY_FEES' AND w.currency = $1
-                WHERE le.direction = 'CREDIT' AND le.created_at >= d AND le.created_at < d + INTERVAL '1 day')::text AS revenue
+              (SELECT COUNT(*) FROM transactions t WHERE t.status = 'SUCCESS' AND t.created_at >= d AND t.created_at < d + INTERVAL '1 day' AND ${NOT_CANCELLED})::int AS transactions,
+              (SELECT COALESCE(SUM(CASE WHEN le.direction = 'CREDIT' THEN le.amount ELSE -le.amount END), 0)
+                 FROM ledger_entries le JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'LIGHTPAY_FEES' AND w.currency = $1
+                 JOIN transactions t ON t.id = le.transaction_id
+                WHERE le.created_at >= d AND le.created_at < d + INTERVAL '1 day' AND ${NOT_CANCELLED})::text AS revenue
        FROM generate_series(date_trunc('day', NOW()) - INTERVAL '29 days', date_trunc('day', NOW()), INTERVAL '1 day') AS d
        ORDER BY d`,
       [CURRENCY],
@@ -318,7 +337,7 @@ export async function listTransactions(env: Environment, f: { type?: string; app
   const types = f.type && TYPE_FILTERS[f.type] ? TYPE_FILTERS[f.type] : null;
   const before = f.before && !Number.isNaN(Date.parse(f.before)) ? f.before : null;
   return query(
-    `SELECT t.id, t.app_id, t.type, t.amount::text, t.fee_amount::text, t.currency, t.status, t.reference, t.created_at,
+    `SELECT t.id, t.app_id, t.type, t.amount::text, t.fee_amount::text, t.currency, ${SHOWN_STATUS} AS status, t.reference, t.created_at,
             t.metadata->>'provider' AS provider, t.metadata->>'network' AS network
      FROM transactions t
      WHERE ($1::text[] IS NULL OR t.type = ANY($1))
@@ -333,7 +352,7 @@ export async function listTransactions(env: Environment, f: { type?: string; app
 
 export async function getTransaction(env: Environment, id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new AdminError('Transaction introuvable.', 'NOT_FOUND', 404);
-  const [tx] = await query(`SELECT *, amount::text, fee_amount::text FROM transactions WHERE id = $1`, [id], env);
+  const [tx] = await query(`SELECT t.*, t.amount::text, t.fee_amount::text, ${SHOWN_STATUS} AS status FROM transactions t WHERE t.id = $1`, [id], env);
   if (!tx) throw new AdminError('Transaction introuvable.', 'NOT_FOUND', 404);
   const entries = await query(
     `SELECT le.id, le.wallet_id, le.direction, le.amount::text, le.balance_before::text, le.balance_after::text, le.description,
