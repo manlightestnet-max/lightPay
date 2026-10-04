@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { query } from './pool.js';
 import { Environment } from '../types/index.js';
+import { notifyWallets } from '../realtime.js';
 
 /**
  * Wallet activity journal — what the person sees in their history: every operation that
@@ -81,6 +82,7 @@ export async function logActivity(environment: Environment, a: ActivityInput): P
       ],
       environment
     );
+    notifyWallets(environment, [a.walletId]);
   } catch (err: any) {
     console.error('[ACTIVITY] log failed', a.kind, a.refType, a.refId, err?.message);
   }
@@ -94,16 +96,18 @@ export async function updateActivity(
   patch: { status: ActivityStatus; reasonCode?: string | null; reason?: string | null; fees?: bigint | string | number; total?: bigint | string | number; amount?: bigint | string | number; walletId?: string; metadata?: Record<string, any> }
 ): Promise<void> {
   try {
-    await query(
+    const rows = await query(
       `UPDATE wallet_activity SET status = $3::varchar,
          reason_code = CASE WHEN $3::varchar IN ('FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'LOCKED') THEN COALESCE($4::varchar, reason_code) ELSE NULL END,
          reason = CASE WHEN $3::varchar IN ('FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'LOCKED') THEN COALESCE($5::text, reason) ELSE NULL END,
          fees = COALESCE($6::bigint, fees), total = COALESCE($7::bigint, total), amount = COALESCE($8::bigint, amount),
          metadata = metadata || $10::jsonb, updated_at = NOW()
-       WHERE ref_type = $1 AND ref_id = $2 AND ($9::uuid IS NULL OR wallet_id = $9::uuid)`,
+       WHERE ref_type = $1 AND ref_id = $2 AND ($9::uuid IS NULL OR wallet_id = $9::uuid)
+       RETURNING wallet_id`,
       [refType, refId, patch.status, patch.reasonCode ?? null, patch.reason ?? reasonFor(patch.reasonCode), str(patch.fees), str(patch.total), str(patch.amount), patch.walletId ?? null, JSON.stringify(patch.metadata ?? {})],
       environment
     );
+    notifyWallets(environment, rows.map((r: any) => r.wallet_id));
   } catch (err: any) {
     console.error('[ACTIVITY] update failed', refType, refId, err?.message);
   }

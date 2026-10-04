@@ -12,6 +12,7 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  *   LP.resetPassword(email)
  *   LP.api(method, path, body?, idempotencyKey?) -> JSON   throws Error with .signIn (sign in again)
  *                                                           or .reauth (confirm password) or .status
+ *   LP.live(onChange) -> stop()   onChange() when the wallet moves (server-sent signal, reconnects)
  *   LP.money(value, currency) · LP.uuid() · LP.updateIdentity({email}|{password}) · LP.deleteIdentity()
  * UI kit
  *   $(id) · el(tag, props?, children?) (props: class, text, on:{event:fn}, any attribute)
@@ -115,7 +116,44 @@ export const CLIENT = (env: string) => `
       },
       signOut: () => write(null),
       api: api,
-      money: (v, c) => Number(v).toLocaleString('fr-FR') + ' ' + (!c || c === 'XAF' ? 'FCFA' : c),
+      // Live signal (GET /v1/me/stream): onChange() runs shortly after the wallet moves, and once
+      // after each reconnection (to catch up). Reconnects on its own; returns a stop function.
+      live: (onChange) => {
+        let stopped = false, first = true, wait = 1000, timer = null;
+        const fire = () => { clearTimeout(timer); timer = setTimeout(() => { if (!stopped) onChange(); }, 200); };
+        const run = async () => {
+          while (!stopped) {
+            try {
+              const t = await token();
+              if (!t) return;
+              const res = await fetch('/v1/me/stream', { headers: { Authorization: 'Bearer ' + t, 'X-Environment': ENV, Accept: 'text/event-stream' }, cache: 'no-store' });
+              if (res.status === 401) return;
+              if (!res.ok || !res.body) throw new Error('stream');
+              if (!first) fire();
+              first = false; wait = 1000;
+              const reader = res.body.getReader();
+              const dec = new TextDecoder();
+              let buf = '';
+              for (;;) {
+                const r = await reader.read();
+                if (r.done || stopped) break;
+                buf += dec.decode(r.value, { stream: true });
+                let i;
+                while ((i = buf.indexOf('\\n\\n')) >= 0) {
+                  if (buf.slice(0, i).indexOf('event: change') === 0) fire();
+                  buf = buf.slice(i + 2);
+                }
+              }
+            } catch (e) { /* retry below */ }
+            if (stopped) return;
+            await new Promise((r) => setTimeout(r, wait));
+            wait = Math.min(wait * 2, 30000);
+          }
+        };
+        run();
+        return () => { stopped = true; clearTimeout(timer); };
+      },
+      money:(v, c) => Number(v).toLocaleString('fr-FR') + ' ' + (!c || c === 'XAF' ? 'FCFA' : c),
       uuid: () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9_-]/g, ''),
       updateIdentity: async (fields) => {
         const t = await token();

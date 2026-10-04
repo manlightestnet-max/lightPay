@@ -2,6 +2,7 @@ import { PoolClient } from 'pg';
 import { getClient, query } from './pool.js';
 import { LedgerBucket, LedgerDirection, TransactionType, Environment } from '../types/index.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
+import { notifyWallets } from '../realtime.js';
 
 export interface LedgerPosting {
   walletId: string;
@@ -244,6 +245,7 @@ export class LedgerEngine {
       );
 
       await client.query('COMMIT');
+      notifyWallets(environment, postings.map((p) => p.walletId));
 
       return {
         duplicate: false,

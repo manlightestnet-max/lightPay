@@ -6,6 +6,7 @@ import { quote } from '../payments/fees.js';
 import { getActivity, listActivity } from '../db/activity.js';
 import { MOBILE_NETWORKS, providerFor } from '../payments/mobile-money.js';
 import { Environment } from '../types/index.js';
+import { onWalletChange } from '../realtime.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -71,6 +72,10 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   DELETE /v1/me                         close my account (recent sign-in, everything at zero)
  * X-Environment: sandbox | production (default production).
  */
+/** Open live streams per person (a few tabs at most). */
+const streams = new Map<string, number>();
+const MAX_STREAMS = 6;
+
 export async function meRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireUser);
 
@@ -150,6 +155,40 @@ export async function meRoutes(fastify: FastifyInstance) {
     } catch (err) {
       return fail(reply, err);
     }
+  });
+
+  // Live signal for the person's open pages: "event: change" whenever their wallet moves (a
+  // payment, a webhook, a payout settled). No data in it; the page re-reads through this API.
+  // Closed after 10 minutes so the page reconnects with a fresh token.
+  fastify.get('/stream', async (request, reply) => {
+    const user = request.lightpayUser!;
+    if ((streams.get(user.uid) ?? 0) >= MAX_STREAMS) return reply.status(429).send({ error: 'TOO_MANY_STREAMS', message: 'Trop de pages ouvertes.' });
+    const wallet = await userWallet(envOf(request), user);
+    streams.set(user.uid, (streams.get(user.uid) ?? 0) + 1);
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.write(': open\n\n');
+    let pending: NodeJS.Timeout | null = null;
+    const off = onWalletChange(envOf(request), wallet.id, () => {
+      if (pending) return;
+      pending = setTimeout(() => { pending = null; res.write('event: change\ndata: {}\n\n'); }, 250);
+    });
+    const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+    const end = setTimeout(() => res.end(), 10 * 60_000);
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      off();
+      clearInterval(ping);
+      clearTimeout(end);
+      if (pending) clearTimeout(pending);
+      const n = (streams.get(user.uid) ?? 1) - 1;
+      if (n > 0) streams.set(user.uid, n); else streams.delete(user.uid);
+    };
+    request.raw.on('close', close);
+    res.on('close', close);
   });
 
   fastify.get('/withdrawals', async (request) => ({ status: 'success', withdrawals: await listWithdrawals(envOf(request), request.lightpayUser!) }));

@@ -682,8 +682,23 @@ export const accountPage = (nonce: string, env: string) => {
 
   // Signed out: the sign-in screen (with a way back to the calling app when there is one).
   function signIn() { mountAuth(boot, returnUrl ? { onBack: () => location.assign(returnUrl) } : {}); }
+  // Live: when the wallet moves (payment received, withdrawal settled…), what is on screen is re-read.
+  let liveStop = null;
+  async function onLive() {
+    await loadMe().catch(() => {});
+    const c = nav.current();
+    if (!c) return;
+    if (c.name === 'home') return enterHome();
+    if (c.name === 'activity') return enterActivity();
+    if (c.name === 'activity-item') return enterActivityItem(c.param);
+    if (c.name === 'withdraw-done' && wdResult) {
+      const r = await LP.api('GET', '/v1/me/withdrawals').catch(() => null);
+      const w = r && (r.withdrawals || []).find((x) => x.id === wdResult.id);
+      if (w) { wdResult = w; enterWithdrawDone(); }
+    }
+  }
   async function boot() {
-    try { await loadMe(); nav.start(); }
+    try { await loadMe(); nav.start(); if (liveStop) liveStop(); liveStop = LP.live(onLive); }
     catch (e) { if (e.signIn) signIn(); else { nav.start(); say('homeMsg', e.message, 'err'); } }
   }
   if (LP.signedIn()) boot(); else signIn();
