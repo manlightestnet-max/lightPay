@@ -145,7 +145,7 @@ export const failureOf = (err: any): { code: string; message: string } => {
 
 export async function listActivity(environment: Environment, walletId: string, limit = 50) {
   return query(
-    `SELECT id, kind, direction, status, amount::text, fees::text, total::text, currency, counterparty, reason_code, reason, ref_type, metadata, created_at, updated_at
+    `SELECT id, kind, direction, status, amount::text, fees::text, total::text, currency, counterparty, reason_code, regexp_replace(reason, '^null ', 'L’opérateur a refusé l’envoi. ') AS reason, ref_type, metadata, created_at, updated_at
      FROM wallet_activity WHERE wallet_id = $1 ORDER BY created_at DESC LIMIT $2`,
     [walletId, Math.min(Math.max(limit, 1), 200)],
     environment
@@ -154,7 +154,7 @@ export async function listActivity(environment: Environment, walletId: string, l
 
 export async function getActivity(environment: Environment, walletId: string, id: string) {
   const [row] = await query(
-    `SELECT id, kind, direction, status, amount::text, fees::text, total::text, currency, counterparty, reason_code, reason, ref_type, metadata, created_at, updated_at
+    `SELECT id, kind, direction, status, amount::text, fees::text, total::text, currency, counterparty, reason_code, regexp_replace(reason, '^null ', 'L’opérateur a refusé l’envoi. ') AS reason, ref_type, metadata, created_at, updated_at
      FROM wallet_activity WHERE wallet_id = $1 AND id = $2`,
     [walletId, id],
     environment

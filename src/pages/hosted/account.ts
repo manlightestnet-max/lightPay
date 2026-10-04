@@ -1,4 +1,4 @@
-import { shell, topbar } from './shell.js';
+import { shell, skeletonRows, topbar } from './shell.js';
 import { iconSvg } from './icons.js';
 
 /**
@@ -21,7 +21,7 @@ export const accountPage = (nonce: string, env: string) => {
     </div>
     <div class="hero mt">
       <div class="hero-label">Solde disponible</div>
-      <div class="amount-xl" id="homeAvailable">—</div>
+      <div class="amount-xl" id="homeAvailable"><span class="sk sk-amount"></span></div>
       <div class="hero-sub">${iconSvg('lock')}<span id="homeLocked"></span></div>
     </div>
     <div class="note warn" id="homeClosed" hidden>${iconSvg('alert')}<p>Ce compte LightPay est fermé : il ne peut plus recevoir ni envoyer d’argent.</p></div>
@@ -31,7 +31,7 @@ export const accountPage = (nonce: string, env: string) => {
       <button class="quick-btn" type="button" data-go="withdraw"><span class="quick-icon">${iconSvg('withdraw')}</span>Retirer</button>
     </div>
     <div class="section-head"><h2>Activité récente</h2><a class="link" href="#/activity">Tout voir</a></div>
-    <ul class="list" id="homeActivity"></ul>
+    <ul class="list" id="homeActivity">${skeletonRows(3)}</ul>
     <div class="section-head"><h2>Mon compte</h2></div>
     <ul class="list">
       <li><a class="row" href="#/apps"><span class="row-icon">${iconSvg('apps')}</span><span class="row-main"><span class="row-title">Apps connectées</span><span class="row-sub" id="homeAppsSub">Accès et permissions</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
@@ -519,6 +519,7 @@ export const accountPage = (nonce: string, env: string) => {
 
   // ---------------------------------------------------------------- activity
   async function enterActivity() {
+    skeleton($('actList'), 6, 'div');
     await guarded(async () => {
       const r = await LP.api('GET', '/v1/me/activity?limit=100');
       if (!r.activity.length) { $('actList').replaceChildren(el('p', { class: 'empty', text: 'Aucune opération pour l’instant.' })); return; }
@@ -571,6 +572,7 @@ export const accountPage = (nonce: string, env: string) => {
     scopeLabels = r.scope_labels || {};
   }
   async function enterApps() {
+    skeleton($('appsList'), 2);
     await guarded(async () => {
       await loadConnections();
       $('appsList').replaceChildren.apply($('appsList'), connections.length ? connections.map((c) => listRow({

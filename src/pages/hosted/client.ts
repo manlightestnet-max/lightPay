@@ -21,6 +21,7 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  *   feeRows(container, rows)       rows: [[label, value, isTotal?]]
  *   listRow({ icon, iconClass, title, sub, end, endClass, href, onClick, chev }) -> <li>
  *   dayLabel(date) · timeLabel(date) · showOnly(section)
+ *   skeleton(host, n?, tag?)       shimmer rows in an empty list while it loads
  *   createNav({ root, screens: { name: { parent, enter(param) } }, resolve(route) -> [name, param], onRootBack })
  *     -> { start(), go(route, replace?), back(), home(), current() }   (hash routes #/route; the
  *        browser back button and every [data-back] button use the same history)
@@ -233,6 +234,18 @@ export const CLIENT = (env: string) => `
     const cls = 'row';
     const node = o.href ? el('a', { class: cls, href: o.href }, inner) : o.onClick ? el('button', { class: cls, type: 'button', on: { click: o.onClick } }, inner) : el('div', { class: cls }, inner);
     return el('li', {}, [node]);
+  }
+  function skeleton(host, n, tag) {
+    if (!host || host.children.length) return;
+    const rows = [];
+    for (let i = 0; i < (n || 3); i++) {
+      rows.push(el(tag || 'li', { class: 'sk-row', 'aria-hidden': 'true' }, [
+        el('span', { class: 'sk sk-ic' }),
+        el('span', { class: 'sk-lines' }, [el('span', { class: 'sk sk-t ' + ['w-60', 'w-45', 'w-75'][i % 3] }), el('span', { class: 'sk sk-s ' + ['w-30', 'w-45', 'w-30'][i % 3] })]),
+        el('span', { class: 'sk sk-amt' }),
+      ]));
+    }
+    host.replaceChildren.apply(host, rows);
   }
   const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   function dayLabel(d) {

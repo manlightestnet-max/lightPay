@@ -192,20 +192,20 @@ textarea.field-area:focus { outline: none; border-color: var(--accent); box-shad
 
 /* ---------- sign in: brand panel + form ---------- */
 html.console-page #auth { flex-direction: row; background: var(--bg); }
-.auth-aside { flex: 1.1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 56px; background: #0d1210; color: #eef3f0; position: relative; overflow: hidden; }
-.auth-aside::after { content: ''; position: absolute; right: -120px; top: -80px; width: 420px; height: 420px; border-radius: 50%; background: radial-gradient(closest-side, rgba(52,211,153,.22), transparent); pointer-events: none; }
+.auth-aside { flex: 1.1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 56px; background: #1c1c1c; color: #f2f2f2; position: relative; overflow: hidden; }
+.auth-aside::after { content: none; }
 .auth-aside .pill-brand { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; font-size: 13px; font-weight: 600; }
-.auth-aside h2 { margin-top: 28px; font-size: 40px; line-height: 1.08; letter-spacing: -.035em; font-weight: 800; max-width: 460px; }
-.auth-aside > p { margin-top: 14px; max-width: 460px; color: #a9b7b0; font-size: 15px; }
+.auth-aside h2 { margin-top: 28px; font-size: 40px; line-height: 1.08; letter-spacing: -.02em; font-weight: 600; max-width: 460px; }
+.auth-aside > p { margin-top: 14px; max-width: 460px; color: #a3a3a3; font-size: 15px; }
 .auth-tools { margin-top: 28px; display: grid; gap: 10px; max-width: 460px; }
 .auth-tool { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); }
-.auth-tool .tool-icon { width: 38px; height: 38px; border-radius: 11px; background: #34d399; color: #04130d; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.auth-tool .tool-icon { width: 38px; height: 38px; border-radius: 11px; background: #f2f2f2; color: #111111; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .auth-tool .tool-icon svg { width: 19px; height: 19px; }
 .auth-tool b { display: block; font-size: 14px; }
-.auth-tool span { display: block; font-size: 13px; color: #a9b7b0; }
+.auth-tool span { display: block; font-size: 13px; color: #a3a3a3; }
 .auth-points { margin-top: 26px; display: grid; gap: 10px; max-width: 460px; list-style: none; padding: 0; }
 .auth-points li { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #d4ded9; }
-.auth-points svg { width: 18px; height: 18px; color: #34d399; flex-shrink: 0; }
+.auth-points svg { width: 18px; height: 18px; color: #f2f2f2; flex-shrink: 0; }
 .auth-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--card); overflow-y: auto; }
 .auth-main .topbar { background: transparent; }
 .auth-main > form { width: 100%; max-width: 420px; margin: 0 auto; padding: 24px 24px 48px; flex: none; overflow: visible; }

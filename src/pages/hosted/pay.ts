@@ -1,4 +1,4 @@
-import { shell, topbar } from './shell.js';
+import { shell, skeletonScreen, topbar } from './shell.js';
 import { iconSvg } from './icons.js';
 
 /** Payment screen: merchant and amount on top, the ways to pay as cards side by side, one summary, one button. */
@@ -52,7 +52,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   const body = `
 <section class="screen" data-screen="loading">
   ${topbar({ title: 'Paiement', back: true, env })}
-  <div class="state"><div class="spinner" aria-label="Chargement"></div></div>
+  ${skeletonScreen()}
 </section>
 
 <section class="screen" data-screen="pay" hidden>

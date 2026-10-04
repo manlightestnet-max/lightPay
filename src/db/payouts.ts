@@ -182,7 +182,7 @@ async function applyResult(p: PayoutRow, r: RailResult): Promise<PayoutRow> {
     await updateActivity(env, 'payout', p.id, {
       status: r.status === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
       reasonCode: r.failureCode ?? null,
-      reason: r.status === 'FAILED' ? `${reasonFor(r.failureCode ?? 'PROVIDER_FAILED')} Montant et frais restitués sur votre wallet.` : null,
+      reason: r.status === 'FAILED' ? `${reasonFor(r.failureCode ?? 'PROVIDER_FAILED', 'L’opérateur a refusé l’envoi.')} Montant et frais restitués sur votre wallet.` : null,
     });
   }
   return row ?? (await query(`SELECT * FROM payouts WHERE id = $1`, [p.id], env))[0];

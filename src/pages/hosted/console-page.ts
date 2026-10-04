@@ -1,4 +1,4 @@
-import { shell, themeToggle } from './shell.js';
+import { shell, skeletonRows, themeToggle } from './shell.js';
 import { iconSvg } from './icons.js';
 import { CONSOLE_CSS } from './console.js';
 
@@ -91,7 +91,7 @@ export const consolePage = (nonce: string, env: string) => {
       <div class="panel-foot" id="homeUpdated"></div>
     </section>
     <div class="grid-2">
-      <section class="panel"><div class="panel-head"><h2 class="panel-title">Activité récente</h2><a class="link" href="#/activity">Tout voir</a></div><div class="panel-flush" id="homeActivity"></div></section>
+      <section class="panel"><div class="panel-head"><h2 class="panel-title">Activité récente</h2><a class="link" href="#/activity">Tout voir</a></div><div class="panel-flush" id="homeActivity"><div class="sk-pad">${skeletonRows(4, 'div')}</div></div></section>
       <section class="panel"><div class="panel-head"><h2 class="panel-title">Raccourcis</h2></div><div class="panel-body"><ul class="list">
         <li><a class="row" href="#/apps"><span class="row-icon">${iconSvg('apps')}</span><span class="row-main"><span class="row-title">Apps connectées</span><span class="row-sub" id="homeAppsSub">Accès et permissions</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
         <li><a class="row" href="#/dev"><span class="row-icon">${iconSvg('code')}</span><span class="row-main"><span class="row-title">Espace développeurs</span><span class="row-sub" id="homeDevSub">Vos apps, clés et webhooks</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
@@ -107,7 +107,7 @@ export const consolePage = (nonce: string, env: string) => {
   <div class="grid-2">
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Opérations <span class="count" id="actCount"></span></h2>
       <div class="seg-sm" role="group" aria-label="Filtrer" id="actFilter"><button type="button" data-f="all" aria-pressed="true">Tout</button><button type="button" data-f="in" aria-pressed="false">Entrées</button><button type="button" data-f="out" aria-pressed="false">Sorties</button><button type="button" data-f="failed" aria-pressed="false">Refusées</button></div></div>
-      <div class="panel-flush" id="actList"></div></section>
+      <div class="panel-flush" id="actList"><div class="sk-pad">${skeletonRows(6, 'div')}</div></div></section>
     <section class="panel sticky" id="actDetail"><div class="panel-head"><h2 class="panel-title">Détail de l’opération</h2></div><div id="actDetailBody"><p class="empty">Choisissez une opération pour voir son détail.</p></div></section>
   </div>
   <div class="msg" id="actMsg" role="status" aria-live="polite"></div>
@@ -192,7 +192,7 @@ ${flow(
 <section class="screen" data-screen="apps" hidden><div class="page">
   <div class="page-head"><h1 class="page-title">Apps connectées</h1><p class="page-sub">Les apps que vous avez autorisées à utiliser votre compte LightPay, et ce qu’elles peuvent faire.</p></div>
   <div class="grid-2">
-    <section class="panel"><div class="panel-head"><h2 class="panel-title">Autorisations <span class="count" id="appsCount"></span></h2></div><div class="panel-flush" id="appsList"></div></section>
+    <section class="panel"><div class="panel-head"><h2 class="panel-title">Autorisations <span class="count" id="appsCount"></span></h2></div><div class="panel-flush" id="appsList"><div class="sk-pad">${skeletonRows(2, 'div')}</div></div></section>
     <section class="panel sticky" id="appPanel"><div class="panel-head"><h2 class="panel-title">Accès de l’app</h2></div><div id="appEmpty"><p class="empty">Choisissez une app pour voir et régler ses accès.</p></div>
       <div id="appBody" hidden><div class="panel-body">
         <div class="cell mt"><span class="avatar" id="appAvatar" aria-hidden="true"></span><span class="cell-main"><span class="cell-title" id="appName"></span><span class="cell-sub" id="appSince"></span></span></div>

@@ -1,4 +1,4 @@
-import { shell, topbar } from './shell.js';
+import { shell, skeletonScreen, topbar } from './shell.js';
 import { iconSvg } from './icons.js';
 
 /**
@@ -9,7 +9,7 @@ export const connectPage = (nonce: string, env: string) => {
   const body = `
 <section class="screen" data-screen="loading">
   ${topbar({ title: 'Autorisation', back: true, env })}
-  <div class="state"><div class="spinner" aria-label="Chargement"></div></div>
+  ${skeletonScreen()}
 </section>
 
 <section class="screen" data-screen="invalid" hidden>

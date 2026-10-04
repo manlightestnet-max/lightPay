@@ -28,7 +28,7 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
     'iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; opacity: 0; transition: opacity .15s; }',
     '.loaded iframe { opacity: 1; }',
     '.spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }',
-    '.spin::after { content: ""; width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(255,255,255,.15); border-top-color: #34d399; animation: spin .9s linear infinite; }',
+    '.spin::after { content: ""; width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(255,255,255,.15); border-top-color: #f2f2f2; animation: spin .9s linear infinite; }',
     '.loaded .spin { display: none; }',
     '@media (max-width: 520px) { .backdrop { padding: 0; } .frame { width: 100%; height: 100%; border-radius: 0; } }',
     '@keyframes fade { from { opacity: 0 } } @keyframes rise { from { opacity: 0; transform: translateY(12px) } } @keyframes spin { to { transform: rotate(360deg) } }',
