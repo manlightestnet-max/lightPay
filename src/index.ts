@@ -22,6 +22,7 @@ import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { refreshFeeSettings } from './payments/fee-settings.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
+import { registerRateLimits } from './security/rate-limit.js';
 import crypto from 'crypto';
 import { query } from './db/pool.js';
 
@@ -29,6 +30,39 @@ const server = Fastify({
   logger: {
     level: config.isProduction ? 'info' : 'debug',
   },
+  // Abuse guards: small bodies (no endpoint takes files), and a slow client cannot hold a
+  // connection open forever while sending its request (live streams are responses, not requests).
+  bodyLimit: 256 * 1024,
+  requestTimeout: 30_000,
+  connectionTimeout: 60_000,
+});
+
+registerRateLimits(server);
+
+// Never show the inside of the server: an unexpected error answers a generic message (the
+// details stay in the logs), and a database or network message never reaches a response.
+const INTERNAL = /violates|syntax error|invalid input syntax|relation "|column "|duplicate key|null value in column|out of range|deadlock|could not serialize|current transaction is aborted|ECONN|ETIMEDOUT|EAI_AGAIN|getaddrinfo|terminating connection|Connection terminated|password authentication|SSL|at [\w.<>]+ \(/i;
+const GENERIC = 'Une erreur est survenue. Réessayez dans un instant.';
+server.setErrorHandler((err: any, request, reply) => {
+  const status = typeof err?.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 600 ? err.statusCode : 500;
+  if (status >= 500) request.log.error({ err }, 'unhandled error');
+  const message = status >= 500 || INTERNAL.test(String(err?.message ?? '')) ? GENERIC : String(err?.message ?? GENERIC);
+  return reply.status(status).send({ status: 'error', error: status >= 500 ? 'INTERNAL_ERROR' : err?.code || 'REQUEST_ERROR', message });
+});
+server.addHook('onSend', async (request, reply, payload) => {
+  if (reply.statusCode < 400 || typeof payload !== 'string' || !INTERNAL.test(payload)) return payload;
+  try {
+    const body = JSON.parse(payload);
+    for (const k of ['message', 'details', 'error']) {
+      if (typeof body?.[k] === 'string' && INTERNAL.test(body[k])) {
+        request.log.warn({ field: k, value: body[k] }, 'internal message hidden from response');
+        body[k] = k === 'error' ? 'REQUEST_ERROR' : GENERIC;
+      }
+    }
+    return JSON.stringify(body);
+  } catch {
+    return payload;
+  }
 });
 
 // Support des requêtes JSON avec corps vide sans erreur 400 (FST_ERR_CTP_EMPTY_JSON_BODY)
@@ -41,8 +75,10 @@ server.addContentTypeParser('application/json', { parseAs: 'string' }, (req, bod
   }
   try {
     done(null, JSON.parse(body as string));
-  } catch (err: any) {
+  } catch {
+    const err: any = new Error('Corps de requête JSON invalide.');
     err.statusCode = 400;
+    err.code = 'INVALID_JSON';
     done(err, undefined);
   }
 });
