@@ -3,9 +3,11 @@ import { iconSvg } from './icons.js';
 import { CONSOLE_CSS } from './console.js';
 
 /**
- * /account/console — the LightPay console (advanced mode, switched on from the simple account's
- * settings; /account stays the simple interface for everyone): the person's money and, in the same account, the apps they
- * build (developer space). Hash routes:
+ * /account/console — the LightPay console (advanced mode): only for people whose request the
+ * LightPay admin approved; anyone else is sent back to /account. The person's money and the
+ * apps they build (developer space). Scaffold: fixed sidebar and top bar; on list screens the
+ * key figures stay pinned and only the list scrolls; a bottom bar on phones. Test <-> real
+ * switches in place (no reload). Hash routes:
  *   #/home · #/activity[/<id>] · #/deposit · #/send[/review|/done] · #/withdraw[/review|/done]
  *   #/apps[/<connection>] (apps allowed to use the account) · #/security
  *   #/dev · #/dev/new · #/dev/<app>[/keys|/webhooks|/payments|/settings] (apps the account owns)
@@ -20,7 +22,7 @@ const tip = (text: string) => {
 };
 
 const stat = (o: { id: string; label: string; help?: string; hint?: string; hintId?: string; accent?: boolean }) =>
-  `<div class="stat"><div class="stat-label">${o.label}${o.help ? tip(o.help) : ''}</div><div class="stat-value${o.accent ? ' accent' : ''}" id="${o.id}">—</div>${
+  `<div class="stat"><div class="stat-label">${o.label}${o.help ? tip(o.help) : ''}</div><div class="stat-value${o.accent ? ' accent' : ''}" id="${o.id}"><span class="sk sk-stat"></span></div>${
     o.hint !== undefined || o.hintId ? `<div class="stat-hint"${o.hintId ? ` id="${o.hintId}"` : ''}>${o.hint ?? ''}</div>` : ''
   }</div>`;
 
@@ -41,7 +43,7 @@ export const consolePage = (nonce: string, env: string) => {
 <div class="console-shell" hidden>
 <aside class="side" id="side" aria-label="Menu">
   <div class="side-head"><span class="brand"><span class="brand-mark">${iconSvg('bolt')}</span><span>LightPay<small>Compte et développeurs</small></span></span></div>
-  <nav class="env-switch" aria-label="Environnement"><a id="envReal" href="/account/console">Réel</a><a id="envTest" class="test" href="/account/console?env=sandbox">Test</a></nav>
+  <div class="env-switch" role="group" aria-label="Environnement"><button type="button" id="envReal">Réel</button><button type="button" id="envTest" class="test">Test</button></div>
   <nav class="side-nav" aria-label="Navigation">
     <div class="nav-label">Mon argent</div>
     ${navItem('home', 'home', 'home', 'Vue d’ensemble')}
@@ -70,7 +72,7 @@ export const consolePage = (nonce: string, env: string) => {
   </header>
   <div class="console-body">
 
-<section class="screen" data-screen="home" hidden><div class="page">
+<section class="screen fill" data-screen="home" hidden><div class="page">
   <div class="page-head"><h1 class="page-title" id="homeTitle">Vue d’ensemble</h1>
     <div class="page-actions" id="homeActions">
       <a class="btn btn-sm" href="#/deposit">${iconSvg('plus')}Recharger</a>
@@ -79,36 +81,23 @@ export const consolePage = (nonce: string, env: string) => {
     </div>
   </div>
   <div class="note warn" id="homeClosed" hidden>${iconSvg('alert')}<p>Ce compte LightPay est fermé : il ne peut plus recevoir ni envoyer d’argent.</p></div>
-  <div class="stack">
-    <section class="panel">
-      <div class="panel-head"><h2 class="panel-title">Aperçu du compte</h2>${envBadge}</div>
-      <div class="panel-body"><div class="well">
-        ${stat({ id: 'homeAvailable', label: 'Disponible', accent: true, hint: 'Envoyable et retirable', help: 'L’argent que vous pouvez envoyer ou retirer vers le mobile money dès maintenant.' })}
-        ${stat({ id: 'homeLocked', label: 'Bloqué', hint: 'En attente de validation', help: 'Paiements reçus pour des commandes pas encore validées : ils ne peuvent être ni envoyés ni retirés.' })}
-        ${stat({ id: 'homeIn', label: 'Entrées · 30 j', hintId: 'homeInHint', help: 'Recharges, envois reçus, ventes et remboursements réussis sur les 30 derniers jours.' })}
-        ${stat({ id: 'homeOut', label: 'Sorties · 30 j', hintId: 'homeOutHint', help: 'Envois, retraits (frais compris), paiements et débits réussis sur les 30 derniers jours.' })}
-      </div></div>
-      <div class="panel-foot" id="homeUpdated"></div>
-    </section>
-    <div class="grid-2">
-      <section class="panel"><div class="panel-head"><h2 class="panel-title">Activité récente</h2><a class="link" href="#/activity">Tout voir</a></div><div class="panel-flush" id="homeActivity"><div class="sk-pad">${skeletonRows(4, 'div')}</div></div></section>
-      <section class="panel"><div class="panel-head"><h2 class="panel-title">Raccourcis</h2></div><div class="panel-body"><ul class="list">
-        <li><a class="row" href="#/apps"><span class="row-icon">${iconSvg('apps')}</span><span class="row-main"><span class="row-title">Apps connectées</span><span class="row-sub" id="homeAppsSub">Accès et permissions</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-        <li><a class="row" href="#/dev"><span class="row-icon">${iconSvg('code')}</span><span class="row-main"><span class="row-title">Espace développeurs</span><span class="row-sub" id="homeDevSub">Vos apps, clés et webhooks</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-        <li><a class="row" href="#/security"><span class="row-icon">${iconSvg('shield')}</span><span class="row-main"><span class="row-title">Sécurité et compte</span><span class="row-sub">E-mail, mot de passe, environnement</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-      </ul></div></section>
-    </div>
+  <div class="well">
+    ${stat({ id: 'homeAvailable', label: 'Disponible', hint: 'Envoyable et retirable' })}
+    ${stat({ id: 'homeLocked', label: 'Bloqué', hint: 'Jusqu’à la livraison' })}
+    ${stat({ id: 'homeIn', label: 'Entrées · 30 j', hintId: 'homeInHint' })}
+    ${stat({ id: 'homeOut', label: 'Sorties · 30 j', hintId: 'homeOutHint' })}
   </div>
+  <section class="panel grow"><div class="panel-head"><h2 class="panel-title">Activité récente</h2><a class="link" href="#/activity">Tout voir</a></div><div class="panel-flush scroll" id="homeActivity"><div class="sk-pad">${skeletonRows(6, 'div')}</div></div></section>
   <div class="msg" id="homeMsg" role="status" aria-live="polite"></div>
 </div></section>
 
-<section class="screen" data-screen="activity" hidden><div class="page">
-  <div class="page-head"><h1 class="page-title">Activité</h1>${envBadge}<p class="page-sub">Chaque opération qui a touché votre compte, avec son état et, en cas de refus, la raison.</p></div>
-  <div class="grid-2">
+<section class="screen fill" data-screen="activity" hidden><div class="page">
+  <div class="page-head"><h1 class="page-title">Activité</h1>${envBadge}</div>
+  <div class="grid-2" id="actGrid">
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Opérations <span class="count" id="actCount"></span></h2>
       <div class="seg-sm" role="group" aria-label="Filtrer" id="actFilter"><button type="button" data-f="all" aria-pressed="true">Tout</button><button type="button" data-f="in" aria-pressed="false">Entrées</button><button type="button" data-f="out" aria-pressed="false">Sorties</button><button type="button" data-f="failed" aria-pressed="false">Refusées</button></div></div>
-      <div class="panel-flush" id="actList"><div class="sk-pad">${skeletonRows(6, 'div')}</div></div></section>
-    <section class="panel sticky" id="actDetail"><div class="panel-head"><h2 class="panel-title">Détail de l’opération</h2></div><div id="actDetailBody"><p class="empty">Choisissez une opération pour voir son détail.</p></div></section>
+      <div class="panel-flush scroll" id="actList"><div class="sk-pad">${skeletonRows(8, 'div')}</div></div></section>
+    <section class="panel detail-panel" id="actDetail"><div class="panel-head"><h2 class="panel-title">Détail</h2><a class="link show-narrow" href="#/activity">Retour à la liste</a></div><div class="scroll" id="actDetailBody"><p class="empty">Choisissez une opération pour voir son détail.</p></div></section>
   </div>
   <div class="msg" id="actMsg" role="status" aria-live="polite"></div>
 </div></section>
@@ -133,7 +122,7 @@ ${flow(
 ${flow(
   'send',
   'Envoyer',
-  `<div class="field"><label for="sendTo">Destinataire (e-mail LightPay)</label><input id="sendTo" type="email" autocomplete="off" inputmode="email" placeholder="nom@exemple.com"></div>
+  `<div class="field"><label for="sendTo">Destinataire</label><input id="sendTo" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="@pseudo ou e-mail"><p class="hint" id="sendWho"></p></div>
     <label class="label mt-lg" for="sendAmount">Montant</label>
     <div class="amount-wrap"><input class="amount-input" id="sendAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="sendAvail">FCFA</div></div>
     <div class="field"><label for="sendNote">Message (facultatif)</label><input id="sendNote" maxlength="140" autocomplete="off" placeholder="Ex. : loyer de mars"></div>
@@ -189,12 +178,12 @@ ${flow(
   '<button class="btn" type="button" data-home>Terminé</button>'
 )}
 
-<section class="screen" data-screen="apps" hidden><div class="page">
-  <div class="page-head"><h1 class="page-title">Apps connectées</h1><p class="page-sub">Les apps que vous avez autorisées à utiliser votre compte LightPay, et ce qu’elles peuvent faire.</p></div>
-  <div class="grid-2">
-    <section class="panel"><div class="panel-head"><h2 class="panel-title">Autorisations <span class="count" id="appsCount"></span></h2></div><div class="panel-flush" id="appsList"><div class="sk-pad">${skeletonRows(2, 'div')}</div></div></section>
-    <section class="panel sticky" id="appPanel"><div class="panel-head"><h2 class="panel-title">Accès de l’app</h2></div><div id="appEmpty"><p class="empty">Choisissez une app pour voir et régler ses accès.</p></div>
-      <div id="appBody" hidden><div class="panel-body">
+<section class="screen fill" data-screen="apps" hidden><div class="page">
+  <div class="page-head"><h1 class="page-title">Apps connectées</h1></div>
+  <div class="grid-2" id="appsGrid">
+    <section class="panel"><div class="panel-head"><h2 class="panel-title">Autorisations <span class="count" id="appsCount"></span></h2></div><div class="panel-flush scroll" id="appsList"><div class="sk-pad">${skeletonRows(2, 'div')}</div></div></section>
+    <section class="panel detail-panel" id="appPanel"><div class="panel-head"><h2 class="panel-title">Accès de l’app</h2><a class="link show-narrow" href="#/apps">Retour à la liste</a></div><div id="appEmpty"><p class="empty">Choisissez une app pour voir et régler ses accès.</p></div>
+      <div id="appBody" class="scroll" hidden><div class="panel-body">
         <div class="cell mt"><span class="avatar" id="appAvatar" aria-hidden="true"></span><span class="cell-main"><span class="cell-title" id="appName"></span><span class="cell-sub" id="appSince"></span></span></div>
         <div class="section-head"><h2>Ce que l’app peut faire</h2></div>
         <ul class="list" id="appScopes"></ul>
@@ -212,6 +201,12 @@ ${flow(
 <section class="screen" data-screen="security" hidden><div class="page narrow">
   <div class="page-head"><h1 class="page-title">Sécurité et compte</h1></div>
   <div class="stack">
+    <section class="panel"><div class="panel-head"><h2 class="panel-title">Nom d’utilisateur</h2></div><div class="panel-body">
+      <p class="small muted">On vous envoie de l’argent avec ce nom, sans connaître votre e-mail.</p>
+      <div class="field"><label for="unInput">Nom d’utilisateur</label><div class="input-prefix"><span>@</span><input id="unInput" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20"></div></div>
+      <button class="btn btn-secondary mt" type="button" id="unGo">Enregistrer</button>
+      <div class="msg" id="unMsg" role="status" aria-live="polite"></div>
+    </div></section>
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Identifiant de connexion</h2></div><div class="panel-body">
       <p class="small muted">Adresse actuelle : <b id="secEmail"></b>. La même pour LightPay et les apps de notre écosystème.</p>
       <div class="field"><label for="newEmail">Nouvel e-mail</label><input id="newEmail" type="email" autocomplete="email"></div>
@@ -224,7 +219,7 @@ ${flow(
     </div></section>
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Environnement et session</h2></div><div class="panel-body"><ul class="list">
       <li><button class="row" type="button" id="simpleMode"><span class="row-icon">${iconSvg('phone')}</span><span class="row-main"><span class="row-title">Revenir à l’interface simple</span><span class="row-sub">Solde, envois et retraits, sans l’espace développeurs</span></span>${iconSvg('chevron-right', 'chev')}</button></li>
-      <li><a class="row" id="envSwitch" href="/account/console"><span class="row-icon">${iconSvg('swap')}</span><span class="row-main"><span class="row-title" id="envSwitchTitle"></span><span class="row-sub" id="envSwitchSub"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><button class="row" type="button" id="envSwitch"><span class="row-icon">${iconSvg('swap')}</span><span class="row-main"><span class="row-title" id="envSwitchTitle"></span><span class="row-sub" id="envSwitchSub"></span></span></button></li>
       <li><button class="row" type="button" id="signOut"><span class="row-icon">${iconSvg('logout')}</span><span class="row-main"><span class="row-title">Se déconnecter</span><span class="row-sub">Sur cet appareil</span></span></button></li>
     </ul></div></section>
     <section class="panel danger-zone">
@@ -352,7 +347,25 @@ ${flow(
 </div></section>
 
   </div>
+  <nav class="tabbar console-tabbar" aria-label="Navigation">
+    <a href="#/home" data-tab="home">${iconSvg('home')}<span>Accueil</span></a>
+    <a href="#/activity" data-tab="activity">${iconSvg('list')}<span>Activité</span></a>
+    <button type="button" id="tabPlus" aria-haspopup="dialog">${iconSvg('plus')}<span>Opération</span></button>
+    <a href="#/security" data-tab="security">${iconSvg('user')}<span>Compte</span></a>
+  </nav>
 </div>
+</div>
+
+<div class="overlay" id="plusSheet" hidden role="dialog" aria-modal="true" aria-labelledby="plusTitle">
+  <div class="sheet">
+    <h2 class="eyebrow" id="plusTitle">Nouvelle opération</h2>
+    <ul class="list mt">
+      <li><a class="row" href="#/deposit" data-plus><span class="row-icon">${iconSvg('plus')}</span><span class="row-main"><span class="row-title">Recharger</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><a class="row" href="#/send" data-plus><span class="row-icon">${iconSvg('send')}</span><span class="row-main"><span class="row-title">Envoyer</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><a class="row" href="#/withdraw" data-plus><span class="row-icon">${iconSvg('withdraw')}</span><span class="row-main"><span class="row-title">Retirer</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+    </ul>
+    <button class="btn btn-secondary mt" type="button" id="plusClose">Fermer</button>
+  </div>
 </div>
 
 <section class="screen" data-screen="bye" hidden>
@@ -444,13 +457,38 @@ ${flow(
     });
   }
   function syncEnvLinks() {
-    const hash = location.hash || '';
-    $('envReal').href = '/account/console' + hash;
-    $('envTest').href = '/account/console?env=sandbox' + hash;
+    $('envTest').setAttribute('aria-pressed', String(LP.ENV === 'sandbox'));
+    $('envReal').setAttribute('aria-pressed', String(LP.ENV !== 'sandbox'));
     if (LP.ENV === 'sandbox') { $('envTest').setAttribute('aria-current', 'true'); $('envReal').removeAttribute('aria-current'); }
     else { $('envReal').setAttribute('aria-current', 'true'); $('envTest').removeAttribute('aria-current'); }
   }
-  window.addEventListener('hashchange', syncEnvLinks);
+  // Test <-> real without reloading: shimmer where figures were, then the same screen re-reads.
+  function switchEnv(next) {
+    if (LP.ENV === next) return;
+    LP.setEnv(next);
+    syncEnvLinks();
+    activity = []; connections = [];
+    ['homeAvailable', 'homeLocked', 'homeIn', 'homeOut'].forEach((id) => $(id).replaceChildren(el('span', { class: 'sk sk-stat' })));
+    ['homeInHint', 'homeOutHint'].forEach((id) => { $(id).textContent = ''; });
+    ['homeActivity', 'actList'].forEach((id) => { $(id).replaceChildren(); skeleton($(id), 6, 'div'); });
+    if (liveStop) liveStop();
+    liveStop = LP.live(onLive);
+    loadMe().catch(() => {});
+    const c = nav.current();
+    if (c) nav.go(c.route, true);
+  }
+  $('envReal').addEventListener('click', () => switchEnv('production'));
+  $('envTest').addEventListener('click', () => switchEnv('sandbox'));
+  // Phones: bottom bar and the "+" sheet.
+  const TAB_OF = { home: 'home', activity: 'activity', security: 'security' };
+  function syncTabs(c) {
+    const tab = c ? TAB_OF[c.name] : null;
+    document.querySelectorAll('[data-tab]').forEach((a) => { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  }
+  const plusOpen = (open) => { $('plusSheet').hidden = !open; if (open) $('plusSheet').querySelector('a').focus(); };
+  $('tabPlus').addEventListener('click', () => plusOpen(true));
+  $('plusClose').addEventListener('click', () => plusOpen(false));
+  $('plusSheet').addEventListener('click', (e) => { if (e.target === $('plusSheet') || (e.target.closest && e.target.closest('[data-plus]'))) plusOpen(false); });
   if (returnUrl) { $('backToApp').hidden = false; $('backToApp').addEventListener('click', () => location.assign(returnUrl)); }
 
   // ---------------------------------------------------------------- small builders
@@ -459,7 +497,7 @@ ${flow(
     return el('span', { class: 'tip' }, [el('button', { type: 'button', 'aria-label': 'Aide', 'aria-describedby': id }, [icon('info')]), el('span', { class: 'tip-text', role: 'tooltip', id: id, text: text })]);
   }
   /** Table with small-caps headers; rows with href are clickable, the selected one is marked. */
-  function table(host, cols, rows, emptyText) {
+  function table(host, cols, rows, emptyText, noHead) {
     if (!rows.length) { host.replaceChildren(el('p', { class: 'empty', text: emptyText })); return; }
     const head = el('tr', {}, cols.map((c) => el('th', { class: c.cls || '', text: c.label })));
     const body = rows.map((r) => {
@@ -475,7 +513,7 @@ ${flow(
       }
       return tr;
     });
-    host.replaceChildren(el('div', { class: 'tbl-wrap' }, [el('table', { class: 'tbl' }, [el('thead', {}, [head]), el('tbody', {}, body)])]));
+    host.replaceChildren(el('div', { class: 'tbl-wrap' }, [el('table', { class: 'tbl' }, [noHead ? null : el('thead', {}, [head]), el('tbody', {}, body)])]));
   }
   function cellMain(iconNode, title, sub, subClass) {
     return el('span', { class: 'cell' }, [
@@ -517,7 +555,7 @@ ${flow(
     const st = STATUS[a.status] || ['', a.status];
     const incoming = a.direction === 'IN';
     const iconBox = el('span', { class: 'row-icon' + (incoming && a.status === 'SUCCEEDED' ? ' in' : '') }, [icon(actIcon(a))]);
-    const sub = a.status === 'FAILED' && a.reason ? a.reason : a.counterparty && a.kind !== 'TRANSFER' ? a.counterparty : '';
+    const sub = a.status === 'FAILED' ? (a.kind === 'WITHDRAWAL' ? 'Refusé · montant restitué' : 'Refusé') : a.counterparty && a.kind !== 'TRANSFER' ? a.counterparty : '';
     const amountClass = !settledOk(a) || (a.status === 'REFUNDED' && incoming) ? 'void' : a.status === 'LOCKED' ? 'held' : incoming && a.status === 'SUCCEEDED' ? 'in' : '';
     return [
       cellMain(iconBox, actTitle(a), sub, a.status === 'FAILED' ? 'err' : ''),
@@ -538,6 +576,7 @@ ${flow(
     $('meName').textContent = name;
     $('meMail').textContent = me.user.email || '';
     $('homeTitle').textContent = 'Bonjour ' + name.split(' ')[0];
+    $('unInput').value = me.username || '';
     $('homeAvailable').textContent = LP.money(me.wallet.available_balance, cur());
     $('depMin').textContent = 'FCFA · minimum ' + lim('deposit_min').toLocaleString('fr-FR');
     $('homeLocked').textContent = LP.money(me.wallet.locked_balance, cur());
@@ -551,7 +590,7 @@ ${flow(
     await guarded(async () => {
       await loadMe();
       const act = await LP.api('GET', '/v1/me/activity?limit=100');
-      table($('homeActivity'), ACT_COLS, act.activity.slice(0, 8).map((a) => ({ cells: actCells(a), href: '#/activity/' + encodeURIComponent(a.id) })), 'Aucune opération pour l’instant.');
+      table($('homeActivity'), [{ label: '' }, { label: '', cls: 'num' }], act.activity.slice(0, 30).map((a) => { const c = actCells(a); return { cells: [c[0], c[3]], href: '#/activity/' + encodeURIComponent(a.id) }; }), 'Aucune opération pour l’instant.', true);
       const since = Date.now() - 30 * 86400000;
       let inSum = 0, outSum = 0, inN = 0, outN = 0;
       act.activity.forEach((a) => {
@@ -562,12 +601,6 @@ ${flow(
       $('homeInHint').textContent = inN + (inN > 1 ? ' opérations' : ' opération');
       $('homeOut').textContent = LP.money(outSum, cur());
       $('homeOutHint').textContent = outN + (outN > 1 ? ' opérations' : ' opération');
-      $('homeUpdated').textContent = 'Données à jour à ' + timeLabel(new Date());
-      const c = await LP.api('GET', '/v1/me/connections');
-      const n = c.connections.filter((x) => x.status === 'ACTIVE').length;
-      $('homeAppsSub').textContent = n ? n + (n > 1 ? ' apps autorisées' : ' app autorisée') : 'Aucune app autorisée';
-      $('navConnCount').hidden = !n; $('navConnCount').textContent = String(n);
-      $('homeDevSub').textContent = devApps.length ? devApps.length + (devApps.length > 1 ? ' apps' : ' app') + ' · clés et webhooks' : 'Branchez votre site ou votre app';
     }, 'homeMsg');
   }
   document.querySelectorAll('[data-home]').forEach((b) => b.addEventListener('click', () => nav.go('home')));
@@ -622,20 +655,39 @@ ${flow(
     $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur());
     say('sendMsg', '');
   }
+  let sendWho = null, sendWhoSeq = 0;
+  const lookupRecipient = debounce(async () => {
+    const to = $('sendTo').value.trim();
+    const seq = ++sendWhoSeq;
+    sendWho = null; $('sendWho').textContent = ''; $('sendWho').className = 'hint';
+    if (to.length < 3) return;
+    try {
+      const r = await LP.api('GET', '/v1/me/recipient?to=' + encodeURIComponent(to));
+      if (seq !== sendWhoSeq) return;
+      sendWho = r.recipient;
+      $('sendWho').textContent = '→ ' + [r.recipient.name, r.recipient.username ? '@' + r.recipient.username : ''].filter(Boolean).join(' · ');
+    } catch (e) {
+      if (seq !== sendWhoSeq) return;
+      if (e.signIn) return signIn();
+      $('sendWho').textContent = e.message; $('sendWho').className = 'hint err';
+    }
+  }, 350);
+  $('sendTo').addEventListener('input', lookupRecipient);
   $('sendNext').addEventListener('click', () => {
     const to = $('sendTo').value.trim();
     const amount = Number(amountDigits($('sendAmount').value));
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(to)) return say('sendMsg', 'Entrez l’e-mail LightPay du destinataire.', 'err');
+    if (!sendWho) return say('sendMsg', 'Entrez le @pseudo ou l’e-mail d’un compte LightPay.', 'err');
     if (!amount) return say('sendMsg', 'Entrez un montant.', 'err');
     if (amount > available()) return say('sendMsg', 'Montant supérieur à votre solde disponible (' + LP.money(available(), cur()) + ').', 'err');
-    sendState = { to: to, amount: String(amount), note: $('sendNote').value.trim(), key: LP.uuid() };
+    sendState = { to: to, who: sendWho, amount: String(amount), note: $('sendNote').value.trim(), key: LP.uuid() };
     nav.go('send/review');
   });
   function enterSendReview() {
     crumbs('Mon argent', 'Envoyer');
     if (!sendState) return nav.go('send', true);
     $('sendReviewAmount').textContent = LP.money(sendState.amount, cur());
-    const rows = [['À', sendState.to], ['Frais', 'Aucun']];
+    const w = sendState.who || {};
+    const rows = [['À', [w.name, w.username ? '@' + w.username : ''].filter(Boolean).join(' · ') || sendState.to], ['Frais', 'Aucun']];
     if (sendState.note) rows.push(['Message', sendState.note]);
     rows.push(['Solde après envoi', LP.money(available() - Number(sendState.amount), cur()), true]);
     feeRows($('sendReviewRows'), rows);
@@ -648,7 +700,7 @@ ${flow(
       const r = await LP.api('POST', '/v1/me/transfers', { to: sendState.to, amount: sendState.amount, note: sendState.note }, sendState.key);
       sendResult = r.transfer;
       sendState = null;
-      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = '';
+      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = ''; $('sendWho').textContent = ''; sendWho = null;
       await loadMe().catch(() => {});
       nav.go('send/done', true);
     } finally { $('sendConfirm').disabled = false; }
@@ -656,7 +708,8 @@ ${flow(
   function enterSendDone() {
     crumbs('Mon argent', 'Envoyer');
     if (!sendResult) return nav.go('home', true);
-    $('sendDoneText').textContent = LP.money(sendResult.amount, cur()) + ' envoyés à ' + (sendResult.to.name || sendResult.to.email) + '.';
+    const t = sendResult.to || {};
+    $('sendDoneText').textContent = LP.money(sendResult.amount, cur()) + ' envoyés à ' + (t.name || (t.username ? '@' + t.username : t.email)) + '.';
   }
 
   // ---------------------------------------------------------------- withdraw
@@ -831,8 +884,8 @@ ${flow(
       if (id) {
         const a = activity.find((x) => x.id === id) || (await LP.api('GET', '/v1/me/activity/' + encodeURIComponent(id))).activity;
         renderActDetail(a);
-        if (NARROW.matches) $('actDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else renderActDetail(null);
+      $('actGrid').classList.toggle('has-detail', Boolean(id));
     }, 'actMsg');
   }
 
@@ -865,6 +918,7 @@ ${flow(
       renderConnections(id);
       const c = id && connections.find((x) => x.id === id);
       $('appEmpty').hidden = Boolean(c); $('appBody').hidden = !c;
+      $('appsGrid').classList.toggle('has-detail', Boolean(c));
       if (!c) return;
       $('appAvatar').textContent = initials(c.app_name);
       $('appName').textContent = c.app_name;
@@ -879,7 +933,6 @@ ${flow(
       })));
       $('appLimitBox').hidden = !c.scopes.includes('charge');
       $('appLimit').value = c.charge_limit || '';
-      if (NARROW.matches) $('appPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 'appsMsg');
   }
   const currentConnection = () => nav.current() && connections.find((x) => x.id === nav.current().param);
@@ -906,10 +959,15 @@ ${flow(
   function enterSecurity() {
     crumbs('Compte', 'Sécurité et compte');
     say('secMsg', ''); say('delMsg', '');
-    $('envSwitch').href = LP.ENV === 'sandbox' ? '/account/console#/security' : '/account/console?env=sandbox#/security';
-    $('envSwitchTitle').textContent = LP.ENV === 'sandbox' ? 'Passer au compte réel' : 'Ouvrir mon compte de test';
+    $('envSwitchTitle').textContent = LP.ENV === 'sandbox' ? 'Passer au compte réel' : 'Passer au compte de test';
     $('envSwitchSub').textContent = LP.ENV === 'sandbox' ? 'Vous êtes dans l’environnement de test' : 'Pour essayer sans argent réel';
   }
+  $('envSwitch').addEventListener('click', () => { switchEnv(LP.ENV === 'sandbox' ? 'production' : 'sandbox'); });
+  $('unGo').addEventListener('click', () => guarded(async () => {
+    const r = await LP.api('PUT', '/v1/me/username', { username: $('unInput').value });
+    me.username = r.username; $('unInput').value = r.username;
+    say('unMsg', 'Nom d’utilisateur : @' + r.username, 'ok');
+  }, 'unMsg'));
   $('emailGo').addEventListener('click', () => guarded(async () => {
     const email = $('newEmail').value.trim();
     if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) return say('secMsg', 'Entrez une adresse e-mail valide.', 'err');
@@ -1196,7 +1254,7 @@ ${flow(
   const navKeyOf = (c) => c.name === 'dev-app' ? 'app:' + String(c.param || '').split('/')[0]
     : c.name === 'dev-new' ? 'dev'
     : c.name.indexOf('send') === 0 ? 'send' : c.name.indexOf('withdraw') === 0 ? 'withdraw' : c.name;
-  const withNav = (fn) => (param) => { const c = nav.current(); if (c) highlight(navKeyOf(c)); syncEnvLinks(); return fn(param); };
+  const withNav = (fn) => (param) => { const c = nav.current(); if (c) { highlight(navKeyOf(c)); syncTabs(c); } syncEnvLinks(); return fn(param); };
   const nav = createNav({
     root: 'home',
     resolve: (route) => {
@@ -1263,6 +1321,13 @@ ${flow(
   async function boot() {
     try {
       await loadMe();
+      // The console is the advanced mode: granted by the LightPay admin, never by default.
+      if (me.developer !== 'APPROVED') {
+        try { localStorage.removeItem('lightpay.mode'); } catch (e) {}
+        location.replace('/account' + location.search);
+        return;
+      }
+      if (!me.username) { location.replace('/account' + location.search + '#/username'); return; }
       loadDevApps().catch(() => {});
       loadConnections().catch(() => {});
       syncEnvLinks();

@@ -5,7 +5,7 @@ import { CONSOLE_CSS } from './console.js';
 /**
  * /admin — the owner's console (LightPay sign-in listed in ADMIN_UIDS). Revenue first, then the
  * provider reserves, users, apps, every movement, the main wallet and the admin log.
- * Hash routes: #/home · #/reserves · #/users[/<wallet>] · #/apps[/<id>] · #/moves[/<tx>] · #/main · #/fees · #/audit
+ * Hash routes: #/home · #/reserves · #/users[/<wallet>] · #/apps[/<id>] · #/developers[/<uid>] · #/moves[/<tx>] · #/main · #/fees · #/audit
  * ?env=sandbox for the test ledger. No withdrawal from here, on purpose.
  */
 
@@ -75,6 +75,7 @@ export const adminPage = (nonce: string, env: string) => {
     <div class="nav-label">Réseau</div>
     ${navItem('users', 'users', 'user', 'Utilisateurs')}
     ${navItem('apps', 'apps', 'apps', 'Applications')}
+    ${navItem('developers', 'developers', 'code', 'Demandes mode avancé')}
     ${navItem('moves', 'moves', 'list', 'Mouvements')}
     <div class="nav-label">Trésorerie</div>
     ${navItem('main', 'main', 'wallet', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>')}
@@ -139,6 +140,13 @@ ${page('apps', 'Applications', `
   <div class="grid-2">
     ${panel('Toutes les apps', '<div id="appsTable"></div>', { flush: true })}
     <div class="sticky" id="appDetail"></div>
+  </div>
+`)}
+
+${page('developers', 'Demandes mode avancé', `
+  <div class="grid-2">
+    ${panel('Demandes', '<div id="devTable"></div>', { flush: true, actions: seg('devStatus', [['PENDING', 'À traiter'], ['APPROVED', 'Validées'], ['REJECTED', 'Refusées'], ['', 'Toutes']]) })}
+    <div class="sticky" id="devDetail"></div>
   </div>
 `)}
 
@@ -247,6 +255,8 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     ? { MAIN_SEND: 'Envoi depuis le faucet', FAUCET_ISSUE: 'Émission d’argent de test' }
     : { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Recharge du wallet main' };
   ACTION.FEES_UPDATE = 'Frais et minimums modifiés';
+  ACTION.DEVELOPER_APPROVED = 'Mode avancé validé';
+  ACTION.DEVELOPER_REJECTED = 'Mode avancé refusé';
   const pill = (status) => { const s = STATUS[status] || ['', String(status || '').toLowerCase()]; return el('span', { class: 'pill ' + s[0], text: s[1] }); };
   const rows = (host, list) => host.replaceChildren.apply(host, list.map((r) => el('div', { class: r[2] ? 'total' : '' }, [el('span', { text: r[0] }), el('span', { text: r[1] })])));
   const segValue = (name) => { const b = document.querySelector('[data-seg="' + name + '"] [aria-pressed="true"]'); return b ? b.dataset.value : ''; };
@@ -458,6 +468,46 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     });
   }
 
+  // ---------------------------------------------------------------- advanced-mode requests
+  const DEV_STATUS = { PENDING: ['warn', 'à traiter'], APPROVED: ['ok', 'validée'], REJECTED: ['err', 'refusée'] };
+  let devRequests = [];
+  function renderDevRequests() {
+    const c = nav.current(); const sel = c && c.name === 'developers' ? c.param : null;
+    table($('devTable'), [{ label: 'Demande' }, { label: 'Le' }, { label: 'État' }], devRequests.map((d) => ({
+      href: '#/developers/' + encodeURIComponent(d.uid), selected: d.uid === sel,
+      cells: [cell(d.project, [d.username ? '@' + d.username : '', d.email || ''].filter(Boolean).join(' · ')), fmtDate(d.created_at), el('span', { class: 'pill ' + (DEV_STATUS[d.status] || ['', ''])[0], text: (DEV_STATUS[d.status] || ['', d.status])[1] })],
+    })), 'Aucune demande.');
+  }
+  async function enterDevelopers(uid) {
+    crumbs('Réseau', 'Demandes mode avancé');
+    $('devTable').closest('.panel').hidden = Boolean(uid) && NARROW.matches;
+    await load('developers', async () => {
+      if (!devRequests.length || !uid) devRequests = (await LP.api('GET', '/v1/admin-console/developers' + (segValue('devStatus') ? '?status=' + segValue('devStatus') : ''))).requests;
+      renderDevRequests();
+      const d = uid && devRequests.find((x) => x.uid === uid);
+      if (!d) { $('devDetail').replaceChildren(); return; }
+      const box = el('div', { class: 'rows' });
+      rows(box, [['Projet', d.project], ['Compte', [d.username ? '@' + d.username : '', d.email || ''].filter(Boolean).join(' · ') || d.uid], ['Site', d.website || '—'], ['Demandée le', fmtDateTime(d.created_at)]].concat(d.decided_at ? [['Décidée le', fmtDateTime(d.decided_at) + (d.decided_by ? ' · ' + d.decided_by : '')]] : []).concat(d.note ? [['Motif du refus', d.note]] : []));
+      const use = el('p', { class: 'small mt', text: d.use_case });
+      const note = el('textarea', { class: 'field-area mt', id: 'devNote', placeholder: 'Motif du refus (la personne le verra)', maxlength: '300' });
+      const msg = el('div', { class: 'msg', id: 'devDecideMsg', role: 'status', 'aria-live': 'polite' });
+      const decide = (approve) => guarded(async () => {
+        await LP.api('POST', '/v1/admin-console/developers/' + encodeURIComponent(d.uid), { approve: approve, note: approve ? undefined : $('devNote').value });
+        devRequests = [];
+        await enterDevelopers(d.uid);
+        say('developersMsg', approve ? 'Mode avancé validé pour ' + d.project + '.' : 'Demande refusée.', 'ok');
+      }, 'devDecideMsg');
+      const actions = d.status === 'APPROVED' ? [] : [
+        note,
+        el('div', { class: 'btn-row mt' }, [
+          el('button', { class: 'btn btn-secondary', type: 'button', text: 'Refuser', on: { click: () => decide(false) } }),
+          el('button', { class: 'btn', type: 'button', text: 'Valider', on: { click: () => decide(true) } }),
+        ]),
+      ];
+      $('devDetail').replaceChildren(detailPanel(d.project, [box, el('h3', { class: 'small mt-lg', text: 'Ce qu’il va faire avec LightPay' }), use].concat(actions).concat([msg])));
+    });
+  }
+
   // ---------------------------------------------------------------- movements
   let moves = [], movesType = null;
   $('movesMore').addEventListener('click', () => loadMoves(true));
@@ -629,6 +679,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     reserves: { parent: 'home', enter: withNav('reserves', enterReserves) },
     users: { parent: 'home', enter: withNav('users', enterUsers) },
     apps: { parent: 'home', enter: withNav('apps', enterApps) },
+    developers: { parent: 'home', enter: withNav('developers', (uid) => { if (!uid) devRequests = []; return enterDevelopers(uid); }) },
     moves: { parent: 'home', enter: withNav('moves', enterMoves) },
     main: { parent: 'home', enter: withNav('main', enterMain) },
     fees: { parent: 'home', enter: withNav('fees', enterFees) },

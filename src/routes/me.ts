@@ -7,6 +7,7 @@ import { getActivity, listActivity } from '../db/activity.js';
 import { MOBILE_NETWORKS, providerFor } from '../payments/mobile-money.js';
 import { Environment } from '../types/index.js';
 import { onWalletChange } from '../realtime.js';
+import { developerAccess, findRecipient, getUsername, requestDeveloperAccess, setUsername } from '../db/identity.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -70,6 +71,10 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   GET    /v1/me/withdrawals/quote       ?amount&network -> amount received, fees, total debited
  *   GET    /v1/me/deposits/quote          ?amount -> what the phone pays, per operator
  *   DELETE /v1/me                         close my account (recent sign-in, everything at zero)
+ *   PUT    /v1/me/username                { username }  my @username (required to use the wallet)
+ *   GET    /v1/me/recipient               ?to=@name|e-mail -> who a transfer would reach (name, @username)
+ *   GET    /v1/me/developer-access        my advanced-mode request: NONE | PENDING | APPROVED | REJECTED
+ *   POST   /v1/me/developer-access        { project, website, use_case }  ask for the advanced mode
  * X-Environment: sandbox | production (default production).
  */
 /** Open live streams per person (a few tabs at most). */
@@ -95,6 +100,8 @@ export async function meRoutes(fastify: FastifyInstance) {
       limits: { deposit_min: minMobileMoneyAmount(envOf(request)).toString(), withdrawal_min: minWithdrawalAmount(envOf(request)).toString() },
       environment: envOf(request),
       recent_sign_in: isRecentSignIn(user),
+      username: await getUsername(user.uid),
+      developer: (await developerAccess(user.uid)).status,
     };
   });
 
@@ -191,6 +198,33 @@ export async function meRoutes(fastify: FastifyInstance) {
     };
     request.raw.on('close', close);
     res.on('close', close);
+  });
+
+  fastify.put('/username', async (request, reply) => {
+    try {
+      return { status: 'success', username: await setUsername(request.lightpayUser!, (request.body as any)?.username) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/recipient', async (request, reply) => {
+    try {
+      const r = await findRecipient(envOf(request), (request.query as any)?.to);
+      if (r.uid === request.lightpayUser!.uid) return reply.status(400).send({ error: 'SAME_WALLET', message: 'C’est votre propre compte.' });
+      return { status: 'success', recipient: { name: r.name, username: r.username } };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/developer-access', async (request) => ({ status: 'success', access: await developerAccess(request.lightpayUser!.uid) }));
+  fastify.post('/developer-access', async (request, reply) => {
+    try {
+      return { status: 'success', access: await requestDeveloperAccess(request.lightpayUser!, (request.body ?? {}) as any) };
+    } catch (err) {
+      return fail(reply, err);
+    }
   });
 
   fastify.get('/withdrawals', async (request) => ({ status: 'success', withdrawals: await listWithdrawals(envOf(request), request.lightpayUser!) }));

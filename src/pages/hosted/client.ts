@@ -7,7 +7,7 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  * can live in this TS template string).
  *
  * LP                  LightPay client
- *   LP.ENV            'production' | 'sandbox'
+ *   LP.ENV            'production' | 'sandbox'   LP.setEnv(env): switch ledger in place (badges + URL follow)
  *   LP.signedIn() / LP.email() / LP.signIn(email, pw) / LP.signUp(email, pw, name) / LP.signOut()
  *   LP.resetPassword(email)
  *   LP.api(method, path, body?, idempotencyKey?) -> JSON   throws Error with .signIn (sign in again)
@@ -22,7 +22,7 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  *   listRow({ icon, iconClass, title, sub, end, endClass, href, onClick, chev }) -> <li>
  *   dayLabel(date) · timeLabel(date) · showOnly(section)
  *   skeleton(host, n?, tag?)       shimmer rows in an empty list while it loads
- *   createNav({ root, screens: { name: { parent, enter(param) } }, resolve(route) -> [name, param], onRootBack })
+ *   createNav({ root, screens: { name: { parent, enter(param) } }, resolve(route) -> [name, param], onRootBack, onEnter(current) })
  *     -> { start(), go(route, replace?), back(), home(), current() }   (hash routes #/route; the
  *        browser back button and every [data-back] button use the same history)
  *   mountAuth(onDone, { title?, subtitle?, onBack?, aside?, noSignUp? })   sign in / sign up / reset, in <section id="auth">
@@ -31,7 +31,7 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
 export const CLIENT = (env: string) => `
   const LP = (() => {
     const KEY = ${JSON.stringify(FIREBASE_WEB_API_KEY())};
-    const ENV = ${JSON.stringify(env)};
+    let ENV = ${JSON.stringify(env)};
     const STORE = 'lightpay.session';
     // Kept on LightPay's own origin, shared by its tabs and windows: signed in once, the account,
     // a payment page or the wallet window opened from a dialog all know the person.
@@ -90,7 +90,18 @@ export const CLIENT = (env: string) => `
       return data;
     };
     return {
-      ENV: ENV,
+      get ENV() { return ENV; },
+      // Test <-> real without reloading: next calls use the other ledger; [data-env-badge]
+      // elements and ?env= in the address follow. The page re-reads what it shows.
+      setEnv: (next) => {
+        ENV = next === 'sandbox' ? 'sandbox' : 'production';
+        document.querySelectorAll('[data-env-badge]').forEach((b) => { b.hidden = ENV !== 'sandbox'; });
+        try {
+          const u = new URL(location.href);
+          if (ENV === 'sandbox') u.searchParams.set('env', 'sandbox'); else u.searchParams.delete('env');
+          history.replaceState(history.state, '', u.toString());
+        } catch (e) { /* address only */ }
+      },
       signedIn: () => Boolean(read()),
       // The person is already signed in on the app (same LightPay identity): use their current
       // ID token for this page only. LightPay's API still verifies it on every call.
@@ -310,6 +321,7 @@ export const CLIENT = (env: string) => `
         if (body) body.scrollTop = 0;
       }
       const def = opts.screens[resolved[0]];
+      if (opts.onEnter) opts.onEnter(current);
       if (def.enter) def.enter(resolved[1]);
     }
     const api = {

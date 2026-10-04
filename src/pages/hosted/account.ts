@@ -3,42 +3,34 @@ import { iconSvg } from './icons.js';
 
 /**
  * /account — the person's LightPay space, simple interface (the default for everyone).
- * Advanced mode (console + developer space, /account/console) is switched on from Sécurité.
+ * Scaffold: fixed top bar, pinned key figure, only the list area scrolls; a bottom bar
+ * (Accueil · Activité · + · Compte) on the root screens, hidden inside a flow.
+ * A @username is required: chosen on first visit, changeable in Compte.
+ * Advanced mode (console + developer space, /account/console) only after the LightPay admin
+ * approved the person's request (asked from Compte); before that it appears nowhere.
  * Hash routes:
- *   #/home  #/deposit  #/send → #/send/review → #/send/done  #/withdraw → #/withdraw/review →
- *   #/withdraw/done  #/activity → #/activity/<id>  #/apps → #/apps/<id>  #/security
- * ?env=sandbox for the test wallet · ?return=<url> shows a back button to the calling app.
+ *   #/home  #/activity → #/activity/<id>  #/account → #/username · #/email · #/password ·
+ *   #/developer · #/delete · #/apps → #/apps/<id>
+ *   #/deposit  #/send → #/send/review → #/send/done  #/withdraw → #/withdraw/review → #/withdraw/done
+ * ?env=sandbox for the test wallet (switchable in place) · ?return=<url> shows a way back to the app.
  */
 export const accountPage = (nonce: string, env: string) => {
   const bar = (title: string) => topbar({ title, back: true, env });
   const body = `
 <section class="screen" data-screen="home" hidden>
   ${topbar({ brand: true, back: false, env, end: '<button class="icon-btn" type="button" id="homeBack" hidden aria-label="Retour à l’application">' + iconSvg('x') + '</button>' })}
-  <div class="content">
-    <div class="row">
-      <span class="avatar" id="homeAvatar" aria-hidden="true"></span>
-      <span class="row-main"><span class="row-title" id="homeName"></span><span class="row-sub" id="homeEmail"></span></span>
-    </div>
-    <div class="hero mt">
-      <div class="hero-label">Solde disponible</div>
+  <div class="pinned">
+    <div class="hero">
+      <div class="hero-label" id="homeHello">Disponible</div>
       <div class="amount-xl" id="homeAvailable"><span class="sk sk-amount"></span></div>
-      <div class="hero-sub">${iconSvg('lock')}<span id="homeLocked"></span></div>
+      <div class="hero-sub" id="homeLockedLine" hidden>${iconSvg('lock')}<span id="homeLocked"></span></div>
     </div>
     <div class="note warn" id="homeClosed" hidden>${iconSvg('alert')}<p>Ce compte LightPay est fermé : il ne peut plus recevoir ni envoyer d’argent.</p></div>
-    <div class="quick" id="homeActions">
-      <button class="quick-btn" type="button" data-go="deposit"><span class="quick-icon">${iconSvg('plus')}</span>Recharger</button>
-      <button class="quick-btn" type="button" data-go="send"><span class="quick-icon">${iconSvg('send')}</span>Envoyer</button>
-      <button class="quick-btn" type="button" data-go="withdraw"><span class="quick-icon">${iconSvg('withdraw')}</span>Retirer</button>
-    </div>
-    <div class="section-head"><h2>Activité récente</h2><a class="link" href="#/activity">Tout voir</a></div>
-    <ul class="list" id="homeActivity">${skeletonRows(3)}</ul>
-    <div class="section-head"><h2>Mon compte</h2></div>
-    <ul class="list">
-      <li><a class="row" href="#/apps"><span class="row-icon">${iconSvg('apps')}</span><span class="row-main"><span class="row-title">Apps connectées</span><span class="row-sub" id="homeAppsSub">Accès et permissions</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-      <li><a class="row" href="#/security"><span class="row-icon">${iconSvg('shield')}</span><span class="row-main"><span class="row-title">Sécurité et compte</span><span class="row-sub">E-mail, mot de passe, environnement</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-    </ul>
+  </div>
+  <div class="content">
+    <div class="section-head sticky"><h2>Activité</h2><a class="link" href="#/activity">Tout voir</a></div>
+    <ul class="list" id="homeActivity">${skeletonRows(4)}</ul>
     <div class="msg" id="homeMsg" role="status" aria-live="polite"></div>
-    <p class="small muted mt-lg">Les fonds bloqués sont des paiements en attente de validation d’une commande : ils ne peuvent être ni envoyés ni retirés.</p>
   </div>
 </section>
 
@@ -63,7 +55,7 @@ export const accountPage = (nonce: string, env: string) => {
 <section class="screen" data-screen="send" hidden>
   ${bar('Envoyer')}
   <div class="content">
-    <div class="field"><label for="sendTo">Destinataire (e-mail LightPay)</label><input id="sendTo" type="email" autocomplete="off" inputmode="email" placeholder="nom@exemple.com"></div>
+    <div class="field"><label for="sendTo">Destinataire</label><input id="sendTo" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="@pseudo ou e-mail"><p class="hint" id="sendWho"></p></div>
     <label class="label mt-lg" for="sendAmount">Montant</label>
     <div class="amount-wrap"><input class="amount-input" id="sendAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="sendAvail">FCFA</div></div>
     <div class="field"><label for="sendNote">Message (facultatif)</label><input id="sendNote" maxlength="140" autocomplete="off" placeholder="Ex. : loyer de mars"></div>
@@ -128,7 +120,7 @@ export const accountPage = (nonce: string, env: string) => {
 </section>
 
 <section class="screen" data-screen="activity" hidden>
-  ${bar('Activité')}
+  ${topbar({ title: 'Activité', back: false, env })}
   <div class="content"><div id="actList"></div><div class="msg" id="actMsg" role="status" aria-live="polite"></div></div>
 </section>
 
@@ -170,34 +162,114 @@ export const accountPage = (nonce: string, env: string) => {
   </div>
 </section>
 
-<section class="screen" data-screen="security" hidden>
-  ${bar('Sécurité et compte')}
+<section class="screen" data-screen="account" hidden>
+  ${topbar({ title: 'Compte', back: false, env })}
   <div class="content">
-    <ul class="list"><li><div class="row"><span class="row-icon">${iconSvg('mail')}</span><span class="row-main"><span class="row-title" id="secEmail"></span><span class="row-sub">E-mail de connexion</span></span></div></li></ul>
-    <div class="field"><label for="newEmail">Nouvel e-mail</label><input id="newEmail" type="email" autocomplete="email"></div>
-    <button class="btn btn-secondary mt" type="button" id="emailGo">Changer l’e-mail</button>
-    <div class="field mt-lg"><label for="newPass">Nouveau mot de passe</label><input id="newPass" type="password" autocomplete="new-password" placeholder="6 caractères minimum"></div>
-    <button class="btn btn-secondary mt" type="button" id="passGo">Changer le mot de passe</button>
-    <div class="msg" id="secMsg" role="status" aria-live="polite"></div>
-    <div class="section-head"><h2>Affichage</h2></div>
-    <ul class="list"><li><button class="row" type="button" id="advancedMode"><span class="row-icon">${iconSvg('apps')}</span><span class="row-main"><span class="row-title">Mode avancé</span><span class="row-sub">Tableau de bord, historique détaillé et espace développeurs</span></span>${iconSvg('chevron-right', 'chev')}</button></li></ul>
-    <div class="section-head"><h2>Environnement</h2></div>
-    <ul class="list"><li><a class="row" id="envSwitch" href="/account"><span class="row-icon">${iconSvg('swap')}</span><span class="row-main"><span class="row-title" id="envSwitchTitle"></span><span class="row-sub" id="envSwitchSub"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-    <li><button class="row" type="button" id="signOut"><span class="row-icon">${iconSvg('logout')}</span><span class="row-main"><span class="row-title">Se déconnecter</span></span></button></li></ul>
-    <div class="danger-zone">
-      <h2 class="small">Supprimer mon compte</h2>
-      <p class="small muted mt">Possible si vos wallets réel et test sont à zéro et qu’aucun paiement n’est en attente. Les apps connectées perdent leur accès ; l’historique comptable est conservé.</p>
-      <div class="field"><label for="delConfirm">Tapez SUPPRIMER pour confirmer</label><input id="delConfirm" autocomplete="off"></div>
-      <button class="btn btn-danger mt" type="button" id="delGo" disabled>Supprimer définitivement</button>
-      <div class="msg" id="delMsg" role="status" aria-live="polite"></div>
+    <div class="profile">
+      <span class="avatar avatar-lg" id="accAvatar" aria-hidden="true"></span>
+      <div class="profile-main"><div class="profile-name" id="accName"></div><div class="profile-handle" id="accHandle"></div></div>
     </div>
+    <div class="section-head"><h2>Profil</h2></div>
+    <ul class="list">
+      <li><a class="row" href="#/username"><span class="row-icon">${iconSvg('user')}</span><span class="row-main"><span class="row-title">Nom d’utilisateur</span><span class="row-sub" id="accUsername"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><a class="row" href="#/email"><span class="row-icon">${iconSvg('mail')}</span><span class="row-main"><span class="row-title">E-mail</span><span class="row-sub" id="secEmail"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><a class="row" href="#/password"><span class="row-icon">${iconSvg('lock')}</span><span class="row-main"><span class="row-title">Mot de passe</span><span class="row-sub">Le changer</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+    </ul>
+    <div class="section-head"><h2>Autorisations</h2></div>
+    <ul class="list">
+      <li><a class="row" href="#/apps"><span class="row-icon">${iconSvg('apps')}</span><span class="row-main"><span class="row-title">Apps connectées</span><span class="row-sub" id="accAppsSub">Accès et permissions</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><a class="row" href="#/developer"><span class="row-icon">${iconSvg('code')}</span><span class="row-main"><span class="row-title">Mode avancé</span><span class="row-sub" id="accDevSub">Console et espace développeur, sur demande</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+    </ul>
+    <div class="section-head"><h2>Environnement</h2></div>
+    <ul class="list">
+      <li><button class="row" type="button" id="envSwitch"><span class="row-icon">${iconSvg('swap')}</span><span class="row-main"><span class="row-title" id="envSwitchTitle"></span><span class="row-sub" id="envSwitchSub"></span></span></button></li>
+      <li><button class="row" type="button" id="signOut"><span class="row-icon">${iconSvg('logout')}</span><span class="row-main"><span class="row-title">Se déconnecter</span></span></button></li>
+      <li><a class="row" href="#/delete"><span class="row-icon">${iconSvg('trash')}</span><span class="row-main"><span class="row-title">Supprimer mon compte</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+    </ul>
+    <div class="msg" id="accMsg" role="status" aria-live="polite"></div>
   </div>
+</section>
+
+<section class="screen" data-screen="username" hidden>
+  ${topbar({ title: 'Nom d’utilisateur', back: true, env, backId: 'unBack' })}
+  <div class="content">
+    <h2 class="title mt" id="unTitle">Choisissez votre nom d’utilisateur</h2>
+    <p class="small muted mt">On vous envoie de l’argent avec ce nom, sans connaître votre e-mail.</p>
+    <div class="field"><label for="unInput">Nom d’utilisateur</label><div class="input-prefix"><span>@</span><input id="unInput" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="votre.nom"></div><p class="hint">3 à 20 caractères : lettres, chiffres, « . » ou « _ ».</p></div>
+    <div class="msg" id="unMsg" role="status" aria-live="polite"></div>
+  </div>
+  <div class="actions-bar"><button class="btn" type="button" id="unGo">Enregistrer</button></div>
+</section>
+
+<section class="screen" data-screen="email" hidden>
+  ${bar('E-mail')}
+  <div class="content">
+    <p class="small muted mt">Actuel : <span id="emailNow"></span></p>
+    <div class="field"><label for="newEmail">Nouvel e-mail</label><input id="newEmail" type="email" autocomplete="email"></div>
+    <div class="msg" id="emailMsg" role="status" aria-live="polite"></div>
+  </div>
+  <div class="actions-bar"><button class="btn" type="button" id="emailGo">Changer l’e-mail</button></div>
+</section>
+
+<section class="screen" data-screen="password" hidden>
+  ${bar('Mot de passe')}
+  <div class="content">
+    <div class="field"><label for="newPass">Nouveau mot de passe</label><input id="newPass" type="password" autocomplete="new-password" placeholder="6 caractères minimum"></div>
+    <div class="msg" id="passMsg" role="status" aria-live="polite"></div>
+  </div>
+  <div class="actions-bar"><button class="btn" type="button" id="passGo">Changer le mot de passe</button></div>
+</section>
+
+<section class="screen" data-screen="developer" hidden>
+  ${bar('Mode avancé')}
+  <div class="content">
+    <div id="devForm" hidden>
+      <p class="small muted mt">La console et l’espace développeur (clés API, webhooks, paiements de vos apps) s’ouvrent après validation de votre demande par LightPay.</p>
+      <div class="note warn" id="devRefused" hidden>${iconSvg('alert')}<p id="devRefusedText"></p></div>
+      <div class="field"><label for="devProject">Projet ou entreprise</label><input id="devProject" maxlength="80" autocomplete="organization"></div>
+      <div class="field"><label for="devSite">Site web (facultatif)</label><input id="devSite" type="url" maxlength="200" autocomplete="url" placeholder="https://"></div>
+      <div class="field"><label for="devUse">Ce que vous allez faire avec LightPay</label><textarea id="devUse" maxlength="600" rows="4"></textarea></div>
+    </div>
+    <div class="state" id="devPending" hidden><span class="state-icon wait">${iconSvg('clock')}</span><h2>Demande en cours d’examen</h2><p>Envoyée le <span id="devPendingDate"></span>. Le mode avancé apparaîtra ici dès qu’elle sera validée.</p></div>
+    <div class="state" id="devApproved" hidden><span class="state-icon ok">${iconSvg('check')}</span><h2>Mode avancé activé</h2><p>Console, historique détaillé et espace développeur.</p></div>
+    <div class="msg" id="devMsg" role="status" aria-live="polite"></div>
+  </div>
+  <div class="actions-bar"><button class="btn" type="button" id="devGo" hidden>Envoyer la demande</button><a class="btn" id="devOpen" href="/account/console#/home" hidden>Ouvrir la console</a></div>
+</section>
+
+<section class="screen" data-screen="delete" hidden>
+  ${bar('Supprimer mon compte')}
+  <div class="content">
+    <p class="small muted mt">Possible si vos wallets réel et test sont à zéro et qu’aucun paiement n’est en attente. Les apps connectées perdent leur accès ; l’historique comptable est conservé.</p>
+    <div class="field"><label for="delConfirm">Tapez SUPPRIMER pour confirmer</label><input id="delConfirm" autocomplete="off"></div>
+    <div class="msg" id="delMsg" role="status" aria-live="polite"></div>
+  </div>
+  <div class="actions-bar"><button class="btn btn-danger" type="button" id="delGo" disabled>Supprimer définitivement</button></div>
 </section>
 
 <section class="screen" data-screen="bye" hidden>
   ${topbar({ brand: true, back: false, env })}
   <div class="state"><span class="state-icon ok">${iconSvg('check')}</span><h2>Compte supprimé</h2><p>Votre compte LightPay a été fermé. Merci de l’avoir utilisé.</p></div>
 </section>
+
+<nav class="tabbar" id="tabbar" aria-label="Navigation" hidden>
+  <a href="#/home" data-tab="home">${iconSvg('home')}<span>Accueil</span></a>
+  <a href="#/activity" data-tab="activity">${iconSvg('list')}<span>Activité</span></a>
+  <button type="button" id="tabPlus" aria-haspopup="dialog">${iconSvg('plus')}<span>Opération</span></button>
+  <a href="#/account" data-tab="account">${iconSvg('user')}<span>Compte</span></a>
+</nav>
+
+<div class="overlay" id="plusSheet" hidden role="dialog" aria-modal="true" aria-labelledby="plusTitle">
+  <div class="sheet">
+    <h2 class="eyebrow" id="plusTitle">Nouvelle opération</h2>
+    <ul class="list mt">
+      <li><button class="row" type="button" data-plus="deposit"><span class="row-icon">${iconSvg('plus')}</span><span class="row-main"><span class="row-title">Recharger</span><span class="row-sub">Depuis MTN MoMo ou Airtel Money</span></span>${iconSvg('chevron-right', 'chev')}</button></li>
+      <li><button class="row" type="button" data-plus="send"><span class="row-icon">${iconSvg('send')}</span><span class="row-main"><span class="row-title">Envoyer</span><span class="row-sub">À un @pseudo ou un e-mail, gratuit</span></span>${iconSvg('chevron-right', 'chev')}</button></li>
+      <li><button class="row" type="button" data-plus="withdraw"><span class="row-icon">${iconSvg('withdraw')}</span><span class="row-main"><span class="row-title">Retirer</span><span class="row-sub">Vers votre mobile money</span></span>${iconSvg('chevron-right', 'chev')}</button></li>
+    </ul>
+    <button class="btn btn-secondary mt" type="button" id="plusClose">Fermer</button>
+  </div>
+</div>
 
 <div class="overlay" id="reauth" hidden role="dialog" aria-modal="true" aria-labelledby="reTitle">
   <form class="sheet" id="reForm" novalidate>
@@ -210,8 +282,6 @@ export const accountPage = (nonce: string, env: string) => {
 </div>`;
 
   const script = `
-  // Advanced mode chosen on this device: open the console instead.
-  try { if (localStorage.getItem('lightpay.mode') === 'console') { location.replace('/account/console' + location.search + location.hash); return; } } catch (e) {}
   const params = new URLSearchParams(location.search);
   const returnUrl = (function () { const r = params.get('return'); try { const u = new URL(r); return u.protocol === 'https:' || u.hostname === 'localhost' ? u.toString() : null; } catch (e) { return null; } })();
   const SCOPE_ICON = { 'balance:read': 'wallet', payee: 'receive', deposit: 'plus', charge: 'send' };
@@ -292,30 +362,44 @@ export const accountPage = (nonce: string, env: string) => {
   async function loadMe() {
     me = await LP.api('GET', '/v1/me');
     const name = me.user.name || (me.user.email || '').split('@')[0];
-    $('homeAvatar').textContent = initials(name);
-    $('homeName').textContent = 'Bonjour ' + name;
-    $('homeEmail').textContent = me.user.email || '';
     $('homeAvailable').textContent = LP.money(me.wallet.available_balance, cur());
+    const locked = Number(me.wallet.locked_balance);
+    $('homeLockedLine').hidden = !locked;
+    $('homeLocked').textContent = LP.money(locked, cur()) + ' bloqués jusqu’à la livraison';
     $('depMin').textContent = 'FCFA · minimum ' + lim('deposit_min').toLocaleString('fr-FR');
-    $('homeLocked').textContent = LP.money(me.wallet.locked_balance, cur()) + ' bloqués';
     const closed = me.wallet.status !== 'ACTIVE';
     $('homeClosed').hidden = !closed;
-    $('homeActions').hidden = closed;
+    $('accAvatar').textContent = initials(name);
+    $('accName').textContent = name;
+    $('accHandle').textContent = me.username ? '@' + me.username : '';
+    $('accUsername').textContent = me.username ? '@' + me.username : 'À choisir';
     $('secEmail').textContent = me.user.email || '—';
+    $('accDevSub').textContent = DEV_SUB[me.developer] || DEV_SUB.NONE;
   }
+  const DEV_SUB = { NONE: 'Console et espace développeur, sur demande', PENDING: 'Demande en cours d’examen', APPROVED: 'Activé', REJECTED: 'Demande refusée · vous pouvez la refaire' };
   async function enterHome() {
     await guarded(async () => {
       await loadMe();
-      const act = await LP.api('GET', '/v1/me/activity?limit=5');
+      const act = await LP.api('GET', '/v1/me/activity?limit=30');
       $('homeActivity').replaceChildren.apply($('homeActivity'), act.activity.length ? act.activity.map(actRow) : [el('li', { class: 'empty', text: 'Aucune opération pour l’instant.' })]);
-      const c = await LP.api('GET', '/v1/me/connections');
-      const n = c.connections.filter((x) => x.status === 'ACTIVE').length;
-      $('homeAppsSub').textContent = n ? n + (n > 1 ? ' apps autorisées' : ' app autorisée') : 'Aucune app autorisée';
     }, 'homeMsg');
   }
   document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => nav.go(b.dataset.go)));
   document.querySelectorAll('[data-home]').forEach((b) => b.addEventListener('click', () => nav.home()));
   if (returnUrl) { $('homeBack').hidden = false; $('homeBack').addEventListener('click', () => location.assign(returnUrl)); }
+
+  // ---------------------------------------------------------------- bottom bar + "+" sheet
+  const TAB_OF = { home: 'home', activity: 'activity', account: 'account' };
+  function syncTabs(c) {
+    const tab = c ? TAB_OF[c.name] : null;
+    $('tabbar').hidden = !tab;
+    document.querySelectorAll('[data-tab]').forEach((a) => { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  }
+  const plusOpen = (open) => { $('plusSheet').hidden = !open; if (open) $('plusSheet').querySelector('button').focus(); };
+  $('tabPlus').addEventListener('click', () => plusOpen(true));
+  $('plusClose').addEventListener('click', () => plusOpen(false));
+  $('plusSheet').addEventListener('click', (e) => { if (e.target === $('plusSheet')) plusOpen(false); });
+  document.querySelectorAll('[data-plus]').forEach((b) => b.addEventListener('click', () => { plusOpen(false); nav.go(b.dataset.plus); }));
 
   // ---------------------------------------------------------------- deposit
   let depNet = 'MTN_MOMO_COG', depQuotes = null;
@@ -366,19 +450,38 @@ export const accountPage = (nonce: string, env: string) => {
     $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur());
     say('sendMsg', '');
   }
+  let sendWho = null, sendWhoSeq = 0;
+  const lookupRecipient = debounce(async () => {
+    const to = $('sendTo').value.trim();
+    const seq = ++sendWhoSeq;
+    sendWho = null; $('sendWho').textContent = ''; $('sendWho').className = 'hint';
+    if (to.length < 3) return;
+    try {
+      const r = await LP.api('GET', '/v1/me/recipient?to=' + encodeURIComponent(to));
+      if (seq !== sendWhoSeq) return;
+      sendWho = r.recipient;
+      $('sendWho').textContent = '→ ' + [r.recipient.name, r.recipient.username ? '@' + r.recipient.username : ''].filter(Boolean).join(' · ');
+    } catch (e) {
+      if (seq !== sendWhoSeq) return;
+      if (e.signIn) return signIn();
+      $('sendWho').textContent = e.message; $('sendWho').className = 'hint err';
+    }
+  }, 350);
+  $('sendTo').addEventListener('input', lookupRecipient);
   $('sendNext').addEventListener('click', () => {
     const to = $('sendTo').value.trim();
     const amount = Number(amountDigits($('sendAmount').value));
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(to)) return say('sendMsg', 'Entrez l’e-mail LightPay du destinataire.', 'err');
+    if (!sendWho) return say('sendMsg', 'Entrez le @pseudo ou l’e-mail d’un compte LightPay.', 'err');
     if (!amount) return say('sendMsg', 'Entrez un montant.', 'err');
     if (amount > available()) return say('sendMsg', 'Montant supérieur à votre solde disponible (' + LP.money(available(), cur()) + ').', 'err');
-    sendState = { to: to, amount: String(amount), note: $('sendNote').value.trim(), key: LP.uuid() };
+    sendState = { to: to, who: sendWho, amount: String(amount), note: $('sendNote').value.trim(), key: LP.uuid() };
     nav.go('send/review');
   });
   function enterSendReview() {
     if (!sendState) return nav.go('send', true);
     $('sendReviewAmount').textContent = LP.money(sendState.amount, cur());
-    const rows = [['À', sendState.to], ['Frais', 'Aucun']];
+    const w = sendState.who || {};
+    const rows = [['À', [w.name, w.username ? '@' + w.username : ''].filter(Boolean).join(' · ') || sendState.to], ['Frais', 'Aucun']];
     if (sendState.note) rows.push(['Message', sendState.note]);
     rows.push(['Solde après envoi', LP.money(available() - Number(sendState.amount), cur()), true]);
     feeRows($('sendReviewRows'), rows);
@@ -391,14 +494,15 @@ export const accountPage = (nonce: string, env: string) => {
       const r = await LP.api('POST', '/v1/me/transfers', { to: sendState.to, amount: sendState.amount, note: sendState.note }, sendState.key);
       sendResult = r.transfer;
       sendState = null;
-      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = '';
+      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = ''; $('sendWho').textContent = ''; sendWho = null;
       await loadMe().catch(() => {});
       nav.go('send/done', true);
     } finally { $('sendConfirm').disabled = false; }
   }, 'sendReviewMsg'));
   function enterSendDone() {
     if (!sendResult) return nav.go('home', true);
-    $('sendDoneText').textContent = LP.money(sendResult.amount, cur()) + ' envoyés à ' + (sendResult.to.name || sendResult.to.email) + '.';
+    const t = sendResult.to || {};
+    $('sendDoneText').textContent = LP.money(sendResult.amount, cur()) + ' envoyés à ' + (t.name || (t.username ? '@' + t.username : t.email)) + '.';
   }
 
   // ---------------------------------------------------------------- withdraw
@@ -631,39 +735,91 @@ export const accountPage = (nonce: string, env: string) => {
     say('appsMsg', c.app_name + ' n’a plus accès à votre compte.', 'ok');
   }, 'appMsg'));
 
-  // ---------------------------------------------------------------- security
-  function enterSecurity() {
-    say('secMsg', ''); say('delMsg', '');
-    $('envSwitch').href = LP.ENV === 'sandbox' ? '/account' : '/account?env=sandbox';
-    $('envSwitchTitle').textContent = LP.ENV === 'sandbox' ? 'Passer au compte réel' : 'Ouvrir mon compte de test';
+  // ---------------------------------------------------------------- compte
+  async function enterAccount() {
+    say('accMsg', '');
+    $('envSwitchTitle').textContent = LP.ENV === 'sandbox' ? 'Passer au compte réel' : 'Passer au compte de test';
     $('envSwitchSub').textContent = LP.ENV === 'sandbox' ? 'Vous êtes dans l’environnement de test' : 'Pour essayer sans argent réel';
+    try {
+      await loadConnections();
+      $('accAppsSub').textContent = connections.length ? connections.length + (connections.length > 1 ? ' apps autorisées' : ' app autorisée') : 'Aucune app autorisée';
+    } catch (e) { /* the count is optional */ }
   }
+  function enterUsername() {
+    const first = !me || !me.username;
+    $('unBack').hidden = first;
+    $('unTitle').textContent = first ? 'Choisissez votre nom d’utilisateur' : 'Changer de nom d’utilisateur';
+    $('unInput').value = me && me.username ? me.username : '';
+    say('unMsg', '');
+  }
+  $('unGo').addEventListener('click', () => guarded(async () => {
+    const first = !me || !me.username;
+    $('unGo').disabled = true;
+    try {
+      const r = await LP.api('PUT', '/v1/me/username', { username: $('unInput').value });
+      me.username = r.username;
+      await loadMe().catch(() => {});
+      if (first) nav.go('home', true); else { nav.go('account', true); say('accMsg', 'Nom d’utilisateur : @' + r.username, 'ok'); }
+    } finally { $('unGo').disabled = false; }
+  }, 'unMsg'));
+  function enterEmail() { $('emailNow').textContent = (me && me.user.email) || '—'; say('emailMsg', ''); }
   $('emailGo').addEventListener('click', () => guarded(async () => {
     const email = $('newEmail').value.trim();
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) return say('secMsg', 'Entrez une adresse e-mail valide.', 'err');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return say('emailMsg', 'Entrez une adresse e-mail valide.', 'err');
     await LP.updateIdentity({ email: email });
     $('newEmail').value = '';
     await loadMe().catch(() => {});
-    say('secMsg', 'E-mail mis à jour.', 'ok');
-  }, 'secMsg'));
+    nav.go('account', true); say('accMsg', 'E-mail mis à jour.', 'ok');
+  }, 'emailMsg'));
   $('passGo').addEventListener('click', () => guarded(async () => {
     const password = $('newPass').value;
-    if (password.length < 6) return say('secMsg', 'Mot de passe trop court (6 caractères minimum).', 'err');
+    if (password.length < 6) return say('passMsg', 'Mot de passe trop court (6 caractères minimum).', 'err');
     await LP.updateIdentity({ password: password });
     $('newPass').value = '';
-    say('secMsg', 'Mot de passe mis à jour.', 'ok');
-  }, 'secMsg'));
-  $('signOut').addEventListener('click', () => { LP.signOut(); me = null; signIn(); });
-  $('advancedMode').addEventListener('click', () => {
-    try { localStorage.setItem('lightpay.mode', 'console'); } catch (e) {}
-    location.assign('/account/console' + location.search + '#/home');
+    nav.go('account', true); say('accMsg', 'Mot de passe mis à jour.', 'ok');
+  }, 'passMsg'));
+  async function enterDeveloper() {
+    say('devMsg', '');
+    ['devForm', 'devPending', 'devApproved', 'devGo', 'devOpen'].forEach((id) => { $(id).hidden = true; });
+    await guarded(async () => {
+      const a = (await LP.api('GET', '/v1/me/developer-access')).access;
+      if (a.status === 'APPROVED') { $('devApproved').hidden = false; $('devOpen').hidden = false; return; }
+      if (a.status === 'PENDING') { $('devPending').hidden = false; $('devPendingDate').textContent = new Date(a.requested_at).toLocaleDateString('fr-FR'); return; }
+      $('devForm').hidden = false; $('devGo').hidden = false;
+      $('devRefused').hidden = a.status !== 'REJECTED';
+      $('devRefusedText').textContent = a.note ? 'Demande précédente refusée : ' + a.note : '';
+    }, 'devMsg');
+  }
+  $('devGo').addEventListener('click', () => guarded(async () => {
+    $('devGo').disabled = true;
+    try {
+      await LP.api('POST', '/v1/me/developer-access', { project: $('devProject').value, website: $('devSite').value, use_case: $('devUse').value });
+      await loadMe().catch(() => {});
+      await enterDeveloper();
+    } finally { $('devGo').disabled = false; }
+  }, 'devMsg'));
+  $('devOpen').addEventListener('click', () => { try { localStorage.setItem('lightpay.mode', 'console'); } catch (e) {} });
+
+  // Test <-> real, in place: the same screens, the other ledger, shimmer while it loads.
+  $('envSwitch').addEventListener('click', async () => {
+    LP.setEnv(LP.ENV === 'sandbox' ? 'production' : 'sandbox');
+    $('homeAvailable').replaceChildren(el('span', { class: 'sk sk-amount' }));
+    $('homeActivity').replaceChildren(); skeleton($('homeActivity'), 4);
+    $('actList').replaceChildren();
+    if (liveStop) liveStop();
+    liveStop = LP.live(onLive);
+    await enterAccount();
+    await loadMe().catch(() => {});
+    say('accMsg', LP.ENV === 'sandbox' ? 'Compte de test : aucun argent réel.' : 'Compte réel.', 'ok');
   });
+  $('signOut').addEventListener('click', () => { LP.signOut(); me = null; signIn(); });
   $('delConfirm').addEventListener('input', () => { $('delGo').disabled = $('delConfirm').value.trim() !== 'SUPPRIMER'; });
   $('delGo').addEventListener('click', () => guarded(async () => {
     $('delGo').disabled = true;
     try {
       await LP.api('DELETE', '/v1/me');
       await LP.deleteIdentity();
+      $('tabbar').hidden = true;
       showOnly(document.querySelector('[data-screen="bye"]'));
     } finally { $('delGo').disabled = $('delConfirm').value.trim() !== 'SUPPRIMER'; }
   }, 'delMsg'));
@@ -673,6 +829,11 @@ export const accountPage = (nonce: string, env: string) => {
     root: 'home',
     resolve: (route) => route.indexOf('apps/') === 0 ? ['app', route.slice(5)] : route.indexOf('activity/') === 0 ? ['activity-item', route.slice(9)] : [route.replace('/', '-'), null],
     onRootBack: () => { if (returnUrl) location.assign(returnUrl); },
+    onEnter: (c) => {
+      syncTabs(c);
+      // No wallet without a @username: chosen first.
+      if (me && !me.username && c.name !== 'username') setTimeout(() => nav.go('username', true), 0);
+    },
     screens: {
       home: { enter: enterHome },
       deposit: { parent: 'home', enter: () => { say('depMsg', ''); renderDepFees(); } },
@@ -682,11 +843,17 @@ export const accountPage = (nonce: string, env: string) => {
       withdraw: { parent: 'home', enter: enterWithdraw },
       'withdraw-review': { parent: 'withdraw', enter: enterWithdrawReview },
       'withdraw-done': { parent: 'home', enter: enterWithdrawDone },
-      activity: { parent: 'home', enter: enterActivity },
+      activity: { enter: enterActivity },
       'activity-item': { parent: 'activity', enter: enterActivityItem },
-      apps: { parent: 'home', enter: enterApps },
+      apps: { parent: 'account', enter: enterApps },
       app: { parent: 'apps', enter: enterApp },
-      security: { parent: 'home', enter: enterSecurity },
+      account: { enter: enterAccount },
+      username: { parent: 'account', enter: enterUsername },
+      email: { parent: 'account', enter: enterEmail },
+      password: { parent: 'account', enter: () => say('passMsg', '') },
+      developer: { parent: 'account', enter: enterDeveloper },
+      delete: { parent: 'account', enter: () => { say('delMsg', ''); $('delConfirm').value = ''; $('delGo').disabled = true; } },
+      security: { enter: () => nav.go('account', true) },
     },
   });
 
@@ -708,8 +875,18 @@ export const accountPage = (nonce: string, env: string) => {
     }
   }
   async function boot() {
-    try { await loadMe(); nav.start(); if (liveStop) liveStop(); liveStop = LP.live(onLive); }
-    catch (e) { if (e.signIn) signIn(); else { nav.start(); say('homeMsg', e.message, 'err'); } }
+    try {
+      await loadMe();
+      // The console only for people the admin approved; the choice is remembered per device.
+      let wantsConsole = false;
+      try { wantsConsole = localStorage.getItem('lightpay.mode') === 'console'; } catch (e) {}
+      if (wantsConsole && me.developer === 'APPROVED' && me.username) { location.replace('/account/console' + location.search + location.hash); return; }
+      if (wantsConsole && me.developer !== 'APPROVED') { try { localStorage.removeItem('lightpay.mode'); } catch (e) {} }
+      if (!me.username) history.replaceState(history.state, '', location.pathname + location.search + '#/username');
+      nav.start();
+      if (liveStop) liveStop();
+      liveStop = LP.live(onLive);
+    } catch (e) { if (e.signIn) signIn(); else { nav.start(); say('homeMsg', e.message, 'err'); } }
   }
   if (LP.signedIn()) boot(); else signIn();
 `;

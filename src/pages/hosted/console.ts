@@ -26,10 +26,10 @@ html.console-page .foot { display: none; }
 .side-head .brand { font-size: 16px; }
 .side-head small { display: block; font-size: 11px; font-weight: 500; color: var(--faint); letter-spacing: 0; }
 .env-switch { margin: 0 14px 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 11px; }
-.env-switch a { text-align: center; padding: 6px 0; border-radius: 8px; font-size: 12px; font-weight: 650; color: var(--muted); text-decoration: none; }
-.env-switch a:hover { color: var(--text); }
-.env-switch a[aria-current] { background: var(--raised); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
-.env-switch a.test[aria-current] { color: var(--warn); }
+.env-switch button { border: 0; background: none; text-align: center; padding: 6px 0; border-radius: 8px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.env-switch button:hover { color: var(--text); }
+.env-switch button[aria-current] { background: var(--raised); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+.env-switch button.test[aria-current] { color: var(--warn); }
 .side-nav { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 12px 12px; scrollbar-width: none; }
 .side-nav::-webkit-scrollbar { display: none; }
 .nav-label { margin: 18px 10px 6px; font-size: 11px; font-weight: 650; color: var(--faint); letter-spacing: .02em; }
@@ -96,6 +96,27 @@ html.console-page .foot { display: none; }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; align-items: start; }
 .grid-2 > .sticky { position: sticky; top: 0; }
 
+/* ---------- scaffold: on list screens the head and figures stay, only the lists scroll ---------- */
+.console-body > .screen.fill { height: 100%; }
+.screen.fill > .page { height: 100%; display: flex; flex-direction: column; padding-bottom: 20px; }
+.screen.fill > .page > :is(.page-head, .well, .note, .msg) { flex-shrink: 0; }
+.screen.fill > .page > :is(.grow, .grid-2) { flex: 1; min-height: 0; }
+.screen.fill .grid-2 { align-items: stretch; }
+.screen.fill :is(.panel.grow, .grid-2 > .panel) { display: flex; flex-direction: column; min-height: 0; max-height: 100%; }
+.screen.fill .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.scroll, .console-body, .side-nav { scrollbar-width: none; }
+.scroll::-webkit-scrollbar, .console-body::-webkit-scrollbar { display: none; }
+/* long titles shorten, the amount column always shows in full */
+.tbl td:first-child { width: 100%; max-width: 0; }
+.tbl td.num, .tbl th.num { width: 1%; }
+.cell-main { overflow: hidden; }
+.cell-title, .cell-sub { max-width: 100%; }
+.scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--card); }
+.page > .well + .panel { margin-top: 20px; }
+.sk-stat { width: 110px; height: 26px; margin-top: 2px; }
+.show-narrow { display: none; }
+.console-tabbar { display: none; }
+
 /* ---------- key figures ---------- */
 .well { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 20px 24px; padding: 18px 20px; border-radius: 14px; background: var(--raised); }
 .stat { min-width: 0; }
@@ -128,8 +149,8 @@ html.console-page .foot { display: none; }
 .cell .row-icon { width: 34px; height: 34px; }
 .cell-main { min-width: 0; }
 .cell-title, .cell-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cell-title { font-weight: 600; max-width: 420px; }
-.cell-sub { font-size: 12px; color: var(--muted); max-width: 420px; }
+.cell-title { font-weight: 600; max-width: 100%; }
+.cell-sub { font-size: 12px; color: var(--muted); max-width: 100%; }
 .cell-sub.err { color: var(--danger); } .cell-sub.warn { color: var(--warn); }
 .muted-cell { color: var(--muted); white-space: nowrap; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
@@ -176,6 +197,17 @@ textarea.field-area:focus { outline: none; border-color: var(--accent); box-shad
   .main-top { padding: 0 10px 0 16px; }
   .grid-2 { grid-template-columns: 1fr; }
   .grid-2 > .sticky { position: static; }
+  /* one of list / detail at a time */
+  .grid-2:has(> .detail-panel):not(.has-detail) > .detail-panel { display: none; }
+  .grid-2.has-detail > :not(.detail-panel) { display: none; }
+  .show-narrow { display: inline; }
+  .console-tabbar { display: grid; }
+  .screen.fill > .page { padding-bottom: 12px; }
+  .well { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; padding: 14px 16px; }
+  .stat-value { font-size: 20px; }
+  /* phones: the bottom bar's + replaces the action buttons; only the balance figures stay */
+  .screen.fill .page-actions { display: none; }
+  .screen.fill .well > .stat:nth-child(n+3), .screen.fill .stat-hint { display: none; }
   .page { padding: 20px 16px 48px; }
   .page-title { font-size: 21px; }
   .hide-md { display: none; }

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { query } from './pool.js';
 import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
+import { findRecipient } from './identity.js';
 import { LightPayUser } from '../security/user-token.js';
 import { ConnectError, SCOPES, Scope, userWallet } from './connect.js';
 import { MOBILE_NETWORKS, MobileNetwork, normalizeCongoMsisdn } from '../payments/mobile-money.js';
@@ -76,14 +77,11 @@ export async function sendMoney(environment: Environment, user: LightPayUser, in
   const note = String(input.note ?? '').slice(0, 140) || undefined;
   try {
     const amount = positive(input.amount);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new ConnectError('Adresse e-mail du destinataire invalide.', 'INVALID_RECIPIENT');
-    if (to === (user.email ?? '').toLowerCase()) throw new ConnectError('Vous ne pouvez pas vous envoyer de l’argent.', 'SAME_WALLET');
-    const [recipient] = await query(
-      `SELECT id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND lower(metadata->>'email') = $3 LIMIT 1`,
-      [environment, from.currency, to],
-      environment
-    );
-    if (!recipient) throw new ConnectError('Aucun compte LightPay avec cet e-mail.', 'RECIPIENT_NOT_FOUND', 404);
+    if (!to) throw new ConnectError('Entrez un @nom d’utilisateur ou une adresse e-mail.', 'INVALID_RECIPIENT');
+    const found = await findRecipient(environment, to, from.currency);
+    if (found.uid === user.uid) throw new ConnectError('Vous ne pouvez pas vous envoyer de l’argent.', 'SAME_WALLET');
+    const shown = found.name || (found.username ? `@${found.username}` : to);
+    const recipient = { id: found.walletId, metadata: { name: shown } };
     const result = await LedgerEngine.executeTransaction({
       appId: 'mainapp',
       environment,
@@ -91,7 +89,7 @@ export async function sendMoney(environment: Environment, user: LightPayUser, in
       type: 'TRANSFER',
       amount,
       currency: from.currency,
-      metadata: { kind: 'P2P', from_uid: user.uid, to_email: to, note },
+      metadata: { kind: 'P2P', from_uid: user.uid, to_uid: found.uid, to_username: found.username, note },
       postings: [
         { walletId: from.id, direction: 'DEBIT', amount, description: `Envoi à ${recipient.metadata?.name || to}${note ? ` · ${note}` : ''}` },
         { walletId: recipient.id, direction: 'CREDIT', amount, description: `Reçu de ${user.name || user.email}${note ? ` · ${note}` : ''}` },
@@ -100,7 +98,7 @@ export async function sendMoney(environment: Environment, user: LightPayUser, in
     const common = { kind: 'TRANSFER' as const, status: 'SUCCEEDED' as const, amount, total: amount, currency: from.currency, refType: 'transfer', refId: ref, metadata: { note } };
     await logActivity(environment, { ...common, walletId: from.id, direction: 'OUT', counterparty: recipient.metadata?.name || to });
     await logActivity(environment, { ...common, walletId: recipient.id, direction: 'IN', counterparty: user.name || user.email || 'LightPay' });
-    return { transaction_id: txId(result), duplicate: result.duplicate, to: { name: recipient.metadata?.name ?? null, email: to }, amount: amount.toString() };
+    return { transaction_id: txId(result), duplicate: result.duplicate, to: { name: found.name, username: found.username, email: found.email }, amount: amount.toString() };
   } catch (err: any) {
     const f = failureOf(err);
     await logActivity(environment, {

@@ -17,6 +17,7 @@ import {
   updateApp,
 } from '../db/developer.js';
 import { Environment } from '../types/index.js';
+import { isDeveloper } from '../db/identity.js';
 
 const envOf = (request: FastifyRequest): Environment => (request.headers['x-environment'] === 'sandbox' ? 'sandbox' : 'production');
 
@@ -51,6 +52,13 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  */
 export async function developerRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireUser);
+  // The advanced mode is granted by the LightPay admin; without it the developer space does not exist.
+  fastify.addHook('preHandler', async (request, reply) => {
+    if (reply.sent) return;
+    if (!(await isDeveloper(request.lightpayUser!.uid))) {
+      return reply.status(403).send({ error: 'DEVELOPER_ACCESS_REQUIRED', message: 'Demandez l’accès au mode avancé depuis votre compte.' });
+    }
+  });
 
   fastify.get('/apps', async (request, reply) => {
     try {

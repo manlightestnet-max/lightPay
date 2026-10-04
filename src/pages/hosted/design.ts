@@ -240,6 +240,26 @@ a.row:hover .row-title, button.row:hover .row-title { text-decoration: underline
 .sheet { width: 100%; max-width: 440px; background: var(--card); border-radius: var(--radius) var(--radius) 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); box-shadow: var(--shadow); }
 @media (min-width: 480px) { .overlay { align-items: center; padding: 16px; } .sheet { border-radius: var(--radius); padding: 24px; } }
 
+/* ---------- scaffold: pinned figure, sticky headings, bottom bar ---------- */
+.pinned { flex-shrink: 0; padding: 0 16px 10px; border-bottom: 1px solid var(--line); }
+@media (min-width: 480px) { .pinned { padding: 0 24px 12px; } }
+.section-head.sticky, .group-label { position: sticky; top: 0; z-index: 2; background: var(--card); }
+.section-head.sticky { margin: 0; padding: 14px 0 6px; }
+.group-label { margin: 0; padding: 14px 0 4px; }
+.tabbar { flex-shrink: 0; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); background: var(--card); padding-bottom: env(safe-area-inset-bottom); }
+.tabbar > a, .tabbar > button { min-height: 58px; border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--faint); text-decoration: none; font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.tabbar svg { width: 21px; height: 21px; }
+.tabbar > [aria-current="page"] { color: var(--text); }
+.tabbar > button svg { width: 24px; height: 24px; color: var(--text); }
+.profile { display: flex; align-items: center; gap: 14px; padding: 18px 0 4px; }
+.profile-main { min-width: 0; }
+.profile-name { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-handle { font-size: 13px; color: var(--muted); }
+.hint.err { color: var(--danger); }
+.field textarea { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--card); padding: 12px 14px; font: inherit; font-size: 15px; resize: vertical; min-height: 96px; }
+.field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.actions-bar > a.btn { display: inline-flex; }
+
 /* ---------- shimmer placeholders (while a screen loads) ---------- */
 .sk { display: block; border-radius: 6px; background: linear-gradient(90deg, var(--raised) 0%, var(--line) 45%, var(--raised) 90%); background-size: 220% 100%; animation: shimmer 1.3s ease-in-out infinite; }
 .sk.inline { display: inline-block; vertical-align: middle; }

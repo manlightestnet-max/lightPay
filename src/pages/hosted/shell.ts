@@ -41,7 +41,7 @@ export const topbar = (o: { title?: string; back?: boolean; brand?: boolean; env
     o.back ? `<button class="icon-btn" type="button" data-back${o.backId ? ` id="${o.backId}"` : ''} aria-label="Retour">${iconSvg('arrow-left')}</button>` : ''
   }<h1 class="topbar-title${o.back ? '' : ' pad'}">${
     o.brand ? `<span class="brand"><span class="brand-mark">${iconSvg('bolt')}</span>LightPay</span>` : escapeHtml(o.title ?? '')
-  }</h1><span class="topbar-end">${o.env === 'sandbox' ? '<span class="badge">Test</span>' : ''}${themeToggle()}${o.end ?? ''}</span></header>`;
+  }</h1><span class="topbar-end"><span class="badge" data-env-badge${o.env === 'sandbox' ? '' : ' hidden'}>Test</span>${themeToggle()}${o.end ?? ''}</span></header>`;
 
 /** Full document: nonce'd design system + page css, page body in .app, shared client + page script. */
 export const shell = (o: { title: string; nonce: string; env: string; body: string; script: string; css?: string; console?: boolean }) => `<!doctype html>

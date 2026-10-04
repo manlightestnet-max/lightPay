@@ -24,6 +24,8 @@ import {
 import { Environment } from '../types/index.js';
 import { DEFAULT_FEE_SETTINGS, FeeSettingsError, feeSettings, loadFeeSettings, saveFeeSettings, validateFeeSettings } from '../payments/fee-settings.js';
 import { auditAction } from '../db/admin-console.js';
+import { decideDeveloperAccess, listDeveloperRequests } from '../db/identity.js';
+import { ConnectError } from '../db/connect.js';
 
 /**
  * Owner's admin console.
@@ -40,6 +42,8 @@ import { auditAction } from '../db/admin-console.js';
  *   POST /v1/admin-console/faucet/issue         { amount }             test only: issue test money into the faucet
  *   GET  /v1/admin-console/fees                 fees and minimums of this ledger (+ the defaults)
  *   PUT  /v1/admin-console/fees                 { …all settings }   recent sign-in; applied at once, logged
+ *   GET  /v1/admin-console/developers[?status=] advanced-mode requests (pending first)
+ *   POST /v1/admin-console/developers/:uid      { approve, note }   decide a request (logged)
  *   GET  /v1/admin-console/audit                admin actions log
  * Access: a LightPay sign-in whose uid is listed in ADMIN_UIDS. X-Environment picks the ledger.
  * There is no withdrawal route here, on purpose.
@@ -204,6 +208,23 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         const changed = Object.fromEntries(Object.keys(after).filter((k) => (before as any)[k] !== (after as any)[k]).map((k) => [k, { from: (before as any)[k], to: (after as any)[k] }]));
         if (Object.keys(changed).length) await auditAction(env, admin, 'FEES_UPDATE', null, null, { changed });
         return { status: 'success', settings: after };
+      });
+
+      api.get('/developers', async (request) => {
+        const s = String((request.query as any)?.status ?? '').toUpperCase();
+        return { status: 'success', requests: await listDeveloperRequests(['PENDING', 'APPROVED', 'REJECTED'].includes(s) ? s : null) };
+      });
+      api.post('/developers/:uid', async (request, reply) => {
+        const b = (request.body ?? {}) as any;
+        const admin = adminOf(request);
+        try {
+          const row = await decideDeveloperAccess(String((request.params as any).uid), b.approve === true, b.note, admin.email || admin.uid);
+          await auditAction('production', admin, b.approve === true ? 'DEVELOPER_APPROVED' : 'DEVELOPER_REJECTED', row.email || row.uid, null, { project: row.project, note: b.note ?? null });
+          return { status: 'success', request: row };
+        } catch (e) {
+          if (e instanceof ConnectError) return reply.status(e.statusCode).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
       });
 
       api.get('/audit', async (request) => ({ status: 'success', audit: await listAudit(envOf(request), intParam((request.query as any)?.limit, 100, 500)) }));
