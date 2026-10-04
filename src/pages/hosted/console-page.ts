@@ -750,6 +750,24 @@ ${flow(
     $('wdDoneText').textContent = w.status === 'FAILED'
       ? 'L’opérateur a refusé l’envoi. Les ' + LP.money(w.total, w.currency) + ' ont été restitués sur votre wallet.'
       : LP.money(w.amount, w.currency) + ' vers ' + w.to + (w.status === 'PENDING' ? ' : l’opérateur traite l’envoi, vous recevrez un SMS.' : '. Vous allez recevoir un SMS de votre opérateur.');
+    if (w.status === 'PENDING') followWithdrawal(w.id);
+  }
+  // A pending withdrawal is re-read while its screen stays open: the operator usually confirms
+  // within seconds, and the server settles it from the webhook or its own check.
+  let wdFollow = null;
+  function followWithdrawal(id, tries = 0) {
+    clearTimeout(wdFollow);
+    if (tries >= 60) return;
+    wdFollow = setTimeout(async () => {
+      const c = nav.current();
+      if (!c || c.name !== 'withdraw-done' || !wdResult || wdResult.id !== id) return;
+      try {
+        const r = await LP.api('GET', '/v1/me/withdrawals');
+        const w = (r.withdrawals || []).find((x) => x.id === id);
+        if (w && w.status !== 'PENDING') { wdResult = w; await loadMe().catch(() => {}); return enterWithdrawDone(); }
+      } catch (e) { /* next try */ }
+      followWithdrawal(id, tries + 1);
+    }, 3000);
   }
 
   // ---------------------------------------------------------------- activity: list + detail
