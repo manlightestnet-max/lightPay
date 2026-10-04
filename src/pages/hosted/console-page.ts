@@ -48,7 +48,7 @@ export const consolePage = (nonce: string, env: string) => {
     <div class="nav-label">Mon argent</div>
     ${navItem('home', 'home', 'home', 'Vue d’ensemble')}
     ${navItem('activity', 'activity', 'list', 'Activité')}
-    ${navItem('deposit', 'deposit', 'plus', 'Recharger')}
+    ${navItem('deposit', 'deposit', 'plus', 'Dépôt')}
     ${navItem('send', 'send', 'send', 'Envoyer')}
     ${navItem('withdraw', 'withdraw', 'withdraw', 'Retirer')}
     <div class="nav-label">Autorisations</div>
@@ -75,7 +75,7 @@ export const consolePage = (nonce: string, env: string) => {
 <section class="screen fill" data-screen="home" hidden><div class="page">
   <div class="page-head"><h1 class="page-title" id="homeTitle">Vue d’ensemble</h1>
     <div class="page-actions" id="homeActions">
-      <a class="btn btn-sm" href="#/deposit">${iconSvg('plus')}Recharger</a>
+      <a class="btn btn-sm" href="#/deposit">${iconSvg('plus')}Dépôt</a>
       <a class="btn btn-sm btn-secondary" href="#/send">${iconSvg('send')}Envoyer</a>
       <a class="btn btn-sm btn-secondary" href="#/withdraw">${iconSvg('withdraw')}Retirer</a>
     </div>
@@ -104,8 +104,8 @@ export const consolePage = (nonce: string, env: string) => {
 
 ${flow(
   'deposit',
-  'Recharger',
-  `<label class="label mt" for="depAmount">Montant à recharger</label>
+  'Dépôt',
+  `<label class="label mt" for="depAmount">Montant à déposer</label>
     <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="depMin">FCFA</div></div>
     <div class="field"><span class="label" id="depNetLabel">Payer avec</span>
       <div class="seg" role="group" aria-labelledby="depNetLabel">
@@ -350,22 +350,9 @@ ${flow(
   <nav class="tabbar console-tabbar" aria-label="Navigation">
     <a href="#/home" data-tab="home">${iconSvg('home')}<span>Accueil</span></a>
     <a href="#/activity" data-tab="activity">${iconSvg('list')}<span>Activité</span></a>
-    <button type="button" id="tabPlus" aria-haspopup="dialog">${iconSvg('plus')}<span>Opération</span></button>
     <a href="#/security" data-tab="security">${iconSvg('user')}<span>Compte</span></a>
   </nav>
 </div>
-</div>
-
-<div class="overlay" id="plusSheet" hidden role="dialog" aria-modal="true" aria-labelledby="plusTitle">
-  <div class="sheet">
-    <h2 class="eyebrow" id="plusTitle">Nouvelle opération</h2>
-    <ul class="list mt">
-      <li><a class="row" href="#/deposit" data-plus><span class="row-icon">${iconSvg('plus')}</span><span class="row-main"><span class="row-title">Recharger</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-      <li><a class="row" href="#/send" data-plus><span class="row-icon">${iconSvg('send')}</span><span class="row-main"><span class="row-title">Envoyer</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-      <li><a class="row" href="#/withdraw" data-plus><span class="row-icon">${iconSvg('withdraw')}</span><span class="row-main"><span class="row-title">Retirer</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-    </ul>
-    <button class="btn btn-secondary mt" type="button" id="plusClose">Fermer</button>
-  </div>
 </div>
 
 <section class="screen" data-screen="bye" hidden>
@@ -485,10 +472,6 @@ ${flow(
     const tab = c ? TAB_OF[c.name] : null;
     document.querySelectorAll('[data-tab]').forEach((a) => { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   }
-  const plusOpen = (open) => { $('plusSheet').hidden = !open; if (open) $('plusSheet').querySelector('a').focus(); };
-  $('tabPlus').addEventListener('click', () => plusOpen(true));
-  $('plusClose').addEventListener('click', () => plusOpen(false));
-  $('plusSheet').addEventListener('click', (e) => { if (e.target === $('plusSheet') || (e.target.closest && e.target.closest('[data-plus]'))) plusOpen(false); });
   if (returnUrl) { $('backToApp').hidden = false; $('backToApp').addEventListener('click', () => location.assign(returnUrl)); }
 
   // ---------------------------------------------------------------- small builders
@@ -538,7 +521,7 @@ ${flow(
   function actTitle(a) {
     const who = a.counterparty || '';
     switch (a.kind) {
-      case 'DEPOSIT': return 'Recharge';
+      case 'DEPOSIT': return 'Dépôt';
       case 'TRANSFER': return a.direction === 'IN' ? 'Reçu de ' + who : 'Envoi à ' + (who || '—');
       case 'WITHDRAWAL': return 'Retrait';
       case 'PAYMENT': return 'Paiement · ' + who;
@@ -624,7 +607,7 @@ ${flow(
     if (!q) return;
     const approx = q.estimated ? '≈ ' : '';
     feeRows($('depFees'), [
-      ['Recharge', LP.money(q.amount, cur())],
+      ['Dépôt', LP.money(q.amount, cur())],
       ['Frais LightPay', LP.money(q.lightpay_fee, cur())],
       ['Frais opérateur', approx + LP.money(q.operator_fee, cur())],
       ['Total à payer', approx + LP.money(q.total, cur()), true],
@@ -1268,7 +1251,7 @@ ${flow(
     screens: {
       home: { enter: withNav(enterHome) },
       activity: { parent: 'home', enter: withNav(enterActivity) },
-      deposit: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Recharger'); say('depMsg', ''); renderDepFees(); }) },
+      deposit: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Dépôt'); say('depMsg', ''); renderDepFees(); }) },
       send: { parent: 'home', enter: withNav(enterSend) },
       'send-review': { parent: 'send', enter: withNav(enterSendReview) },
       'send-done': { parent: 'home', enter: withNav(enterSendDone) },
@@ -1292,7 +1275,7 @@ ${flow(
       el('h2', { text: 'Un seul compte, votre argent et vos apps.' }),
       el('p', { text: 'La même adresse et le même mot de passe pour votre wallet, pour payer sur les sites partenaires et pour gérer vos intégrations.' }),
       el('div', { class: 'auth-tools' }, [
-        tool('wallet', 'Wallet LightPay', 'Recharger, envoyer et retirer vers MTN MoMo ou Airtel Money'),
+        tool('wallet', 'Wallet LightPay', 'Déposer, envoyer et retirer vers MTN MoMo ou Airtel Money'),
         tool('lock', 'Paiements protégés', 'L’argent reste bloqué jusqu’à la livraison de la commande'),
         tool('code', 'Espace développeurs', 'Clés API, webhooks et paiements de vos apps'),
       ]),

@@ -480,7 +480,7 @@ export async function issueFaucet(env: Environment, admin: AdminUser, amountInpu
 export async function rechargeMain(env: Environment, admin: AdminUser, amountInput: unknown, idempotencyKey: string, returnUrl: string | null) {
   if (env !== 'production') throw new AdminError('En test, le faucet se remplit par émission.', 'USE_FAUCET', 400);
   const amount = positive(amountInput);
-  if (amount < minMobileMoneyAmount(env)) throw new AdminError(`Recharge minimum : ${minMobileMoneyAmount(env)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
+  if (amount < minMobileMoneyAmount(env)) throw new AdminError(`Dépôt minimum : ${minMobileMoneyAmount(env)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   const main = await LedgerEngine.getOrCreateMainTreasury('mainapp', env, CURRENCY);
   const key = `admin-recharge:${idempotencyKey}`;
   const [existing] = await query(`SELECT id FROM checkout_sessions WHERE app_id = 'mainapp' AND environment = $1 AND idempotency_key = $2`, [env, key], env);
@@ -488,7 +488,7 @@ export async function rechargeMain(env: Environment, admin: AdminUser, amountInp
   const id = `cs_live_${crypto.randomBytes(18).toString('base64url')}`;
   await query(
     `INSERT INTO checkout_sessions (id, app_id, environment, idempotency_key, kind, amount, fee_amount, currency, description, payee_wallet_id, escrow, methods, return_url, expires_at)
-     VALUES ($1, 'mainapp', $2, $3, 'DEPOSIT', $4, 0, $5, 'Recharge du wallet main', $6, FALSE, '["mobile_money"]'::jsonb, $7, NOW() + interval '30 minutes')`,
+     VALUES ($1, 'mainapp', $2, $3, 'DEPOSIT', $4, 0, $5, 'Dépôt sur le wallet main', $6, FALSE, '["mobile_money"]'::jsonb, $7, NOW() + interval '30 minutes')`,
     [id, env, key, amount.toString(), CURRENCY, main, returnUrl],
     env
   );

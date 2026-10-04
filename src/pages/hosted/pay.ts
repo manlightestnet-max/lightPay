@@ -84,7 +84,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
         <li><div class="row"><span class="avatar" id="walletAvatar" aria-hidden="true"></span><span class="row-main"><span class="row-title" id="walletWho"></span><span class="row-sub">Wallet LightPay</span></span><button class="link" type="button" id="walletSwitch">Changer</button></div></li>
         <li><div class="row"><span class="row-main"><span class="row-title">Solde disponible</span></span><span class="row-end" id="walletBalance"></span></div></li>
       </ul>
-      <p class="quiet warn" id="walletLow" hidden>${iconSvg('alert')}<span>Solde insuffisant. <a class="link" id="walletTopup" href="/account#/deposit">Recharger mon wallet</a> ou payez par mobile money.</span></p>
+      <p class="quiet warn" id="walletLow" hidden>${iconSvg('alert')}<span>Solde insuffisant. <a class="link" id="walletTopup" href="/account#/deposit">Déposer sur mon wallet</a> ou payez par mobile money.</span></p>
       <div class="fees" id="walletFees" hidden></div>
     </div>
 
@@ -190,7 +190,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     const c = session.currency;
     const approx = q.estimated ? '≈ ' : '';
     feeRows($('feeBox'), [
-      [session.kind === 'DEPOSIT' ? 'Recharge' : 'Montant', LP.money(q.amount, c)],
+      [session.kind === 'DEPOSIT' ? 'Dépôt' : 'Montant', LP.money(q.amount, c)],
       ['Frais', approx + '+' + LP.money(String(Number(q.total) - Number(q.amount)), c)],
       ['Total à payer', approx + LP.money(q.total, c), true],
     ]);
@@ -260,7 +260,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     session = s;
     const c = s.currency;
     $('merchantAvatar').textContent = initials(s.kind === 'DEPOSIT' ? 'LightPay' : s.merchant);
-    $('merchant').textContent = s.kind === 'DEPOSIT' ? 'Recharge LightPay' : s.merchant;
+    $('merchant').textContent = s.kind === 'DEPOSIT' ? 'Dépôt LightPay' : s.merchant;
     $('payee').textContent = s.kind === 'DEPOSIT' ? 'Votre wallet' : (s.payee ? 'Vendeur : ' + s.payee : 'Paiement sécurisé');
     $('amount').textContent = LP.money(s.amount, c);
     const d = s.kind === 'DEPOSIT' ? '' : [s.description, s.reference].filter(Boolean).join(' · ');
@@ -295,7 +295,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   function showDone(s) {
     const c = s.currency, a = s.last_attempt;
     $('doneTitle').textContent = s.kind === 'DEPOSIT' ? 'Wallet rechargé' : 'Paiement confirmé';
-    const rows = [[s.kind === 'DEPOSIT' ? 'Recharge' : 'Montant', LP.money(s.amount, c)]];
+    const rows = [[s.kind === 'DEPOSIT' ? 'Dépôt' : 'Montant', LP.money(s.amount, c)]];
     if (!paidWithWallet && a && a.status === 'SUCCEEDED') {
       rows.push(['Frais LightPay', LP.money(a.lightpay_fee, c)]);
       if (a.operator_fee) rows.push(['Frais opérateur', LP.money(a.operator_fee, c)]);

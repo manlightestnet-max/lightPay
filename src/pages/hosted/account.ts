@@ -19,15 +19,20 @@ export const accountPage = (nonce: string, env: string) => {
   const body = `
 <section class="screen" data-screen="home" hidden>
   ${topbar({ brand: true, back: false, env, end: '<button class="icon-btn" type="button" id="homeBack" hidden aria-label="Retour à l’application">' + iconSvg('x') + '</button>' })}
-  <div class="pinned">
-    <div class="hero">
-      <div class="hero-label" id="homeHello">Disponible</div>
-      <div class="amount-xl" id="homeAvailable"><span class="sk sk-amount"></span></div>
-      <div class="hero-sub" id="homeLockedLine" hidden>${iconSvg('lock')}<span id="homeLocked"></span></div>
+  <div class="content" id="homeScroll">
+    <div class="hero hero-split" id="homeHero">
+      <div class="hero-main">
+        <div class="hero-label">Disponible</div>
+        <div class="amount-xl" id="homeAvailable"><span class="sk sk-amount"></span></div>
+        <div class="hero-sub" id="homeLockedLine" hidden>${iconSvg('lock')}<span id="homeLocked"></span></div>
+      </div>
+      <div class="hero-actions" id="homeActions">
+        <button class="btn btn-sm" type="button" data-go="deposit">${iconSvg('plus')}Dépôt</button>
+        <button class="btn btn-sm btn-secondary" type="button" data-go="withdraw">${iconSvg('withdraw')}Retrait</button>
+      </div>
     </div>
+    <a class="send-link" href="#/send">${iconSvg('send')}<span>Envoyer à un @pseudo</span>${iconSvg('chevron-right', 'chev')}</a>
     <div class="note warn" id="homeClosed" hidden>${iconSvg('alert')}<p>Ce compte LightPay est fermé : il ne peut plus recevoir ni envoyer d’argent.</p></div>
-  </div>
-  <div class="content">
     <div class="section-head sticky"><h2>Activité</h2><a class="link" href="#/activity">Tout voir</a></div>
     <ul class="list" id="homeActivity">${skeletonRows(4)}</ul>
     <div class="msg" id="homeMsg" role="status" aria-live="polite"></div>
@@ -35,9 +40,9 @@ export const accountPage = (nonce: string, env: string) => {
 </section>
 
 <section class="screen" data-screen="deposit" hidden>
-  ${bar('Recharger')}
+  ${bar('Dépôt')}
   <div class="content">
-    <label class="label" for="depAmount">Montant à recharger</label>
+    <label class="label" for="depAmount">Montant à déposer</label>
     <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="depMin">FCFA</div></div>
     <div class="field"><span class="label" id="depNetLabel">Payer avec</span>
       <div class="seg" role="group" aria-labelledby="depNetLabel">
@@ -47,7 +52,7 @@ export const accountPage = (nonce: string, env: string) => {
     </div>
     <div class="fees" id="depFees" hidden></div>
     <div class="msg" id="depMsg" role="status" aria-live="polite"></div>
-    <div class="note">${iconSvg('info')}<p>Vous validerez le paiement sur votre téléphone. Le montant rechargé est crédité dès la confirmation de l’opérateur.</p></div>
+    <div class="note">${iconSvg('info')}<p>Vous validerez le paiement sur votre téléphone. Le montant déposé est crédité dès la confirmation de l’opérateur.</p></div>
   </div>
   <div class="actions-bar"><button class="btn" type="button" id="depGo" disabled>Continuer vers le paiement</button></div>
 </section>
@@ -255,21 +260,8 @@ export const accountPage = (nonce: string, env: string) => {
 <nav class="tabbar" id="tabbar" aria-label="Navigation" hidden>
   <a href="#/home" data-tab="home">${iconSvg('home')}<span>Accueil</span></a>
   <a href="#/activity" data-tab="activity">${iconSvg('list')}<span>Activité</span></a>
-  <button type="button" id="tabPlus" aria-haspopup="dialog">${iconSvg('plus')}<span>Opération</span></button>
   <a href="#/account" data-tab="account">${iconSvg('user')}<span>Compte</span></a>
 </nav>
-
-<div class="overlay" id="plusSheet" hidden role="dialog" aria-modal="true" aria-labelledby="plusTitle">
-  <div class="sheet">
-    <h2 class="eyebrow" id="plusTitle">Nouvelle opération</h2>
-    <ul class="list mt">
-      <li><button class="row" type="button" data-plus="deposit"><span class="row-icon">${iconSvg('plus')}</span><span class="row-main"><span class="row-title">Recharger</span><span class="row-sub">Depuis MTN MoMo ou Airtel Money</span></span>${iconSvg('chevron-right', 'chev')}</button></li>
-      <li><button class="row" type="button" data-plus="send"><span class="row-icon">${iconSvg('send')}</span><span class="row-main"><span class="row-title">Envoyer</span><span class="row-sub">À un @pseudo ou un e-mail, gratuit</span></span>${iconSvg('chevron-right', 'chev')}</button></li>
-      <li><button class="row" type="button" data-plus="withdraw"><span class="row-icon">${iconSvg('withdraw')}</span><span class="row-main"><span class="row-title">Retirer</span><span class="row-sub">Vers votre mobile money</span></span>${iconSvg('chevron-right', 'chev')}</button></li>
-    </ul>
-    <button class="btn btn-secondary mt" type="button" id="plusClose">Fermer</button>
-  </div>
-</div>
 
 <div class="overlay" id="reauth" hidden role="dialog" aria-modal="true" aria-labelledby="reTitle">
   <form class="sheet" id="reForm" novalidate>
@@ -324,7 +316,7 @@ export const accountPage = (nonce: string, env: string) => {
   function actTitle(a) {
     const who = a.counterparty || '';
     switch (a.kind) {
-      case 'DEPOSIT': return 'Recharge';
+      case 'DEPOSIT': return 'Dépôt';
       case 'TRANSFER': return a.direction === 'IN' ? 'Reçu de ' + who : 'Envoi à ' + (who || '—');
       case 'WITHDRAWAL': return 'Retrait';
       case 'PAYMENT': return 'Paiement · ' + who;
@@ -369,6 +361,8 @@ export const accountPage = (nonce: string, env: string) => {
     $('depMin').textContent = 'FCFA · minimum ' + lim('deposit_min').toLocaleString('fr-FR');
     const closed = me.wallet.status !== 'ACTIVE';
     $('homeClosed').hidden = !closed;
+    $('homeActions').hidden = closed;
+    $('topBalance').textContent = LP.money(me.wallet.available_balance, cur());
     $('accAvatar').textContent = initials(name);
     $('accName').textContent = name;
     $('accHandle').textContent = me.username ? '@' + me.username : '';
@@ -395,11 +389,12 @@ export const accountPage = (nonce: string, env: string) => {
     $('tabbar').hidden = !tab;
     document.querySelectorAll('[data-tab]').forEach((a) => { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   }
-  const plusOpen = (open) => { $('plusSheet').hidden = !open; if (open) $('plusSheet').querySelector('button').focus(); };
-  $('tabPlus').addEventListener('click', () => plusOpen(true));
-  $('plusClose').addEventListener('click', () => plusOpen(false));
-  $('plusSheet').addEventListener('click', (e) => { if (e.target === $('plusSheet')) plusOpen(false); });
-  document.querySelectorAll('[data-plus]').forEach((b) => b.addEventListener('click', () => { plusOpen(false); nav.go(b.dataset.plus); }));
+  // The balance scrolls away with the list; once it is gone it shows small in the top bar.
+  const homeBar = document.querySelector('[data-screen="home"] .topbar');
+  homeBar.querySelector('.topbar-title').append(el('span', { class: 'top-balance', id: 'topBalance', 'aria-hidden': 'true' }));
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver((entries) => entries.forEach((e) => homeBar.classList.toggle('collapsed', !e.isIntersecting)), { root: $('homeScroll'), threshold: 0 }).observe($('homeHero'));
+  }
 
   // ---------------------------------------------------------------- deposit
   let depNet = 'MTN_MOMO_COG', depQuotes = null;
@@ -420,7 +415,7 @@ export const accountPage = (nonce: string, env: string) => {
     if (!q) return;
     const approx = q.estimated ? '≈ ' : '';
     feeRows($('depFees'), [
-      ['Recharge', LP.money(q.amount, cur())],
+      ['Dépôt', LP.money(q.amount, cur())],
       ['Frais LightPay', LP.money(q.lightpay_fee, cur())],
       ['Frais opérateur', approx + LP.money(q.operator_fee, cur())],
       ['Total à payer', approx + LP.money(q.total, cur()), true],

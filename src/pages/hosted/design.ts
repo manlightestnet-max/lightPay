@@ -246,11 +246,22 @@ a.row:hover .row-title, button.row:hover .row-title { text-decoration: underline
 .section-head.sticky, .group-label { position: sticky; top: 0; z-index: 2; background: var(--card); }
 .section-head.sticky { margin: 0; padding: 14px 0 6px; }
 .group-label { margin: 0; padding: 14px 0 4px; }
-.tabbar { flex-shrink: 0; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); background: var(--card); padding-bottom: env(safe-area-inset-bottom); }
+.tabbar { flex-shrink: 0; display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); background: var(--card); padding-bottom: env(safe-area-inset-bottom); }
 .tabbar > a, .tabbar > button { min-height: 58px; border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--faint); text-decoration: none; font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
 .tabbar svg { width: 21px; height: 21px; }
 .tabbar > [aria-current="page"] { color: var(--text); }
-.tabbar > button svg { width: 24px; height: 24px; color: var(--text); }
+.hero-split { display: flex; align-items: center; justify-content: space-between; gap: 16px; text-align: left; padding: 20px 0 14px; }
+.hero-split .hero-main { min-width: 0; }
+.hero-split .hero-sub { justify-content: flex-start; }
+.hero-split .amount-xl { font-size: 34px; }
+.hero-actions { display: grid; gap: 8px; flex-shrink: 0; width: 132px; }
+.btn.btn-sm { min-height: 40px; padding: 0 14px; font-size: 11px; }
+.btn.btn-sm svg { width: 16px; height: 16px; }
+.send-link { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 14px; }
+.send-link svg { width: 18px; height: 18px; } .send-link span { flex: 1; }
+.top-balance { display: none; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.topbar.collapsed .brand { display: none; }
+.topbar.collapsed .top-balance { display: inline; }
 .profile { display: flex; align-items: center; gap: 14px; padding: 18px 0 4px; }
 .profile-main { min-width: 0; }
 .profile-name { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

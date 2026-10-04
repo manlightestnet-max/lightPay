@@ -18,7 +18,7 @@ export type Scope = (typeof SCOPES)[number];
 export const SCOPE_LABELS: Record<Scope, string> = {
   'balance:read': 'Voir le solde et l’historique de votre wallet',
   payee: 'Vous verser l’argent de vos ventes sur votre wallet',
-  deposit: 'Vous proposer des recharges de votre wallet',
+  deposit: 'Vous proposer des dépôts sur votre wallet',
   charge: 'Débiter votre wallet pour vos achats',
 };
 

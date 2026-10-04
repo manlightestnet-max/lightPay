@@ -181,7 +181,7 @@ ${page('main', '<span data-real>Wallet main</span><span data-test hidden>Faucet<
         <div class="msg" id="issueMsg" role="status" aria-live="polite"></div>
         <button class="btn btn-secondary mt" type="submit" id="issueGo">${iconSvg('plus')}Émettre</button>
       </form>`)}</div>
-    <div data-real>${panel('Recharger', `
+    <div data-real>${panel('Déposer', `
       <form id="rechargeForm" novalidate>
         <div class="field"><label for="rechargeAmount">Montant (FCFA)</label><input id="rechargeAmount" data-amount inputmode="numeric" autocomplete="off"></div>
         <p class="hint">Vous payez par MTN MoMo ou Airtel Money sur la page LightPay : l’argent arrive dans le wallet main une fois validé.</p>
@@ -195,8 +195,8 @@ ${page('main', '<span data-real>Wallet main</span><span data-test hidden>Faucet<
 ${page('fees', 'Frais et minimums', `
   <form id="feesForm" novalidate>
   <div class="grid-2">
-    ${panel('Recharges et paiements mobile money', `
-      ${feeField('deposit_min', 'Montant minimum', 'fcfa', 'Plus petite recharge ou plus petit paiement accepté.')}
+    ${panel('Dépôts et paiements mobile money', `
+      ${feeField('deposit_min', 'Montant minimum', 'fcfa', 'Plus petit dépôt ou plus petit paiement accepté.')}
       ${feeField('deposit_lightpay_fee_min', 'Frais LightPay minimum', 'fcfa')}
       ${feeField('deposit_lightpay_fee_bps', 'Frais LightPay', 'pct', 'Le plus grand des deux s’applique.')}
       ${feeField('deposit_operator_fee_bps', 'Frais opérateur estimés', 'pct', 'Affichés avant le paiement. Le montant exact vient de l’opérateur.')}
@@ -253,7 +253,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   const PROVIDER = { SASPAY: 'SasPay', SIMULATOR: 'Simulateur', AUTRE: 'Sans provider indiqué' };
   const ACTION = LP.ENV === 'sandbox'
     ? { MAIN_SEND: 'Envoi depuis le faucet', FAUCET_ISSUE: 'Émission d’argent de test' }
-    : { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Recharge du wallet main' };
+    : { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Dépôt sur le wallet main' };
   ACTION.FEES_UPDATE = 'Frais et minimums modifiés';
   ACTION.DEVELOPER_APPROVED = 'Mode avancé validé';
   ACTION.DEVELOPER_REJECTED = 'Mode avancé refusé';
@@ -635,7 +635,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     const dep = Math.max(s.deposit_min, 1000);
     const dLp = Math.max(s.deposit_lightpay_fee_min, byRate(dep, s.deposit_lightpay_fee_bps));
     const dOp = byRate(dep + dLp, s.deposit_operator_fee_bps);
-    rows($('feesDepEx'), [['Exemple : recharge de', money(dep)], ['Frais LightPay', money(dLp)], ['Frais opérateur (estimés)', money(dOp)], ['Le client paie', money(dep + dLp + dOp), true]]);
+    rows($('feesDepEx'), [['Exemple : dépôt de', money(dep)], ['Frais LightPay', money(dLp)], ['Frais opérateur (estimés)', money(dOp)], ['Le client paie', money(dep + dLp + dOp), true]]);
     const wd = Math.max(s.withdrawal_min, 1000);
     const wLp = Math.max(s.withdrawal_lightpay_fee_min, byRate(wd, s.withdrawal_lightpay_fee_bps));
     const wOp = Math.max(s.withdrawal_operator_fee_min, byRate(wd, s.withdrawal_operator_fee_bps));

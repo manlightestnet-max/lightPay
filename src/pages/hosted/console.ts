@@ -205,8 +205,7 @@ textarea.field-area:focus { outline: none; border-color: var(--accent); box-shad
   .screen.fill > .page { padding-bottom: 12px; }
   .well { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; padding: 14px 16px; }
   .stat-value { font-size: 20px; }
-  /* phones: the bottom bar's + replaces the action buttons; only the balance figures stay */
-  .screen.fill .page-actions { display: none; }
+  /* phones: only the balance figures stay */
   .screen.fill .well > .stat:nth-child(n+3), .screen.fill .stat-hint { display: none; }
   .page { padding: 20px 16px 48px; }
   .page-title { font-size: 21px; }

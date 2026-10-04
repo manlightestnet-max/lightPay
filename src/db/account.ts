@@ -53,7 +53,7 @@ const activeWallet = async (environment: Environment, user: LightPayUser) => {
 /** Top-up of my own wallet: a DEPOSIT session paid on the hosted page by mobile money. */
 export async function selfDeposit(environment: Environment, user: LightPayUser, amountInput: unknown, idempotencyKey: string) {
   const amount = positive(amountInput);
-  if (amount < minMobileMoneyAmount(environment)) throw new ConnectError(`Recharge minimum : ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
+  if (amount < minMobileMoneyAmount(environment)) throw new ConnectError(`Dépôt minimum : ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   const wallet = await activeWallet(environment, user);
   const existing = (
     await query(`SELECT id FROM checkout_sessions WHERE app_id = 'mainapp' AND environment = $1 AND idempotency_key = $2`, [environment, `self:${user.uid}:${idempotencyKey}`], environment)
@@ -62,7 +62,7 @@ export async function selfDeposit(environment: Environment, user: LightPayUser, 
   const id = newId(environment === 'sandbox' ? 'cs_test_' : 'cs_live_');
   await query(
     `INSERT INTO checkout_sessions (id, app_id, environment, idempotency_key, kind, amount, fee_amount, currency, description, payee_wallet_id, escrow, methods, return_url, expires_at)
-     VALUES ($1, 'mainapp', $2, $3, 'DEPOSIT', $4, 0, $5, 'Recharge du wallet LightPay', $6, FALSE, '["mobile_money"]'::jsonb, NULL, NOW() + interval '30 minutes')`,
+     VALUES ($1, 'mainapp', $2, $3, 'DEPOSIT', $4, 0, $5, 'Dépôt sur le wallet LightPay', $6, FALSE, '["mobile_money"]'::jsonb, NULL, NOW() + interval '30 minutes')`,
     [id, environment, `self:${user.uid}:${idempotencyKey}`, amount.toString(), wallet.currency, wallet.id],
     environment
   );

@@ -432,7 +432,7 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
       metadata: { checkout_session: session.id, attempt: attempt.id, provider: attempt.provider, network: attempt.network, provider_reference: providerReference, deposit: true },
       postings: [
         { walletId: inflow, direction: 'DEBIT', amount: gross, description: `Mobile money in [${attempt.network}] - ${attempt.id}` },
-        { walletId: session.payee_wallet_id, direction: 'CREDIT', amount, description: 'Recharge du wallet' },
+        { walletId: session.payee_wallet_id, direction: 'CREDIT', amount, description: 'Dépôt sur le wallet' },
         ...feePosting,
       ],
     });
@@ -686,7 +686,7 @@ export async function payWithWallet(id: string, user: LightPayUser) {
   } catch (err: any) {
     await query(`UPDATE checkout_sessions SET status = 'OPEN', updated_at = NOW() WHERE id = $1 AND status = 'PROCESSING'`, [session.id], env);
     await journal('FAILED', err);
-    if (String(err.message).startsWith('Insufficient funds')) throw new CheckoutError('Solde LightPay insuffisant. Rechargez votre wallet ou payez par mobile money.', 'INSUFFICIENT_FUNDS', 402);
+    if (String(err.message).startsWith('Insufficient funds')) throw new CheckoutError('Solde LightPay insuffisant. Déposez sur votre wallet ou payez par mobile money.', 'INSUFFICIENT_FUNDS', 402);
     throw err;
   }
 
@@ -727,7 +727,7 @@ export async function createDepositSession(
   const id = newId(environment === 'sandbox' ? 'cs_test_' : 'cs_live_');
   const [session] = await query(
     `INSERT INTO checkout_sessions (id, app_id, environment, idempotency_key, kind, amount, fee_amount, currency, reference, description, payee_wallet_id, payee_connection_id, escrow, methods, return_url, cancel_url, expires_at)
-     VALUES ($1, $2, $3, $4, 'DEPOSIT', $5, 0, $6, $7, 'Recharge du wallet LightPay', $8, $9, FALSE, '["mobile_money"]'::jsonb, $10, $11, NOW() + interval '30 minutes')
+     VALUES ($1, $2, $3, $4, 'DEPOSIT', $5, 0, $6, $7, 'Dépôt sur le wallet LightPay', $8, $9, FALSE, '["mobile_money"]'::jsonb, $10, $11, NOW() + interval '30 minutes')
      RETURNING *`,
     [id, appId, environment, idempotencyKey, input.amount.toString(), input.currency ?? 'XAF', input.reference ?? null, person.wallet_id, person.id, safeUrl(input.returnUrl), safeUrl(input.cancelUrl)],
     environment
