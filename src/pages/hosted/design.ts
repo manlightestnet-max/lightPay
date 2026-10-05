@@ -142,9 +142,23 @@ svg.i { width: 20px; height: 20px; flex-shrink: 0; }
 .home-more { display: block; margin: 8px 0 4px; padding: 14px; border-radius: 14px; background: var(--raised); text-align: center; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500; }
 .send-link { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 14px; background: var(--raised); color: var(--text); text-decoration: none; font-size: 14px; }
 .send-link svg { width: 18px; height: 18px; } .send-link .chev { color: var(--faint); } .send-link span { flex: 1; }
-.top-balance { display: none; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; animation: fade .2s; }
-.topbar.collapsed .brand { display: none; }
-.topbar.collapsed .top-balance { display: inline; }
+/* home: compact bar (motion on scroll) */
+[data-screen="home"] { position: relative; }
+.home-compact { position: absolute; top: var(--compact-top, 60px); left: 0; right: 0; z-index: 4; padding: 6px 24px 12px; background: var(--card); box-shadow: 0 10px 18px -14px rgba(0,0,0,.5);
+  opacity: 0; visibility: hidden; transform: translateY(-14px); transition: opacity .22s var(--ease), transform .26s var(--ease), visibility 0s linear .26s; }
+.compact-on .home-compact { opacity: 1; visibility: visible; transform: none; transition: opacity .22s var(--ease), transform .26s var(--ease), visibility 0s; }
+@media (min-width: 480px) { .home-compact { padding: 6px 32px 12px; } }
+.compact-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.compact-main { min-width: 0; }
+.compact-amount { font-size: 24px; font-weight: 600; letter-spacing: -.02em; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.compact-amount .cur { font-size: .5em; font-weight: 500; color: var(--muted); margin-left: 3px; }
+.compact-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.compact-actions .chip { height: 36px; padding: 0 12px 0 10px; font-size: 12.5px; }
+.home-compact .send-link { margin-top: 10px; padding: 11px 14px; }
+.home-hero { transition: opacity .25s var(--ease), transform .3s var(--ease); }
+.compact-on .home-hero { opacity: 0; transform: scale(.96); }
+.compact-on .section-head.sticky { top: var(--compact-h, 116px); }
+.section-head.sticky { transition: top .26s var(--ease); }
 
 /* ---------- sections / activity ---------- */
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 28px 0 4px; }

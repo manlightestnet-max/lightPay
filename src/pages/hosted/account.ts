@@ -19,6 +19,16 @@ export const accountPage = (nonce: string, env: string) => {
   const body = `
 <section class="screen" data-screen="home" hidden>
   ${topbar({ brand: true, back: false, env, end: '<button class="icon-btn" type="button" id="homeBack" hidden aria-label="Retour à l’application">' + iconSvg('x') + '</button>' })}
+  <div class="home-compact" id="homeCompact" aria-hidden="true">
+    <div class="compact-row">
+      <div class="compact-main"><div class="hero-label">Disponible</div><div class="compact-amount" id="compactAmount"></div></div>
+      <div class="compact-actions">
+        <button class="chip primary" type="button" data-go="deposit" tabindex="-1">${iconSvg('plus')}Dépôt</button>
+        <button class="chip" type="button" data-go="withdraw" tabindex="-1">${iconSvg('withdraw')}Retrait</button>
+      </div>
+    </div>
+    <a class="send-link" href="#/send" tabindex="-1">${iconSvg('send')}<span>Envoyer à un @pseudo</span>${iconSvg('chevron-right', 'chev')}</a>
+  </div>
   <div class="content" id="homeScroll">
     <div class="hero home-hero" id="homeHero">
       <div class="amount-xl" id="homeAvailable"><span class="sk sk-amount"></span></div>
@@ -365,7 +375,7 @@ export const accountPage = (nonce: string, env: string) => {
     const closed = me.wallet.status !== 'ACTIVE';
     $('homeClosed').hidden = !closed;
     $('homeActions').hidden = closed;
-    $('topBalance').textContent = LP.money(me.wallet.available_balance, cur());
+    amountParts($('compactAmount'), me.wallet.available_balance, cur());
     $('accAvatar').textContent = initials(name);
     $('accName').textContent = name;
     $('accHandle').textContent = me.username ? '@' + me.username : '';
@@ -396,10 +406,20 @@ export const accountPage = (nonce: string, env: string) => {
     document.querySelectorAll('[data-tab]').forEach((a) => { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   }
   // The balance scrolls away with the list; once it is gone it shows small in the top bar.
-  const homeBar = document.querySelector('[data-screen="home"] .topbar');
-  homeBar.querySelector('.topbar-title').append(el('span', { class: 'top-balance', id: 'topBalance', 'aria-hidden': 'true' }));
+  // Scrolling: once the big balance and its buttons pass under the top, a compact bar slides in
+  // (balance left, Dépôt / Retrait right, "Envoyer à un @pseudo" under it); scrolling back up,
+  // it slides away and the big balance is there again. The Activité heading sticks below it.
+  const homeScreen = document.querySelector('[data-screen="home"]');
+  function compact(on) {
+    if (homeScreen.classList.contains('compact-on') === on) return;
+    homeScreen.style.setProperty('--compact-h', $('homeCompact').offsetHeight + 'px');
+    homeScreen.style.setProperty('--compact-top', $('homeScroll').offsetTop + 'px');
+    homeScreen.classList.toggle('compact-on', on);
+    $('homeCompact').setAttribute('aria-hidden', String(!on));
+    $('homeCompact').querySelectorAll('button, a').forEach((b) => { b.tabIndex = on ? 0 : -1; });
+  }
   if ('IntersectionObserver' in window) {
-    new IntersectionObserver((entries) => entries.forEach((e) => homeBar.classList.toggle('collapsed', !e.isIntersecting)), { root: $('homeScroll'), threshold: 0 }).observe($('homeHero'));
+    new IntersectionObserver((entries) => entries.forEach((e) => compact(!e.isIntersecting && e.boundingClientRect.top < e.rootBounds.top + 1)), { root: $('homeScroll'), threshold: 0 }).observe($('homeActions'));
   }
 
   // ---------------------------------------------------------------- deposit
