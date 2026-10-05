@@ -274,7 +274,8 @@ export const CLIENT = (env: string) => `
       const finish = (ok) => {
         if (done) return;
         done = true;
-        overlay.remove();
+        overlay.classList.add('closing');
+        setTimeout(() => overlay.remove(), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200);
         document.removeEventListener('keydown', onKey);
         if (!ok && before && before.focus) before.focus();
         resolve(ok);
@@ -291,7 +292,8 @@ export const CLIENT = (env: string) => `
       const overlay = el('div', { class: 'overlay' }, [sheet]);
       overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
       document.addEventListener('keydown', onKey);
-      document.body.append(overlay);
+      // In the app frame (the bottom sheet sits on its bottom edge, on phones and in the card).
+      (document.querySelector('.app') || document.body).append(overlay);
       go.focus();
     });
   }

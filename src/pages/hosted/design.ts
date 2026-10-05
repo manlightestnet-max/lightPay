@@ -75,7 +75,7 @@ h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 
 /* ---------- layout: a fixed-height app frame; only the content area scrolls ---------- */
 html, body { height: 100%; overflow: hidden; }
-.app { width: 100%; height: 100vh; height: 100dvh; background: var(--card); display: flex; flex-direction: column; overflow: hidden; }
+.app { position: relative; width: 100%; height: 100vh; height: 100dvh; background: var(--card); display: flex; flex-direction: column; overflow: hidden; }
 .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; animation: enter .2s var(--ease); }
 .content, .screen > .state { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .content::-webkit-scrollbar, .screen > .state::-webkit-scrollbar { display: none; }
@@ -297,9 +297,16 @@ a.tx:active { background: var(--raised); }
 .danger-zone { margin-top: 28px; padding: 16px; border-radius: 16px; background: var(--danger-soft); }
 
 /* ---------- overlay sheet ---------- */
-.overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.6); display: flex; align-items: flex-end; justify-content: center; padding: 0; animation: fade .15s var(--ease); }
-.sheet { width: 100%; max-width: 440px; background: var(--card); border-radius: var(--radius) var(--radius) 0 0; padding: 22px 24px calc(22px + env(safe-area-inset-bottom)); box-shadow: var(--shadow); animation: enter .2s var(--ease); }
-@media (min-width: 480px) { .overlay { align-items: center; padding: 16px; } .sheet { border-radius: var(--radius); padding: 26px; } }
+/* Bottom sheet: inside the app frame, attached to its bottom edge, slides up; a handle on top. */
+.overlay { position: absolute; inset: 0; z-index: 50; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; padding: 0; animation: fade .18s var(--ease); }
+.sheet { position: relative; width: 100%; max-height: 92%; overflow-y: auto; background: var(--card); border-radius: 24px 24px 0 0; padding: 30px 24px calc(22px + env(safe-area-inset-bottom)); box-shadow: 0 -12px 40px -12px rgba(0,0,0,.45); animation: sheet-up .28s var(--ease); }
+.sheet::before { content: ''; position: absolute; top: 10px; left: 50%; width: 40px; height: 4px; margin-left: -20px; border-radius: 999px; background: var(--line-strong); }
+@media (min-width: 480px) { .sheet { padding: 32px 32px 26px; } }
+@keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+.overlay.closing { animation: fade-out .2s var(--ease) forwards; }
+.overlay.closing .sheet { animation: sheet-down .2s var(--ease) forwards; }
+@keyframes sheet-down { to { transform: translateY(100%); } }
+@keyframes fade-out { to { opacity: 0; } }
 .sheet .eyebrow { text-align: center; }
 .sheet-amount { text-align: center; font-size: 34px; margin-top: 6px; }
 .sheet .receipt { margin-top: 10px; }
