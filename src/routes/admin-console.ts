@@ -24,7 +24,7 @@ import {
 import { Environment } from '../types/index.js';
 import { DEFAULT_FEE_SETTINGS, FeeSettingsError, feeSettings, loadFeeSettings, saveFeeSettings, validateFeeSettings } from '../payments/fee-settings.js';
 import { auditAction, providerStats } from '../db/admin-console.js';
-import { PROVIDERS_OF, ProviderSettingsError, loadProviderSettings, providerSettings, saveProviderSettings, validateProviderSettings } from '../payments/provider-settings.js';
+import { PROVIDER_NAMES, ProviderSettingsError, servesLedger, loadProviderSettings, providerSettings, saveProviderSettings, validateProviderSettings } from '../payments/provider-settings.js';
 import { providerByName, providerFor } from '../payments/mobile-money.js';
 import { decideDeveloperAccess, listDeveloperRequests } from '../db/identity.js';
 import { ConnectError } from '../db/connect.js';
@@ -221,7 +221,8 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
           status: 'success',
           saved: Boolean(saved),
           current: { collection: providerFor(env, 'MTN_MOMO_COG', 'collection').name, payout: providerFor(env, 'MTN_MOMO_COG', 'payout').name },
-          providers: PROVIDERS_OF[env].map((name) => ({ name, configured: providerByName(name).configured(env) })),
+          // All of them, with whether they serve this ledger (only those can be chosen).
+          providers: PROVIDER_NAMES.map((name) => ({ name, available: servesLedger(env, name), configured: providerByName(name).configured(env) })),
           stats: await providerStats(env, 'month'),
         };
       });

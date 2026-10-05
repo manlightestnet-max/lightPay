@@ -206,7 +206,7 @@ ${page('providers', 'Fournisseurs mobile money', `
         <button class="btn mt" type="submit" id="provGo">${iconSvg('check')}Enregistrer</button>
         <p class="hint">Pour les nouvelles opérations, sur cet environnement seulement. Une opération en cours reste chez son fournisseur. Inscrit au journal admin.</p>
       </form>`)}
-    ${panel('Clés', '<div class="rows" id="provKeys"></div>', { foot: 'Un fournisseur sans clés ne peut pas être choisi.' })}
+    ${panel('Les fournisseurs', '<div id="provKeys"></div>', { flush: true, foot: 'Seuls ceux qui servent cet environnement, clés en place, peuvent être choisis.' })}
   </div>
   ${panel('Par fournisseur · 30 derniers jours', '<div id="provStats"></div>', { flush: true })}
 `)}
@@ -638,6 +638,11 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
 
   // ---------------------------------------------------------------- providers (admin only)
   const provName = (n) => PROVIDER[String(n).toUpperCase()] || n;
+  const PROVIDER_DESC = {
+    saspay: 'MTN et Airtel Congo, encaissements et retraits. Réel seulement : pas de mode test.',
+    pawapay: 'MTN et Airtel Congo. Test : sandbox pawaPay. Réel : selon les droits du compte (encaissements pour l’instant).',
+    simulator: 'Test seulement : répond comme un opérateur, sans argent réel.',
+  };
   function providerTable(host, list) {
     table(host, [{ label: 'Fournisseur' }, { label: 'Encaissé', cls: 'num' }, { label: 'Envoyé', cls: 'num' }, { label: 'Échecs', cls: 'num' }], list.map((p) => ({
       cells: [
@@ -653,10 +658,14 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       provInfo = await LP.api('GET', '/v1/admin-console/providers');
       ['provCollection', 'provPayout'].forEach((id) => {
         const kind = id === 'provCollection' ? 'collection' : 'payout';
-        $(id).replaceChildren.apply($(id), provInfo.providers.map((p) => el('option', { value: p.name, text: provName(p.name) + (p.configured ? '' : ' (clés absentes)'), disabled: p.configured ? null : true, selected: provInfo.current[kind] === p.name ? true : null })));
+        $(id).replaceChildren.apply($(id), provInfo.providers.filter((p) => p.available).map((p) => el('option', { value: p.name, text: provName(p.name) + (p.configured ? '' : ' (clés absentes)'), disabled: p.configured ? null : true, selected: provInfo.current[kind] === p.name ? true : null })));
         $(id).value = provInfo.current[kind];
       });
-      rows($('provKeys'), provInfo.providers.map((p) => [provName(p.name), p.configured ? 'Configurées' : 'Absentes']));
+      $('provKeys').replaceChildren(items(provInfo.providers.map((p) => ({
+        title: provName(p.name),
+        sub: PROVIDER_DESC[p.name] || '',
+        end: !p.available ? (p.name === 'simulator' ? 'Test seulement' : 'Réel seulement') : p.configured ? 'Clés en place' : 'Clés absentes',
+      })), ''));
       providerTable($('provStats'), provInfo.stats);
       say('provSaveMsg', provInfo.saved ? '' : 'Aucun choix enregistré : la configuration du serveur s’applique (' + provName(provInfo.current.collection) + ').');
     });
