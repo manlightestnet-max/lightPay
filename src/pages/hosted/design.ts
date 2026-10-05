@@ -136,6 +136,10 @@ svg.i { width: 20px; height: 20px; flex-shrink: 0; }
 .chip.primary { background: var(--accent); color: var(--on-accent); }
 .chip:active { transform: scale(.97); }
 .chip:hover { filter: brightness(1.06); }
+.home-hero { padding: 30px 0 22px; }
+.home-hero .amount-xl { font-size: 44px; }
+.home-actions { display: flex; justify-content: center; gap: 8px; margin-top: 22px; flex-wrap: wrap; }
+.home-more { display: block; margin: 8px 0 4px; padding: 14px; border-radius: 14px; background: var(--raised); text-align: center; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500; }
 .send-link { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 14px; background: var(--raised); color: var(--text); text-decoration: none; font-size: 14px; }
 .send-link svg { width: 18px; height: 18px; } .send-link .chev { color: var(--faint); } .send-link span { flex: 1; }
 .top-balance { display: none; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; animation: fade .2s; }
@@ -296,6 +300,10 @@ a.tx:active { background: var(--raised); }
 .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.6); display: flex; align-items: flex-end; justify-content: center; padding: 0; animation: fade .15s var(--ease); }
 .sheet { width: 100%; max-width: 440px; background: var(--card); border-radius: var(--radius) var(--radius) 0 0; padding: 22px 24px calc(22px + env(safe-area-inset-bottom)); box-shadow: var(--shadow); animation: enter .2s var(--ease); }
 @media (min-width: 480px) { .overlay { align-items: center; padding: 16px; } .sheet { border-radius: var(--radius); padding: 26px; } }
+.sheet .eyebrow { text-align: center; }
+.sheet-amount { text-align: center; font-size: 34px; margin-top: 6px; }
+.sheet .receipt { margin-top: 10px; }
+.sheet .btn-row .btn { min-height: 50px; }
 
 /* ---------- scaffold: pinned blocks, sticky headings, bottom bar ---------- */
 .pinned { flex-shrink: 0; padding: 0 24px 10px; border-bottom: 1px solid var(--line); }

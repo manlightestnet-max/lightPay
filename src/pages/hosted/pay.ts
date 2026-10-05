@@ -158,6 +158,12 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   // false: the person signed in on the app has no LightPay wallet, so only mobile money is offered.
   let payerHasWallet = null;
   let session = null, method = 'mobile_money', network = 'MTN_MOMO_COG', poll = null, lastAttemptAt = null, paidWithWallet = false, walletBalance = null;
+  let typed = null;
+  try { typed = sessionStorage.getItem('lightpay.msisdn.' + id); } catch (e) {}
+  const fullPhone = (d) => '+242 ' + d.replace(/^(\\d{2})(\\d{3})(\\d{2})(\\d{2})$/, '$1 $2 $3 $4');
+  const phoneOf = (masked) => (typed && masked && masked.slice(-2) === typed.slice(-2) && masked.indexOf('+242 ' + typed.slice(0, 2)) === 0 ? fullPhone(typed) : masked || 'numéro indiqué');
+  const phoneOk = () => /^0[4-6]\\d{7}$/.test(digits($('msisdn').value).replace(/^242/, ''));
+  let busy = false;
   const accountUrl = (hash) => (LP.ENV === 'sandbox' ? '/account?env=sandbox' : '/account') + (hash || '');
 
   // Leaving always goes back to where the payer came from.
@@ -198,7 +204,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     ]);
     $('feeBox').hidden = false;
     const tooSmall = Number(q.amount) < Number(q.minimum);
-    $('payMomo').disabled = tooSmall;
+    $('payMomo').disabled = tooSmall || !phoneOk();
     $('payMomo').textContent = tooSmall ? 'Minimum ' + LP.money(q.minimum, c) + ' par mobile money' : 'Payer ' + approx + LP.money(q.total, c);
   }
 
@@ -268,17 +274,17 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       stop(); showDone(s);
     } else if (s.status === 'PROCESSING') {
       const total = a && a.charged ? LP.money(a.charged, c) : (s.fees && a && s.fees[a.network] ? (s.fees[a.network].estimated ? '≈ ' : '') + LP.money(s.fees[a.network].total, c) : '');
-      $('waitText').textContent = 'Demande envoyée au ' + (a ? a.msisdn : 'numéro indiqué') + (total ? ' pour ' + total + ', frais compris' : '') + '.';
+      $('waitText').textContent = 'Demande envoyée au ' + phoneOf(a && a.msisdn) + (total ? ' pour ' + total + ', frais compris' : '') + '.';
       screen('waiting');
       start();
     } else if (s.status === 'OPEN') {
       const wasWaiting = !document.querySelector('[data-screen="waiting"]').hidden;
       stop();
       const failedNow = a && a.status === 'FAILED' && a.at !== lastAttemptAt;
-      if (failedNow && wasWaiting) { lastAttemptAt = a.at; $('failedText').textContent = failText(a.failure_code, a.reason); screen('failed'); }
+      if (failedNow && wasWaiting) { lastAttemptAt = a.at; showFailed(failText(a.failure_code, a.reason)); }
       else {
-        if (first || wasWaiting) { screen('pay'); openMethod(); }
-        if (failedNow) { lastAttemptAt = a.at; say('msg', failText(a.failure_code, a.reason), 'err'); }
+        if (failedNow) lastAttemptAt = a.at;
+        if (first) { screen('pay'); openMethod(); }
       }
     } else {
       stop();
@@ -296,7 +302,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     if (!paidWithWallet && a && a.status === 'SUCCEEDED') {
       rows.push(['Frais LightPay', LP.money(a.lightpay_fee, c)]);
       if (a.operator_fee) rows.push(['Frais opérateur', LP.money(a.operator_fee, c)]);
-      rows.push(['Payé avec', (NET_NAME[a.network] || 'Mobile money') + ' · ' + a.msisdn]);
+      rows.push(['Payé avec', (NET_NAME[a.network] || 'Mobile money') + ' · ' + phoneOf(a.msisdn)]);
       if (a.charged) rows.push(['Total débité', LP.money(a.charged, c), true]);
     } else if (paidWithWallet) {
       rows.push(['Payé avec', 'Wallet LightPay'], ['Total débité', LP.money(s.amount, c), true]);
@@ -335,30 +341,67 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   const stop = () => { clearInterval(poll); poll = null; };
 
   // ---------------------------------------------------------------- pay
+  // Tap Pay -> confirmation sheet -> waiting screen at once. The form never shows an error:
+  // a refusal (number, balance, operator) appears on the waiting screen, which turns into the
+  // failed one. One payment at a time: the sheet's button locks, and so does this page.
+  function showFailed(text) {
+    $('failedText').textContent = text;
+    screen('failed');
+  }
+  function waiting(text) {
+    $('waitText').textContent = text;
+    screen('waiting');
+  }
+  $('msisdn').addEventListener('input', () => { if (method === 'mobile_money') renderFees(); });
   $('payMomo').addEventListener('click', async () => {
+    if (busy || $('payMomo').disabled || !phoneOk()) return;
     const msisdn = digits($('msisdn').value).replace(/^242/, '');
-    if (!/^0[4-6]\\d{7}$/.test(msisdn)) return say('msg', 'Entrez un numéro à 9 chiffres, par exemple 06 512 44 81.', 'err');
-    $('payMomo').disabled = true; say('msg', '');
+    const q = session.fees && session.fees[network];
+    const c = session.currency, approx = q && q.estimated ? '≈ ' : '';
+    busy = true;
+    const ok = await confirmSheet({
+      title: session.kind === 'DEPOSIT' ? 'Vous déposez' : 'Vous payez',
+      amount: q ? approx + LP.money(q.total, c) : LP.money(session.amount, c),
+      rows: [
+        ['Depuis', NET_NAME[network] + ' · ' + fullPhone(msisdn)],
+        [session.kind === 'DEPOSIT' ? 'Dépôt' : 'À ' + session.merchant, LP.money(session.amount, c)],
+      ].concat(q ? [['Frais', approx + LP.money(String(Number(q.total) - Number(q.amount)), c)]] : []),
+      note: 'Une demande arrive sur ce téléphone : validez-la avec votre code secret.',
+      confirm: 'Confirmer',
+    });
+    if (!ok) { busy = false; return; }
+    typed = msisdn;
+    try { sessionStorage.setItem('lightpay.msisdn.' + id, msisdn); } catch (e) {}
+    waiting('Envoi de la demande au ' + fullPhone(msisdn) + '…');
     try {
       const res = await fetch('/v1/checkout/public/sessions/' + encodeURIComponent(id) + '/mobile-money', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msisdn: msisdn, network: network }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) return say('msg', body.message || 'Le paiement n’a pas pu démarrer.', 'err');
-      await load();
-    } catch (e) { say('msg', 'Connexion impossible. Vérifiez votre réseau et réessayez.', 'err'); }
-    finally { if (session && session.status === 'OPEN') renderFees(); else $('payMomo').disabled = false; }
+      if (!res.ok) showFailed(body.message || 'Le paiement n’a pas pu démarrer. Réessayez.');
+      else await load();
+    } catch (e) { showFailed('Connexion impossible. Vérifiez votre réseau et réessayez.'); }
+    finally { busy = false; }
   });
   $('payWallet').addEventListener('click', async () => {
-    $('payWallet').disabled = true; say('msg', '');
+    if (busy || $('payWallet').disabled) return;
+    busy = true;
+    const ok = await confirmSheet({
+      title: 'Vous payez',
+      amount: LP.money(session.amount, session.currency),
+      rows: [['Depuis', 'Votre wallet LightPay'], ['À', session.merchant], ['Frais', 'Aucun'], ['Solde après', LP.money(String((walletBalance || 0) - Number(session.amount)), session.currency), true]],
+      confirm: 'Payer',
+    });
+    if (!ok) { busy = false; return; }
+    waiting('Paiement avec votre wallet LightPay…');
     try {
       const r = await LP.api('POST', '/v1/checkout/public/sessions/' + encodeURIComponent(id) + '/wallet');
       paidWithWallet = true;
       render(r.session);
     } catch (e) {
       if (e.signIn) mountAuth(openWallet, { title: 'Payer avec LightPay', onBack: backFromAuth });
-      else say('msg', e.message, 'err');
-    } finally { $('payWallet').disabled = walletBalance !== null && walletBalance < Number(session.amount); }
+      else showFailed(e.message);
+    } finally { busy = false; }
   });
 
   // The app's page hands over the payer's current sign-in (lightpay.js, from the declared site only).

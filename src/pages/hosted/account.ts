@@ -11,7 +11,7 @@ import { iconSvg } from './icons.js';
  * Hash routes:
  *   #/home  #/activity → #/activity/<id>  #/account → #/username · #/email · #/password ·
  *   #/developer · #/delete · #/apps → #/apps/<id>
- *   #/deposit  #/send → #/send/review → #/send/done  #/withdraw → #/withdraw/review → #/withdraw/done
+ *   #/deposit  #/send → (confirmation sheet) → #/send/done  #/withdraw → (confirmation sheet) → #/withdraw/done
  * ?env=sandbox for the test wallet (switchable in place) · ?return=<url> shows a way back to the app.
  */
 export const accountPage = (nonce: string, env: string) => {
@@ -20,21 +20,19 @@ export const accountPage = (nonce: string, env: string) => {
 <section class="screen" data-screen="home" hidden>
   ${topbar({ brand: true, back: false, env, end: '<button class="icon-btn" type="button" id="homeBack" hidden aria-label="Retour à l’application">' + iconSvg('x') + '</button>' })}
   <div class="content" id="homeScroll">
-    <div class="hero hero-split" id="homeHero">
-      <div class="hero-main">
-        <div class="hero-label">Disponible</div>
-        <div class="amount-xl" id="homeAvailable"><span class="sk sk-amount"></span></div>
-        <div class="hero-sub" id="homeLockedLine" hidden>${iconSvg('lock')}<span id="homeLocked"></span></div>
-      </div>
-      <div class="hero-actions" id="homeActions">
+    <div class="hero home-hero" id="homeHero">
+      <div class="amount-xl" id="homeAvailable"><span class="sk sk-amount"></span></div>
+      <div class="hero-sub" id="homeLockedLine" hidden>${iconSvg('lock')}<span id="homeLocked"></span></div>
+      <div class="home-actions" id="homeActions">
         <button class="chip primary" type="button" data-go="deposit">${iconSvg('plus')}Dépôt</button>
         <button class="chip" type="button" data-go="withdraw">${iconSvg('withdraw')}Retrait</button>
+        <button class="chip" type="button" data-go="send">${iconSvg('send')}Envoyer</button>
       </div>
     </div>
-    <a class="send-link" href="#/send">${iconSvg('send')}<span>Envoyer à un @pseudo</span>${iconSvg('chevron-right', 'chev')}</a>
     <div class="note warn" id="homeClosed" hidden>${iconSvg('alert')}<p>Ce compte LightPay est fermé : il ne peut plus recevoir ni envoyer d’argent.</p></div>
     <div class="section-head sticky"><h2>Activité</h2><a class="link" href="#/activity">Tout voir</a></div>
     <div id="homeActivity" aria-busy="true">${skeletonRows(6, 'div')}</div>
+    <a class="home-more" id="homeMore" href="#/activity" hidden>Voir toute l’activité</a>
     <div class="msg" id="homeMsg" role="status" aria-live="polite"></div>
   </div>
 </section>
@@ -70,21 +68,10 @@ export const accountPage = (nonce: string, env: string) => {
   <div class="actions-bar"><button class="btn" type="button" id="sendNext">Continuer</button></div>
 </section>
 
-<section class="screen" data-screen="send-review" hidden>
-  ${bar('Vérifier l’envoi')}
-  <div class="content">
-    <p class="eyebrow">Vous envoyez</p>
-    <div class="amount-xl" id="sendReviewAmount"></div>
-    <div class="receipt" id="sendReviewRows"></div>
-    <div class="msg" id="sendReviewMsg" role="status" aria-live="polite"></div>
-  </div>
-  <div class="actions-bar"><button class="btn" type="button" id="sendConfirm">Confirmer l’envoi</button></div>
-</section>
-
 <section class="screen" data-screen="send-done" hidden>
   ${bar('Envoi')}
-  <div class="state"><span class="state-icon ok">${iconSvg('check')}</span><h2>Argent envoyé</h2><p id="sendDoneText"></p></div>
-  <div class="actions-bar"><button class="btn" type="button" data-home>Terminé</button></div>
+  <div class="state"><span class="state-icon" id="sendDoneIcon"></span><h2 id="sendDoneTitle"></h2><p id="sendDoneText"></p></div>
+  <div class="actions-bar"><button class="btn btn-secondary" type="button" id="sendRetry" hidden>Réessayer</button><button class="btn" type="button" data-home>Terminé</button></div>
 </section>
 
 <section class="screen" data-screen="withdraw" hidden>
@@ -107,21 +94,10 @@ export const accountPage = (nonce: string, env: string) => {
   <div class="actions-bar"><button class="btn" type="button" id="wdNext" disabled>Continuer</button></div>
 </section>
 
-<section class="screen" data-screen="withdraw-review" hidden>
-  ${bar('Vérifier le retrait')}
-  <div class="content">
-    <p class="eyebrow">Vous recevez</p>
-    <div class="amount-xl" id="wdReviewAmount"></div>
-    <div class="receipt" id="wdReviewRows"></div>
-    <div class="msg" id="wdReviewMsg" role="status" aria-live="polite"></div>
-  </div>
-  <div class="actions-bar"><button class="btn" type="button" id="wdConfirm">Confirmer le retrait</button></div>
-</section>
-
 <section class="screen" data-screen="withdraw-done" hidden>
   ${bar('Retrait')}
   <div class="state"><span class="state-icon" id="wdDoneIcon"></span><h2 id="wdDoneTitle"></h2><p id="wdDoneText"></p></div>
-  <div class="actions-bar"><button class="btn" type="button" data-home>Terminé</button></div>
+  <div class="actions-bar"><button class="btn btn-secondary" type="button" id="wdRetry" hidden>Réessayer</button><button class="btn" type="button" data-home>Terminé</button></div>
 </section>
 
 <section class="screen" data-screen="activity" hidden>
@@ -403,7 +379,8 @@ export const accountPage = (nonce: string, env: string) => {
       await loadMe();
       const act = await LP.api('GET', '/v1/me/activity?limit=30');
       actCache = act.activity;
-      $('homeActivity').replaceChildren.apply($('homeActivity'), act.activity.length ? act.activity.map((a) => actRow(a, true)) : [el('p', { class: 'empty', text: 'Aucune opération pour l’instant.' })]);
+      $('homeActivity').replaceChildren.apply($('homeActivity'), act.activity.length ? act.activity.slice(0, 10).map((a) => actRow(a, true)) : [el('p', { class: 'empty', text: 'Aucune opération pour l’instant.' })]);
+      $('homeMore').hidden = act.activity.length <= 10;
       $('homeActivity').removeAttribute('aria-busy');
     }, 'homeMsg');
   }
@@ -468,17 +445,37 @@ export const accountPage = (nonce: string, env: string) => {
     } finally { $('depGo').disabled = false; }
   }, 'depMsg'));
 
+  // ---------------------------------------------------------------- result screens (waiting, done, refused)
+  // Errors of an operation only ever show here, never on the form where it was typed.
+  const RESULT = { wait: ['wait', 'clock'], ok: ['ok', 'check'], err: ['err', 'x'] };
+  function result(prefix, kind, title, text) {
+    $(prefix + 'DoneIcon').className = 'state-icon ' + RESULT[kind][0];
+    $(prefix + 'DoneIcon').replaceChildren(icon(RESULT[kind][1]));
+    $(prefix + 'DoneTitle').textContent = title;
+    $(prefix + 'DoneText').textContent = text;
+    $(prefix + 'Retry').hidden = kind !== 'err';
+    document.querySelector('[data-screen="' + (prefix === 'wd' ? 'withdraw' : 'send') + '-done"] [data-home]').hidden = kind === 'wait';
+  }
+  // Runs the operation from its result screen: sign-in again if needed, any refusal shown there.
+  async function operate(prefix, action) {
+    await guarded(async () => {
+      try { await action(); }
+      catch (e) { if (e.reauth || e.signIn) throw e; result(prefix, 'err', prefix === 'wd' ? 'Retrait non effectué' : 'Envoi non effectué', e.message); }
+    }, prefix + 'DoneText');
+  }
+
   // ---------------------------------------------------------------- send
-  let sendState = null, sendResult = null;
+  let sendState = null, sendResult = null, sendBusy = false;
   function enterSend() {
     $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur());
     say('sendMsg', '');
+    sendCheck();
   }
   let sendWho = null, sendWhoSeq = 0;
   const lookupRecipient = debounce(async () => {
     const to = $('sendTo').value.trim();
     const seq = ++sendWhoSeq;
-    sendWho = null; $('sendWho').textContent = ''; $('sendWho').className = 'hint';
+    sendWho = null; $('sendWho').textContent = ''; $('sendWho').className = 'hint'; sendCheck();
     if (to.length < 3) return;
     try {
       const r = await LP.api('GET', '/v1/me/recipient?to=' + encodeURIComponent(to));
@@ -488,49 +485,51 @@ export const accountPage = (nonce: string, env: string) => {
     } catch (e) {
       if (seq !== sendWhoSeq) return;
       if (e.signIn) return signIn();
-      $('sendWho').textContent = e.message; $('sendWho').className = 'hint err';
-    }
+      $('sendWho').textContent = 'Aucun compte LightPay trouvé.';
+    } finally { if (seq === sendWhoSeq) sendCheck(); }
   }, 350);
   $('sendTo').addEventListener('input', lookupRecipient);
-  $('sendNext').addEventListener('click', () => {
-    const to = $('sendTo').value.trim();
+  // The button stays off until the form is complete: nothing to correct after the tap.
+  function sendCheck() {
     const amount = Number(amountDigits($('sendAmount').value));
-    if (!sendWho) return say('sendMsg', 'Entrez le @pseudo ou l’e-mail d’un compte LightPay.', 'err');
-    if (!amount) return say('sendMsg', 'Entrez un montant.', 'err');
-    if (amount > available()) return say('sendMsg', 'Montant supérieur à votre solde disponible (' + LP.money(available(), cur()) + ').', 'err');
-    sendState = { to: to, who: sendWho, amount: String(amount), note: $('sendNote').value.trim(), key: LP.uuid() };
-    nav.go('send/review');
-  });
-  function enterSendReview() {
-    if (!sendState) return nav.go('send', true);
-    $('sendReviewAmount').textContent = LP.money(sendState.amount, cur());
-    const w = sendState.who || {};
-    const rows = [['À', [w.name, w.username ? '@' + w.username : ''].filter(Boolean).join(' · ') || sendState.to], ['Frais', 'Aucun']];
-    if (sendState.note) rows.push(['Message', sendState.note]);
-    rows.push(['Solde après envoi', LP.money(available() - Number(sendState.amount), cur()), true]);
-    feeRows($('sendReviewRows'), rows);
-    say('sendReviewMsg', '');
+    $('sendAvail').classList.toggle('below', amount > available());
+    $('sendNext').disabled = !sendWho || !amount || amount > available();
   }
-  $('sendConfirm').addEventListener('click', () => guarded(async () => {
-    if (!sendState) return;
-    $('sendConfirm').disabled = true;
-    try {
+  $('sendAmount').addEventListener('input', sendCheck);
+  $('sendNext').addEventListener('click', async () => {
+    if (sendBusy || $('sendNext').disabled) return;
+    const amount = Number(amountDigits($('sendAmount').value));
+    const w = sendWho || {};
+    const who = [w.name, w.username ? '@' + w.username : ''].filter(Boolean).join(' · ') || $('sendTo').value.trim();
+    const note = $('sendNote').value.trim();
+    const rows = [['À', who], ['Frais', 'Aucun']].concat(note ? [['Message', note]] : []).concat([['Solde après envoi', LP.money(available() - amount, cur()), true]]);
+    sendBusy = true;
+    const ok = await confirmSheet({ title: 'Vous envoyez', amount: LP.money(amount, cur()), rows: rows, confirm: 'Envoyer' });
+    if (!ok) { sendBusy = false; return; }
+    sendState = { to: $('sendTo').value.trim(), who: w, amount: String(amount), note: note, key: LP.uuid() };
+    sendResult = null;
+    nav.go('send/done');
+    await operate('send', async () => {
       const r = await LP.api('POST', '/v1/me/transfers', { to: sendState.to, amount: sendState.amount, note: sendState.note }, sendState.key);
       sendResult = r.transfer;
-      sendState = null;
-      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = ''; $('sendWho').textContent = ''; sendWho = null;
+      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = ''; $('sendWho').textContent = ''; sendWho = null; sendCheck();
       await loadMe().catch(() => {});
-      nav.go('send/done', true);
-    } finally { $('sendConfirm').disabled = false; }
-  }, 'sendReviewMsg'));
+      enterSendDone();
+    });
+    sendBusy = false;
+  });
+  $('sendRetry').addEventListener('click', () => nav.go('send', true));
   function enterSendDone() {
-    if (!sendResult) return nav.go('home', true);
-    const t = sendResult.to || {};
-    $('sendDoneText').textContent = LP.money(sendResult.amount, cur()) + ' envoyés à ' + (t.name || (t.username ? '@' + t.username : t.email)) + '.';
+    if (sendResult) {
+      const t = sendResult.to || {};
+      return result('send', 'ok', 'Argent envoyé', LP.money(sendResult.amount, cur()) + ' envoyés à ' + (t.name || (t.username ? '@' + t.username : t.email)) + '.');
+    }
+    if (!sendState) return nav.go('home', true);
+    result('send', 'wait', 'Envoi en cours', LP.money(sendState.amount, cur()) + ' vers ' + (sendState.who.username ? '@' + sendState.who.username : sendState.to) + '…');
   }
 
   // ---------------------------------------------------------------- withdraw
-  let wdNet = 'MTN_MOMO_COG', wdQuote = null, wdState = null, wdResult = null, wdSeq = 0;
+  let wdNet = 'MTN_MOMO_COG', wdQuote = null, wdState = null, wdResult = null, wdSeq = 0, wdBusy = false;
   document.querySelectorAll('[data-wd-net]').forEach((b) => b.addEventListener('click', () => {
     wdNet = b.dataset.wdNet;
     document.querySelectorAll('[data-wd-net]').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
@@ -540,13 +539,13 @@ export const accountPage = (nonce: string, env: string) => {
     const phone = digits($('wdPhone').value).replace(/^242/, '');
     const q = wdQuote;
     $('wdNext').disabled = true;
+    // Below the minimum or above the balance: the line under the amount says it, the button stays off.
     const below = Boolean(q) && Number(q.amount) < Number(q.minimum);
-    $('wdAvail').classList.toggle('below', below);
+    const tooMuch = Boolean(q) && !below && Number(q.total) > available();
+    $('wdAvail').classList.toggle('below', below || tooMuch);
     if (!q) return;
-    if (below) { $('wdFees').hidden = true; return say('wdMsg', ''); }
-    if (Number(q.total) > available()) return say('wdMsg', 'Solde insuffisant : ce retrait coûte ' + LP.money(q.total, cur()) + ' frais compris (disponible ' + LP.money(available(), cur()) + ').', 'err');
-    if (!/^0[4-6]\\d{7}$/.test(phone)) return say('wdMsg', 'Entrez le numéro à 9 chiffres qui reçoit l’argent.', phone ? 'err' : undefined);
-    say('wdMsg', '');
+    if (below) { $('wdFees').hidden = true; return; }
+    if (tooMuch || !/^0[4-6]\\d{7}$/.test(phone)) return;
     $('wdNext').disabled = false;
   }
   function renderWdFees() {
@@ -568,7 +567,7 @@ export const accountPage = (nonce: string, env: string) => {
       const r = await LP.api('GET', '/v1/me/withdrawals/quote?amount=' + amount + '&network=' + wdNet);
       if (seq !== wdSeq) return;
       wdQuote = r.quote; renderWdFees(); wdCheck();
-    } catch (e) { if (e.signIn) signIn(); else say('wdMsg', e.message, 'err'); }
+    } catch (e) { if (e.signIn) signIn(); }
   }, 300);
   $('wdAmount').addEventListener('input', () => { $('wdNext').disabled = true; loadWdQuote(); });
   $('wdPhone').addEventListener('input', wdCheck);
@@ -584,48 +583,47 @@ export const accountPage = (nonce: string, env: string) => {
       }));
     } catch (e) { /* history is optional */ }
   }
-  $('wdNext').addEventListener('click', () => {
-    if (!wdQuote) return;
-    wdState = { quote: wdQuote, network: wdNet, msisdn: digits($('wdPhone').value).replace(/^242/, ''), key: LP.uuid() };
-    nav.go('withdraw/review');
-  });
-  function enterWithdrawReview() {
-    if (!wdState) return nav.go('withdraw', true);
-    const q = wdState.quote;
-    $('wdReviewAmount').textContent = LP.money(q.amount, q.currency);
-    feeRows($('wdReviewRows'), [
-      ['Vers', (wdState.network === 'MTN_MOMO_COG' ? 'MTN MoMo' : 'Airtel Money') + ' · +242 ' + fmtPhone(wdState.msisdn)],
-      ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
-      ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
-      ['Total débité', LP.money(q.total, q.currency)],
-      ['Solde après retrait', LP.money(available() - Number(q.total), q.currency), true],
-    ]);
-    say('wdReviewMsg', '');
-  }
-  $('wdConfirm').addEventListener('click', () => guarded(async () => {
-    if (!wdState) return;
-    $('wdConfirm').disabled = true;
-    try {
+  $('wdNext').addEventListener('click', async () => {
+    if (wdBusy || !wdQuote || $('wdNext').disabled) return;
+    const q = wdQuote;
+    const msisdn = digits($('wdPhone').value).replace(/^242/, '');
+    wdBusy = true;
+    const ok = await confirmSheet({
+      title: 'Vous retirez',
+      amount: LP.money(q.amount, q.currency),
+      rows: [
+        ['Vers', (wdNet === 'MTN_MOMO_COG' ? 'MTN MoMo' : 'Airtel Money') + ' · +242 ' + fmtPhone(msisdn)],
+        ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
+        ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
+        ['Total débité', LP.money(q.total, q.currency), true],
+        ['Solde après retrait', LP.money(available() - Number(q.total), q.currency)],
+      ],
+      confirm: 'Retirer',
+    });
+    if (!ok) { wdBusy = false; return; }
+    wdState = { quote: q, network: wdNet, msisdn: msisdn, key: LP.uuid() };
+    wdResult = null;
+    nav.go('withdraw/done');
+    await operate('wd', async () => {
       const r = await LP.api('POST', '/v1/me/withdrawals', { amount: wdState.quote.amount, msisdn: wdState.msisdn, network: wdState.network }, wdState.key);
       wdResult = r.withdrawal;
-      wdState = null; wdQuote = null;
-      $('wdAmount').value = ''; renderWdFees();
+      wdQuote = null;
+      $('wdAmount').value = ''; renderWdFees(); wdCheck();
       await loadMe().catch(() => {});
-      nav.go('withdraw/done', true);
-    } finally { $('wdConfirm').disabled = false; }
-  }, 'wdReviewMsg'));
+      enterWithdrawDone();
+    });
+    wdBusy = false;
+  });
+  $('wdRetry').addEventListener('click', () => nav.go('withdraw', true));
   function enterWithdrawDone() {
-    if (!wdResult) return nav.go('home', true);
+    if (!wdResult) {
+      if (!wdState) return nav.go('home', true);
+      return result('wd', 'wait', 'Retrait en cours', 'Envoi de ' + LP.money(wdState.quote.amount, wdState.quote.currency) + ' vers +242 ' + fmtPhone(wdState.msisdn) + '…');
+    }
     const w = wdResult;
-    const icons = { SUCCEEDED: ['ok', 'check', 'Retrait envoyé'], PENDING: ['wait', 'clock', 'Retrait en cours'], FAILED: ['err', 'x', 'Retrait échoué'] };
-    const v = icons[w.status] || icons.PENDING;
-    $('wdDoneIcon').className = 'state-icon ' + v[0];
-    $('wdDoneIcon').replaceChildren(icon(v[1]));
-    $('wdDoneTitle').textContent = v[2];
-    $('wdDoneText').textContent = w.status === 'FAILED'
-      ? 'L’opérateur a refusé l’envoi. Les ' + LP.money(w.total, w.currency) + ' ont été restitués sur votre wallet.'
-      : LP.money(w.amount, w.currency) + ' vers ' + w.to + (w.status === 'PENDING' ? ' : l’opérateur traite l’envoi, vous recevrez un SMS.' : '. Vous allez recevoir un SMS de votre opérateur.');
-    if (w.status === 'PENDING') followWithdrawal(w.id);
+    if (w.status === 'FAILED') result('wd', 'err', 'Retrait échoué', (w.reason || 'L’opérateur a refusé l’envoi.') + ' Les ' + LP.money(w.total, w.currency) + ' ont été restitués sur votre wallet.');
+    else if (w.status === 'SUCCEEDED') result('wd', 'ok', 'Retrait envoyé', LP.money(w.amount, w.currency) + ' vers ' + w.to + '. Vous allez recevoir un SMS de votre opérateur.');
+    else { result('wd', 'wait', 'Retrait en cours', LP.money(w.amount, w.currency) + ' vers ' + w.to + ' : l’opérateur traite l’envoi, vous recevrez un SMS.'); followWithdrawal(w.id); }
   }
   // A pending withdrawal is re-read while its screen stays open: the operator usually confirms
   // within seconds, and the server settles it from the webhook or its own check.
@@ -892,10 +890,8 @@ export const accountPage = (nonce: string, env: string) => {
       home: { enter: enterHome },
       deposit: { parent: 'home', enter: () => { say('depMsg', ''); renderDepFees(); } },
       send: { parent: 'home', enter: enterSend },
-      'send-review': { parent: 'send', enter: enterSendReview },
       'send-done': { parent: 'home', enter: enterSendDone },
       withdraw: { parent: 'home', enter: enterWithdraw },
-      'withdraw-review': { parent: 'withdraw', enter: enterWithdrawReview },
       'withdraw-done': { parent: 'home', enter: enterWithdrawDone },
       activity: { enter: enterActivity },
       'activity-item': { parent: 'activity', enter: enterActivityItem },

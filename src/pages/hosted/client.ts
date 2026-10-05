@@ -259,6 +259,36 @@ export const CLIENT = (env: string) => `
     }
     host.replaceChildren.apply(host, rows);
   }
+  // Last step before money moves: a bottom sheet with what will happen. Resolves true once
+  // (the confirm button locks at the first tap: a double or triple tap starts nothing twice).
+  function confirmSheet(o) {
+    return new Promise((resolve) => {
+      const before = document.activeElement;
+      let done = false;
+      const finish = (ok) => {
+        if (done) return;
+        done = true;
+        overlay.remove();
+        document.removeEventListener('keydown', onKey);
+        if (!ok && before && before.focus) before.focus();
+        resolve(ok);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') finish(false); };
+      const go = el('button', { class: 'btn', type: 'button', text: o.confirm || 'Confirmer', on: { click: () => { go.disabled = true; finish(true); } } });
+      const sheet = el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': o.title }, [
+        el('p', { class: 'eyebrow', text: o.title }),
+        o.amount ? el('div', { class: 'amount-xl sheet-amount', text: o.amount }) : null,
+        el('div', { class: 'receipt' }, o.rows.map((r) => el('div', { class: 'fees-row' + (r[2] ? ' total' : '') }, [el('span', { text: r[0] }), el('span', { text: r[1] })]))),
+        o.note ? el('p', { class: 'small muted mt', text: o.note }) : null,
+        el('div', { class: 'btn-row mt-lg' }, [el('button', { class: 'btn btn-secondary', type: 'button', text: 'Annuler', on: { click: () => finish(false) } }), go]),
+      ]);
+      const overlay = el('div', { class: 'overlay' }, [sheet]);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
+      document.addEventListener('keydown', onKey);
+      document.body.append(overlay);
+      go.focus();
+    });
+  }
   const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   function dayLabel(d) {
     const date = new Date(d); const today = new Date(); const y = new Date(); y.setDate(y.getDate() - 1);
