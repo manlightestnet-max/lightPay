@@ -353,6 +353,9 @@ a.tx:active { background: var(--raised); }
 .hint.err { color: var(--danger); }
 .field textarea { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: transparent; padding: 12px 14px; font-size: 15px; resize: vertical; min-height: 96px; }
 .field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.g-btn { display: flex; justify-content: center; min-height: 44px; margin-top: 28px; }
+.g-sk { width: 100%; max-width: 320px; height: 44px; border-radius: 999px; }
+.sheet .g-btn { margin-top: 18px; }
 .auth-mark { display: block; width: 52px; height: 52px; margin: 18px 0 4px; background: var(--mark) center / contain no-repeat; }
 
 /* ---------- shimmer placeholders (while a screen loads) ---------- */

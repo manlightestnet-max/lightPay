@@ -251,16 +251,6 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     <div class="rows mt" id="confirmRows"></div>
     <div class="btn-row mt-lg"><button class="btn btn-secondary" type="button" id="confirmCancel">Annuler</button><button class="btn" type="button" id="confirmGo">Envoyer</button></div>
   </div>
-</div>
-
-<div class="overlay" id="reauth" hidden role="dialog" aria-modal="true" aria-labelledby="reTitle">
-  <form class="sheet" id="reForm" novalidate>
-    <h2 class="title" id="reTitle">Confirmez votre identité</h2>
-    <p class="small muted mt">Pour toute opération sur l’argent, entrez votre mot de passe LightPay.</p>
-    <div class="field"><label for="rePass">Mot de passe</label><input id="rePass" type="password" autocomplete="current-password"></div>
-    <div class="msg" id="reMsg" role="status" aria-live="polite"></div>
-    <div class="btn-row mt-lg"><button class="btn btn-secondary" type="button" id="reCancel">Annuler</button><button class="btn" type="submit" id="reGo">Confirmer</button></div>
-  </form>
 </div>`;
 
   const script = `
@@ -347,26 +337,18 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   const load = async (screen, fn) => { say(screen + 'Msg', ''); try { await fn(); } catch (e) { if (e.signIn) return signIn(); say(screen + 'Msg', e.message, 'err'); } };
 
   // ---------------------------------------------------------------- guarded money actions + re-auth
-  let pending = null;
   async function guarded(action, msg) {
     try { return await action(); }
     catch (e) {
-      if (e.reauth) { pending = { action: action, msg: msg }; $('reauth').hidden = false; $('rePass').value = ''; say('reMsg', ''); $('rePass').focus(); return; }
+      // Sensitive action: the same Google account again, then the action runs once more.
+      if (e.reauth) { if (await confirmIdentity()) return guarded(action, msg); return; }
       if (e.signIn) { signIn(); return; }
       say(msg, e.message, 'err');
     }
   }
-  $('reCancel').addEventListener('click', () => { pending = null; $('reauth').hidden = true; });
-  $('reForm').addEventListener('submit', async (e) => {
-    e.preventDefault(); $('reGo').disabled = true; say('reMsg', '');
-    try { await LP.signIn(LP.email(), $('rePass').value); $('reauth').hidden = true; const p = pending; pending = null; if (p) await guarded(p.action, p.msg); }
-    catch (err) { say('reMsg', err.message, 'err'); }
-    finally { $('reGo').disabled = false; }
-  });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!$('reauth').hidden) $('reCancel').click();
-    else if (!$('confirmSheet').hidden) $('confirmCancel').click();
+    if (!$('confirmSheet').hidden) $('confirmCancel').click();
     else if ($('side').classList.contains('open')) setMenu(false);
   });
 

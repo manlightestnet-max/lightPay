@@ -27,10 +27,10 @@ const fail = (reply: FastifyReply, err: any) => {
   return reply.status(500).send({ error: 'SERVER_ERROR', message: 'Erreur du serveur. Réessayez dans un instant.' });
 };
 
-/** Keys and secrets: password entered in the last 10 minutes. */
+/** Keys and secrets: signed in (Google) in the last 10 minutes. */
 const recent = (request: FastifyRequest, reply: FastifyReply) => {
   if (isRecentSignIn(request.lightpayUser!)) return true;
-  reply.status(401).send({ error: 'RECENT_SIGN_IN_REQUIRED', message: 'Pour votre sécurité, confirmez votre mot de passe.' });
+  reply.status(401).send({ error: 'RECENT_SIGN_IN_REQUIRED', message: 'Pour votre sécurité, reconnectez-vous avec votre compte Google.' });
   return false;
 };
 

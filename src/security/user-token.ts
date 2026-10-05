@@ -16,7 +16,7 @@ export interface LightPayUser {
   emailVerified: boolean;
   phone: string | null;
   name: string | null;
-  /** When the person last entered their password (seconds since epoch). */
+  /** When the person last signed in (seconds since epoch). */
   authTime: number;
 }
 

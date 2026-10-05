@@ -96,7 +96,7 @@ const idem = (request: FastifyRequest, reply: FastifyReply) => {
 
 const recent = (request: FastifyRequest, reply: FastifyReply) => {
   if (isRecentSignIn(request.lightpayUser!)) return true;
-  reply.status(401).send({ error: 'RECENT_SIGN_IN_REQUIRED', message: 'Pour votre sécurité, confirmez votre mot de passe.' });
+  reply.status(401).send({ error: 'RECENT_SIGN_IN_REQUIRED', message: 'Pour votre sécurité, reconnectez-vous avec votre compte Google.' });
   return false;
 };
 

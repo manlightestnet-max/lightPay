@@ -207,14 +207,8 @@ ${flow(
       <button class="btn btn-secondary mt" type="button" id="unGo">Enregistrer</button>
       <div class="msg" id="unMsg" role="status" aria-live="polite"></div>
     </div></section>
-    <section class="panel"><div class="panel-head"><h2 class="panel-title">Identifiant de connexion</h2></div><div class="panel-body">
-      <p class="small muted">Adresse actuelle : <b id="secEmail"></b>. La même pour LightPay et les apps de notre écosystème.</p>
-      <div class="field"><label for="newEmail">Nouvel e-mail</label><input id="newEmail" type="email" autocomplete="email"></div>
-      <button class="btn btn-secondary mt" type="button" id="emailGo">Changer l’e-mail</button>
-    </div></section>
-    <section class="panel"><div class="panel-head"><h2 class="panel-title">Mot de passe</h2></div><div class="panel-body">
-      <div class="field"><label for="newPass">Nouveau mot de passe</label><input id="newPass" type="password" autocomplete="new-password" placeholder="8 caractères minimum"></div>
-      <button class="btn btn-secondary mt" type="button" id="passGo">Changer le mot de passe</button>
+    <section class="panel"><div class="panel-head"><h2 class="panel-title">Connexion</h2></div><div class="panel-body">
+      <p class="small muted">Compte Google : <b id="secEmail"></b>. Le même pour LightPay et les apps de notre écosystème.</p>
       <div class="msg" id="secMsg" role="status" aria-live="polite"></div>
     </div></section>
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Environnement et session</h2></div><div class="panel-body"><ul class="list">
@@ -359,16 +353,6 @@ ${flow(
   <div class="state"><span class="state-icon ok">${iconSvg('check')}</span><h2>Compte supprimé</h2><p>Votre compte LightPay a été fermé. Merci de l’avoir utilisé.</p></div>
 </section>
 
-<div class="overlay" id="reauth" hidden role="dialog" aria-modal="true" aria-labelledby="reTitle">
-  <form class="sheet" id="reForm" novalidate>
-    <h2 class="title" id="reTitle">Confirmez votre identité</h2>
-    <p class="small muted mt">Pour votre sécurité, entrez votre mot de passe LightPay.</p>
-    <div class="field"><label for="rePass">Mot de passe</label><input id="rePass" type="password" autocomplete="current-password"></div>
-    <div class="msg" id="reMsg" role="status" aria-live="polite"></div>
-    <div class="btn-row mt-lg"><button class="btn btn-secondary" type="button" id="reCancel">Annuler</button><button class="btn" type="submit" id="reGo">Confirmer</button></div>
-  </form>
-</div>
-
 <div class="overlay" id="keysSheet" hidden role="dialog" aria-modal="true" aria-labelledby="keysTitle">
   <div class="sheet">
     <h2 class="title" id="keysTitle">Vos clés</h2>
@@ -396,31 +380,18 @@ ${flow(
   document.querySelectorAll('[data-env-badge]').forEach((b) => { b.hidden = LP.ENV !== 'sandbox'; });
 
   // ---------------------------------------------------------------- guarded calls + re-auth
-  let pending = null;
   async function guarded(action, msg) {
     try { return await action(); }
     catch (e) {
-      if (e.reauth) { pending = { action: action, msg: msg }; $('reauth').hidden = false; $('rePass').value = ''; say('reMsg', ''); $('rePass').focus(); return; }
+      // Sensitive action: the same Google account again, then the action runs once more.
+      if (e.reauth) { if (await confirmIdentity()) return guarded(action, msg); return; }
       if (e.signIn) { signIn(); return; }
       say(msg, e.message, 'err');
     }
   }
-  $('reCancel').addEventListener('click', () => { pending = null; $('reauth').hidden = true; });
-  $('reForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    $('reGo').disabled = true; say('reMsg', '');
-    try {
-      await LP.signIn(LP.email(), $('rePass').value);
-      $('reauth').hidden = true;
-      const p = pending; pending = null;
-      if (p) await guarded(p.action, p.msg);
-    } catch (err) { say('reMsg', err.message, 'err'); }
-    finally { $('reGo').disabled = false; }
-  });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!$('reauth').hidden) $('reCancel').click();
-    else if ($('side').classList.contains('open')) setMenu(false);
+    if ($('side').classList.contains('open')) setMenu(false);
   });
 
   // ---------------------------------------------------------------- shell: menu, breadcrumb, environment
@@ -951,21 +922,6 @@ ${flow(
     me.username = r.username; $('unInput').value = r.username;
     say('unMsg', 'Nom d’utilisateur : @' + r.username, 'ok');
   }, 'unMsg'));
-  $('emailGo').addEventListener('click', () => guarded(async () => {
-    const email = $('newEmail').value.trim();
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) return say('secMsg', 'Entrez une adresse e-mail valide.', 'err');
-    await LP.updateIdentity({ email: email });
-    $('newEmail').value = '';
-    await loadMe().catch(() => {});
-    say('secMsg', 'E-mail mis à jour.', 'ok');
-  }, 'secMsg'));
-  $('passGo').addEventListener('click', () => guarded(async () => {
-    const password = $('newPass').value;
-    if (password.length < 8) return say('secMsg', 'Mot de passe trop court (8 caractères minimum).', 'err');
-    await LP.updateIdentity({ password: password });
-    $('newPass').value = '';
-    say('secMsg', 'Mot de passe mis à jour.', 'ok');
-  }, 'secMsg'));
   function signOut() { LP.signOut(); me = null; devApps = []; activity = []; connections = []; signIn(); }
   $('signOut').addEventListener('click', signOut);
   $('simpleMode').addEventListener('click', () => {
@@ -1273,7 +1229,7 @@ ${flow(
     return el('aside', { class: 'auth-aside' }, [
       el('span', { class: 'pill-brand' }, [el('span', { class: 'brand-mark', 'aria-hidden': 'true' }), 'Compte LightPay']),
       el('h2', { text: 'Un seul compte, votre argent et vos apps.' }),
-      el('p', { text: 'La même adresse et le même mot de passe pour votre wallet, pour payer sur les sites partenaires et pour gérer vos intégrations.' }),
+      el('p', { text: 'Le même compte Google pour votre wallet, pour payer sur les sites partenaires et pour gérer vos intégrations.' }),
       el('div', { class: 'auth-tools' }, [
         tool('wallet', 'Wallet LightPay', 'Déposer, envoyer et retirer vers MTN MoMo ou Airtel Money'),
         tool('lock', 'Paiements protégés', 'L’argent reste bloqué jusqu’à la livraison de la commande'),

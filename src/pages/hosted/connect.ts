@@ -39,7 +39,7 @@ export const connectPage = (nonce: string, env: string) => {
       <ul class="terms" id="terms"></ul>
       <label class="agree"><input type="checkbox" id="agree"><span>J’accepte que <span id="agreeApp"></span> retienne automatiquement sa commission sur mes ventes.</span></label>
     </div>
-    <div class="note">${iconSvg('shield')}<p>L’app ne voit jamais votre mot de passe. Vous pourrez retirer cet accès à tout moment depuis votre compte LightPay.</p></div>
+    <div class="note">${iconSvg('shield')}<p>L’app ne voit jamais vos identifiants Google. Vous pourrez retirer cet accès à tout moment depuis votre compte LightPay.</p></div>
     <div class="msg" id="msg" role="status" aria-live="polite"></div>
   </div>
   <div class="actions-bar"><div class="btn-row"><button class="btn btn-secondary" type="button" id="deny">Refuser</button><button class="btn" type="button" id="allow">Autoriser</button></div></div>

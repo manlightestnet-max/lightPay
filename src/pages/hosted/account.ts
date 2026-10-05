@@ -9,7 +9,7 @@ import { iconSvg } from './icons.js';
  * Advanced mode (console + developer space, /account/console) only after the LightPay admin
  * approved the person's request (asked from Compte); before that it appears nowhere.
  * Hash routes:
- *   #/home  #/activity → #/activity/<id>  #/account → #/username · #/email · #/password ·
+ *   #/home  #/activity → #/activity/<id>  #/account → #/username ·
  *   #/developer · #/delete · #/apps → #/apps/<id>
  *   #/deposit → (confirmation sheet) → #/deposit/done  #/send → (confirmation sheet) → #/send/done  #/withdraw → (confirmation sheet) → #/withdraw/done
  * ?env=sandbox for the test wallet (switchable in place) · ?return=<url> shows a way back to the app.
@@ -187,8 +187,7 @@ export const accountPage = (nonce: string, env: string) => {
     <p class="group-title">Profil</p>
     <ul class="group">
       <li><a class="row" href="#/username"><span class="row-icon">${iconSvg('user')}</span><span class="row-main"><span class="row-title">Nom d’utilisateur</span><span class="row-sub" id="accUsername"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-      <li><a class="row" href="#/email"><span class="row-icon">${iconSvg('mail')}</span><span class="row-main"><span class="row-title">E-mail</span><span class="row-sub" id="secEmail"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-      <li><a class="row" href="#/password"><span class="row-icon">${iconSvg('lock')}</span><span class="row-main"><span class="row-title">Mot de passe</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><div class="row"><span class="row-icon">${iconSvg('mail')}</span><span class="row-main"><span class="row-title">Compte Google</span><span class="row-sub" id="secEmail"></span></span></div></li>
     </ul>
     <p class="group-title">Autorisations</p>
     <ul class="group">
@@ -216,25 +215,6 @@ export const accountPage = (nonce: string, env: string) => {
     <div class="msg" id="unMsg" role="status" aria-live="polite"></div>
   </div>
   <div class="actions-bar"><button class="btn" type="button" id="unGo">Enregistrer</button></div>
-</section>
-
-<section class="screen" data-screen="email" hidden>
-  ${bar('E-mail')}
-  <div class="content">
-    <p class="small muted mt">Actuel : <span id="emailNow"></span></p>
-    <div class="field"><label for="newEmail">Nouvel e-mail</label><input id="newEmail" type="email" autocomplete="email"></div>
-    <div class="msg" id="emailMsg" role="status" aria-live="polite"></div>
-  </div>
-  <div class="actions-bar"><button class="btn" type="button" id="emailGo">Changer l’e-mail</button></div>
-</section>
-
-<section class="screen" data-screen="password" hidden>
-  ${bar('Mot de passe')}
-  <div class="content">
-    <div class="field"><label for="newPass">Nouveau mot de passe</label><input id="newPass" type="password" autocomplete="new-password" placeholder="6 caractères minimum"></div>
-    <div class="msg" id="passMsg" role="status" aria-live="polite"></div>
-  </div>
-  <div class="actions-bar"><button class="btn" type="button" id="passGo">Changer le mot de passe</button></div>
 </section>
 
 <section class="screen" data-screen="developer" hidden>
@@ -274,17 +254,7 @@ export const accountPage = (nonce: string, env: string) => {
   <a href="#/home" data-tab="home">${iconSvg('home')}<span>Accueil</span></a>
   <a href="#/activity" data-tab="activity">${iconSvg('pulse')}<span>Activité</span></a>
   <a href="#/account" data-tab="account">${iconSvg('user')}<span>Compte</span></a>
-</nav>
-
-<div class="overlay" id="reauth" hidden role="dialog" aria-modal="true" aria-labelledby="reTitle">
-  <form class="sheet" id="reForm" novalidate>
-    <h2 class="title" id="reTitle">Confirmez votre identité</h2>
-    <p class="small muted mt">Pour votre sécurité, entrez votre mot de passe LightPay.</p>
-    <div class="field"><label for="rePass">Mot de passe</label><input id="rePass" type="password" autocomplete="current-password"></div>
-    <div class="msg" id="reMsg" role="status" aria-live="polite"></div>
-    <div class="btn-row mt-lg"><button class="btn btn-secondary" type="button" id="reCancel">Annuler</button><button class="btn" type="submit" id="reGo">Confirmer</button></div>
-  </form>
-</div>`;
+</nav>`;
 
   const script = `
   const params = new URLSearchParams(location.search);
@@ -297,28 +267,15 @@ export const accountPage = (nonce: string, env: string) => {
   const fmtPhone = (d) => d.replace(/^(\\d{2})(\\d{3})(\\d{2})(\\d{2})$/, '$1 $2 $3 $4');
 
   // ---------------------------------------------------------------- guarded calls + re-auth
-  let pending = null;
   async function guarded(action, msg) {
     try { return await action(); }
     catch (e) {
-      if (e.reauth) { pending = { action: action, msg: msg }; $('reauth').hidden = false; $('rePass').value = ''; say('reMsg', ''); $('rePass').focus(); return; }
+      // Sensitive action: the same Google account again, then the action runs once more.
+      if (e.reauth) { if (await confirmIdentity()) return guarded(action, msg); return; }
       if (e.signIn) { signIn(); return; }
       say(msg, e.message, 'err');
     }
   }
-  $('reCancel').addEventListener('click', () => { pending = null; $('reauth').hidden = true; });
-  $('reForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    $('reGo').disabled = true; say('reMsg', '');
-    try {
-      await LP.signIn(LP.email(), $('rePass').value);
-      $('reauth').hidden = true;
-      const p = pending; pending = null;
-      if (p) await guarded(p.action, p.msg);
-    } catch (err) { say('reMsg', err.message, 'err'); }
-    finally { $('reGo').disabled = false; }
-  });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('reauth').hidden) $('reCancel').click(); });
 
   // ---------------------------------------------------------------- activity (journal of every operation)
   const STATUS = {
@@ -932,22 +889,6 @@ export const accountPage = (nonce: string, env: string) => {
       if (first) nav.go('home', true); else { nav.go('account', true); say('accMsg', 'Nom d’utilisateur : @' + r.username, 'ok'); }
     } finally { $('unGo').disabled = false; }
   }, 'unMsg'));
-  function enterEmail() { $('emailNow').textContent = (me && me.user.email) || '—'; say('emailMsg', ''); }
-  $('emailGo').addEventListener('click', () => guarded(async () => {
-    const email = $('newEmail').value.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return say('emailMsg', 'Entrez une adresse e-mail valide.', 'err');
-    await LP.updateIdentity({ email: email });
-    $('newEmail').value = '';
-    await loadMe().catch(() => {});
-    nav.go('account', true); say('accMsg', 'E-mail mis à jour.', 'ok');
-  }, 'emailMsg'));
-  $('passGo').addEventListener('click', () => guarded(async () => {
-    const password = $('newPass').value;
-    if (password.length < 6) return say('passMsg', 'Mot de passe trop court (6 caractères minimum).', 'err');
-    await LP.updateIdentity({ password: password });
-    $('newPass').value = '';
-    nav.go('account', true); say('accMsg', 'Mot de passe mis à jour.', 'ok');
-  }, 'passMsg'));
   async function enterDeveloper() {
     say('devMsg', '');
     ['devForm', 'devPending', 'devApproved', 'devGo', 'devOpen'].forEach((id) => { $(id).hidden = true; });
@@ -1020,8 +961,6 @@ export const accountPage = (nonce: string, env: string) => {
       app: { parent: 'apps', enter: enterApp },
       account: { enter: enterAccount },
       username: { parent: 'account', enter: enterUsername },
-      email: { parent: 'account', enter: enterEmail },
-      password: { parent: 'account', enter: () => say('passMsg', '') },
       developer: { parent: 'account', enter: enterDeveloper },
       delete: { parent: 'account', enter: () => { say('delMsg', ''); $('delConfirm').value = ''; $('delGo').disabled = true; } },
       security: { enter: () => nav.go('account', true) },

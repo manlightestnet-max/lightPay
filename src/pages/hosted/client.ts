@@ -1,6 +1,8 @@
 import { ICON_PATHS } from './icons.js';
 
 export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_KEY || 'AIzaSyAyOdD8qSUfx8wvHhb5F4EJ4zKjavwnpeI';
+/** Google sign-in: the Web client ID of the Firebase project (Authentication -> Google provider). */
+export const GOOGLE_CLIENT_ID = () => process.env.LIGHTPAY_GOOGLE_CLIENT_ID || '';
 
 /**
  * Browser script shared by every hosted page (plain JS, no template literals inside so it
@@ -8,12 +10,12 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  *
  * LP                  LightPay client
  *   LP.ENV            'production' | 'sandbox'   LP.setEnv(env): switch ledger in place (badges + URL follow)
- *   LP.signedIn() / LP.email() / LP.signIn(email, pw) / LP.signUp(email, pw, name) / LP.signOut()
- *   LP.resetPassword(email)
+ *   LP.signedIn() / LP.email() / LP.uid() / LP.googleSignIn(googleIdToken, sameUid?) / LP.signOut()
+ *     Sign-in is Google only (Google Identity Services button -> Firebase signInWithIdp).
  *   LP.api(method, path, body?, idempotencyKey?) -> JSON   throws Error with .signIn (sign in again)
- *                                                           or .reauth (confirm password) or .status
+ *                                                           or .reauth (confirm with Google again) or .status
  *   LP.live(onChange) -> stop()   onChange() when the wallet moves (server-sent signal, reconnects)
- *   LP.money(value, currency) · LP.uuid() · LP.updateIdentity({email}|{password}) · LP.deleteIdentity()
+ *   LP.money(value, currency) · LP.uuid() · LP.deleteIdentity()
  * UI kit
  *   $(id) · el(tag, props?, children?) (props: class, text, on:{event:fn}, any attribute)
  *   icon(name, cls?) · initials(text) · digits(value) · debounce(fn, ms)
@@ -25,12 +27,16 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  *   createNav({ root, screens: { name: { parent, enter(param) } }, resolve(route) -> [name, param], onRootBack, onEnter(current) })
  *     -> { start(), go(route, replace?), back(), home(), current() }   (hash routes #/route; the
  *        browser back button and every [data-back] button use the same history)
- *   mountAuth(onDone, { title?, subtitle?, onBack?, aside?, noSignUp? })   sign in / sign up / reset, in <section id="auth">
+ *   mountAuth(onDone, { title?, subtitle?, onBack?, aside?, noSignUp? })   Google sign-in, in <section id="auth">
  *     (aside: a brand panel shown beside the form on wide screens)
+ *   confirmIdentity() -> Promise<boolean>   bottom sheet: the same Google account again (recent sign-in)
  */
 export const CLIENT = (env: string) => `
   // AbortSignal with a deadline (older browsers: none, the call just has no deadline).
   const deadline = (ms) => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+  const GOOGLE_ID = ${JSON.stringify(GOOGLE_CLIENT_ID())};
+  // This script's nonce, for Google's script added later (the page's CSP only runs nonced scripts).
+  const NONCE = (document.currentScript && document.currentScript.nonce) || '';
   const LP = (() => {
     const KEY = ${JSON.stringify(FIREBASE_WEB_API_KEY())};
     let ENV = ${JSON.stringify(env)};
@@ -42,13 +48,9 @@ export const CLIENT = (env: string) => `
     const read = () => { if (lent) return lent; try { return JSON.parse(localStorage.getItem(STORE) || sessionStorage.getItem(STORE) || 'null'); } catch (e) { return null; } };
     const write = (s) => { lent = null; try { sessionStorage.removeItem(STORE); s ? localStorage.setItem(STORE, JSON.stringify(s)) : localStorage.removeItem(STORE); } catch (e) {} };
     const ERRORS = {
-      EMAIL_EXISTS: 'Un compte existe déjà avec cet e-mail.',
-      EMAIL_NOT_FOUND: 'E-mail ou mot de passe incorrect.',
-      INVALID_PASSWORD: 'E-mail ou mot de passe incorrect.',
-      INVALID_LOGIN_CREDENTIALS: 'E-mail ou mot de passe incorrect.',
-      WEAK_PASSWORD: 'Mot de passe trop court (6 caractères minimum).',
-      INVALID_EMAIL: 'Adresse e-mail invalide.',
-      MISSING_PASSWORD: 'Entrez votre mot de passe.',
+      INVALID_IDP_RESPONSE: 'Google n’a pas confirmé la connexion. Réessayez.',
+      OPERATION_NOT_ALLOWED: 'La connexion Google n’est pas encore activée.',
+      FEDERATED_USER_ID_ALREADY_LINKED: 'Ce compte Google est déjà relié à un autre compte LightPay.',
       TOO_MANY_ATTEMPTS_TRY_LATER: 'Trop de tentatives, réessayez plus tard.',
       USER_DISABLED: 'Ce compte est désactivé.',
     };
@@ -118,17 +120,15 @@ export const CLIENT = (env: string) => `
         } catch (e) { return false; }
       },
       email: () => (read() || {}).email || '',
-      signIn: async (email, password) => save(await auth('accounts:signInWithPassword', { email: email, password: password })),
-      signUp: async (email, password, name) => {
-        const d = await auth('accounts:signUp', { email: email, password: password });
-        if (name) { const u = await auth('accounts:update', { idToken: d.idToken, displayName: name }); d.idToken = u.idToken || d.idToken; }
+      uid: () => { try { const p = JSON.parse(atob(String((read() || {}).idToken).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); return p.user_id || p.sub || null; } catch (e) { return null; } },
+      // Google's ID token -> a LightPay session (first time: the account is created). An account
+      // made earlier with the same e-mail keeps its uid, so its wallet. sameUid: re-confirmation,
+      // another Google account is refused (nothing is saved).
+      googleSignIn: async (googleIdToken, sameUid) => {
+        const d = await auth('accounts:signInWithIdp', { postBody: 'id_token=' + encodeURIComponent(googleIdToken) + '&providerId=google.com', requestUri: location.origin, returnIdpCredential: true });
+        if (!d.idToken || d.needConfirmation) throw new Error('Un compte LightPay existe déjà avec cet e-mail : écrivez-nous pour le relier à Google.');
+        if (sameUid && d.localId !== sameUid) throw new Error('Utilisez le compte Google déjà connecté (' + ((read() || {}).email || '') + ').');
         save(d);
-      },
-      resetPassword: async (email) => {
-        const res = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=' + KEY, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestType: 'PASSWORD_RESET', email: email }),
-        });
-        if (!res.ok) { const d = await res.json().catch(() => ({})); const code = ((d.error && d.error.message) || '').split(' ')[0]; if (code !== 'EMAIL_NOT_FOUND') throw new Error(ERRORS[code] || 'Envoi impossible.'); }
       },
       signOut: () => write(null),
       api: api,
@@ -172,18 +172,6 @@ export const CLIENT = (env: string) => `
       // Thousands with a no-break space Poppins draws (its narrow one renders as nothing).
       money:(v, c) => Number(v).toLocaleString('fr-FR').replace(/[\u202f\u00a0]/g, '\u00a0') + ' ' + (!c || c === 'XAF' ? 'FCFA' : c),
       uuid: () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9_-]/g, ''),
-      updateIdentity: async (fields) => {
-        const t = await token();
-        if (!t) throw Object.assign(new Error('Connectez-vous à LightPay.'), { signIn: true });
-        try {
-          const d = await auth('accounts:update', Object.assign({ idToken: t }, fields));
-          const s = read();
-          write(Object.assign({}, s, { idToken: d.idToken || s.idToken, refreshToken: d.refreshToken || s.refreshToken, email: d.email || s.email, expiresAt: d.idToken ? Date.now() + (Number(d.expiresIn) - 60) * 1000 : s.expiresAt }));
-        } catch (e) {
-          if (e.code === 'CREDENTIAL_TOO_OLD_LOGIN_AGAIN' || e.code === 'TOKEN_EXPIRED' || /connexion impossible/i.test(e.message)) throw Object.assign(new Error('Confirmez votre mot de passe.'), { reauth: true });
-          throw e;
-        }
-      },
       deleteIdentity: async () => {
         const t = await token();
         if (t) await fetch('https://identitytoolkit.googleapis.com/v1/accounts:delete?key=' + KEY, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: t }) });
@@ -405,60 +393,96 @@ export const CLIENT = (env: string) => `
     return api;
   }
 
-  // Sign in / sign up / reset password, rendered in <section id="auth" class="screen">.
+  // ------------------------------------------------------------------ Google sign-in
+  let gisLoading = null;
+  function loadGoogle() {
+    if (window.google && window.google.accounts && window.google.accounts.id) return Promise.resolve();
+    if (!gisLoading) {
+      gisLoading = new Promise(function (resolve, reject) {
+        const s = document.createElement('script');
+        s.src = 'https://accounts.google.com/gsi/client';
+        s.async = true;
+        if (NONCE) s.nonce = NONCE;
+        s.onload = function () { resolve(); };
+        s.onerror = function () { gisLoading = null; reject(new Error('Google ne répond pas. Vérifiez votre connexion et réessayez.')); };
+        document.head.append(s);
+      });
+    }
+    return gisLoading;
+  }
+  // Google's own button in host; onCredential(googleIdToken) once the person picked their account.
+  async function googleButton(host, onCredential, msg) {
+    host.replaceChildren(el('span', { class: 'sk g-sk', 'aria-hidden': 'true' }));
+    if (!GOOGLE_ID) { host.replaceChildren(); say(msg, 'La connexion Google n’est pas encore configurée.', 'err'); return; }
+    try { await loadGoogle(); } catch (e) { host.replaceChildren(); say(msg, e.message, 'err'); return; }
+    window.google.accounts.id.initialize({ client_id: GOOGLE_ID, callback: function (r) { onCredential(r.credential); }, ux_mode: 'popup', auto_select: false, itp_support: true, use_fedcm_for_button: true });
+    host.replaceChildren();
+    window.google.accounts.id.renderButton(host, {
+      type: 'standard', theme: currentTheme() === 'dark' ? 'filled_black' : 'outline', size: 'large', shape: 'pill',
+      text: 'continue_with', logo_alignment: 'center', locale: 'fr', width: Math.min(400, Math.max(240, host.clientWidth || 320)),
+    });
+  }
+
+  // Sign-in screen (Google only), rendered in <section id="auth" class="screen">.
   function mountAuth(onDone, options) {
     const o = options || {};
     const box = $('auth');
-    let mode = 'in';
-    function render() {
-      const title = mode === 'in' ? (o.title || 'Connexion à LightPay') : mode === 'up' ? 'Créer votre compte LightPay' : 'Mot de passe oublié';
-      const sub = mode === 'reset' ? 'Recevez un lien pour choisir un nouveau mot de passe.' : (o.subtitle || 'Un seul compte pour payer, recevoir et envoyer de l’argent.');
-      const back = o.onBack ? el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Retour', on: { click: o.onBack } }, [icon('arrow-left')]) : null;
-      const bar = el('header', { class: 'topbar' }, [back, el('span', { class: 'topbar-title' + (back ? '' : ' pad') }, []), el('span', { class: 'topbar-end' }, [LP.ENV === 'sandbox' ? el('span', { class: 'badge', text: 'Test' }) : null, themeButton()])]);
-      const fields = [];
-      const field = (id, label, type, auto) => {
-        const input = el('input', { id: id, type: type, autocomplete: auto, required: true });
-        fields.push(input);
-        return el('div', { class: 'field' }, [el('label', { for: id, text: label }), input]);
-      };
-      const nameF = mode === 'up' ? field('lp-name', 'Nom complet', 'text', 'name') : null;
-      const emailF = field('lp-email', 'E-mail', 'email', 'email');
-      const passF = mode === 'reset' ? null : field('lp-pass', 'Mot de passe', 'password', mode === 'in' ? 'current-password' : 'new-password');
+    const back = o.onBack ? el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Retour', on: { click: o.onBack } }, [icon('arrow-left')]) : null;
+    const bar = el('header', { class: 'topbar' }, [back, el('span', { class: 'topbar-title' + (back ? '' : ' pad') }, []), el('span', { class: 'topbar-end' }, [LP.ENV === 'sandbox' ? el('span', { class: 'badge', text: 'Test' }) : null, themeButton()])]);
+    const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
+    const gbtn = el('div', { class: 'g-btn' });
+    const form = el('div', { class: 'content auth-google' }, [
+      el('span', { class: 'auth-mark', 'aria-hidden': 'true' }),
+      el('h1', { class: 'title mt', text: o.title || 'Connexion à LightPay' }),
+      el('p', { class: 'muted small mt', text: o.subtitle || 'Un seul compte pour payer, recevoir et envoyer de l’argent.' }),
+      gbtn,
+      msg,
+      el('p', { class: 'small muted mt-lg', text: o.noSignUp ? 'Avec le compte Google de l’administrateur.' : 'Avec votre compte Google. Première connexion : votre compte LightPay est créé.' }),
+    ]);
+    if (o.aside) box.replaceChildren(o.aside, el('div', { class: 'auth-main' }, [bar, form]));
+    // Console layout without a brand panel: the form stays a centred column.
+    else if (document.documentElement.classList.contains('console-page')) box.replaceChildren(el('div', { class: 'auth-main' }, [bar, form]));
+    else box.replaceChildren(bar, form);
+    showOnly(box);
+    googleButton(gbtn, async function (credential) {
+      say(msg, 'Connexion…');
+      try { await LP.googleSignIn(credential); box.hidden = true; onDone(); }
+      catch (err) { say(msg, err.message, 'err'); }
+    }, msg);
+  }
+
+  // Before a sensitive action (recent sign-in required): the same Google account again, in a bottom sheet.
+  function confirmIdentity() {
+    return new Promise(function (resolve) {
+      const uid = LP.uid();
+      let done = false;
       const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
-      const btn = el('button', { class: 'btn', type: 'submit', text: mode === 'in' ? 'Se connecter' : mode === 'up' ? 'Créer mon compte' : 'Envoyer le lien' });
-      const switcher = o.noSignUp && mode === 'in' ? null : el('p', { class: 'small muted center mt-lg' }, mode === 'in'
-        ? ['Pas encore de compte ? ', el('button', { class: 'link', type: 'button', text: 'Créer un compte', on: { click: () => { mode = 'up'; render(); } } })]
-        : ['Déjà un compte ? ', el('button', { class: 'link', type: 'button', text: 'Se connecter', on: { click: () => { mode = 'in'; render(); } } })]);
-      const forgot = mode === 'in' ? el('p', { class: 'small mt' }, [el('button', { class: 'link', type: 'button', text: 'Mot de passe oublié ?', on: { click: () => { mode = 'reset'; render(); } } })]) : null;
-      const form = el('form', { class: 'content', novalidate: true }, [
-        el('span', { class: 'auth-mark', 'aria-hidden': 'true' }),
-        el('h1', { class: 'title mt', text: title }),
-        el('p', { class: 'muted small mt', text: sub }),
-        nameF, emailF, passF, forgot, msg,
-        el('div', { class: 'mt-lg' }, [btn]),
-        switcher,
+      const gbtn = el('div', { class: 'g-btn' });
+      const finish = (ok) => {
+        if (done) return;
+        done = true;
+        overlay.classList.add('closing');
+        setTimeout(() => overlay.remove(), 200);
+        document.removeEventListener('keydown', onKey);
+        resolve(ok);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') finish(false); };
+      const sheet = el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Confirmez votre identité' }, [
+        el('p', { class: 'eyebrow', text: 'Confirmez votre identité' }),
+        el('p', { class: 'small muted mt center', text: 'Pour votre sécurité, reconnectez-vous avec votre compte Google (' + LP.email() + ').' }),
+        gbtn,
+        msg,
+        el('div', { class: 'btn-row mt-lg' }, [el('button', { class: 'btn btn-secondary', type: 'button', text: 'Annuler', on: { click: () => finish(false) } })]),
       ]);
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        btn.disabled = true; say(msg, '');
-        const email = fields.find((f) => f.id === 'lp-email').value.trim();
-        try {
-          if (mode === 'reset') { await LP.resetPassword(email); say(msg, 'Si un compte existe pour cet e-mail, un lien vient d’être envoyé.', 'ok'); return; }
-          const pass = fields.find((f) => f.id === 'lp-pass').value;
-          if (mode === 'in') await LP.signIn(email, pass);
-          else await LP.signUp(email, pass, fields.find((f) => f.id === 'lp-name').value.trim());
-          box.hidden = true;
-          onDone();
-        } catch (err) { say(msg, err.message, 'err'); }
-        finally { btn.disabled = false; }
-      });
-      if (o.aside) box.replaceChildren(o.aside, el('div', { class: 'auth-main' }, [bar, form]));
-      // Console layout without a brand panel: the form stays a centred column.
-      else if (document.documentElement.classList.contains('console-page')) box.replaceChildren(el('div', { class: 'auth-main' }, [bar, form]));
-      else box.replaceChildren(bar, form);
-      showOnly(box);
-      const first = fields[0]; if (first) first.focus();
-    }
-    render();
+      const overlay = el('div', { class: 'overlay' }, [sheet]);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
+      document.addEventListener('keydown', onKey);
+      (document.querySelector('.app') || document.body).append(overlay);
+      googleButton(gbtn, async function (credential) {
+        say(msg, 'Vérification…');
+        try { await LP.googleSignIn(credential, uid); finish(true); }
+        catch (err) { say(msg, err.message, 'err'); }
+      }, msg);
+    });
   }
 `;

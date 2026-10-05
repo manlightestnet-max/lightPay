@@ -1,7 +1,7 @@
 /**
  * Static checks of the hosted pages (no server). Run: npx tsx test/pages.check.ts
  * Scripts parse · no style= / on*= attributes (CSP) · every id used by the script exists ·
- * nonce on every <style>/<script> · no external URL except Google identity endpoints.
+ * nonce on every <style>/<script> · no external URL except Google identity endpoints and Google sign-in.
  */
 import { accountPage, adminPage, connectPage, consolePage, payPage } from '../src/pages/hosted.js';
 
@@ -46,7 +46,7 @@ for (const [name, html] of [
   const missing = [...used].filter((id) => !ids.has(id) && !RUNTIME_IDS.has(id));
   if (missing.length) problems.push(`ids used but missing: ${missing.join(', ')}`);
 
-  const urls = [...code.matchAll(/https?:\/\/[^'"\s)]+/g)].map((m) => m[0]).filter((u) => !/^https:\/\/(identitytoolkit|securetoken)\.googleapis\.com\//.test(u));
+  const urls = [...code.matchAll(/https?:\/\/[^'"\s)]+/g)].map((m) => m[0]).filter((u) => !/^https:\/\/((identitytoolkit|securetoken)\.googleapis\.com\/|accounts\.google\.com\/gsi\/client$)/.test(u));
   if (urls.length) problems.push(`external URLs: ${urls.join(', ')}`);
 
   console.log(`${problems.length ? 'FAIL' : 'PASS'}  ${name} (${html.length} bytes, ${ids.size} ids)${problems.length ? '  ' + problems.join(' | ') : ''}`);
