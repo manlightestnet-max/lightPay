@@ -24,7 +24,7 @@ import {
 import { Environment } from '../types/index.js';
 import { DEFAULT_FEE_SETTINGS, FeeSettingsError, feeSettings, loadFeeSettings, saveFeeSettings, validateFeeSettings } from '../payments/fee-settings.js';
 import { auditAction, providerStats } from '../db/admin-console.js';
-import { PROVIDER_NAMES, ProviderSettingsError, loadProviderSettings, providerSettings, saveProviderSettings, validateProviderSettings } from '../payments/provider-settings.js';
+import { PROVIDERS_OF, ProviderSettingsError, loadProviderSettings, providerSettings, saveProviderSettings, validateProviderSettings } from '../payments/provider-settings.js';
 import { providerByName, providerFor } from '../payments/mobile-money.js';
 import { decideDeveloperAccess, listDeveloperRequests } from '../db/identity.js';
 import { ConnectError } from '../db/connect.js';
@@ -221,7 +221,7 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
           status: 'success',
           saved: Boolean(saved),
           current: { collection: providerFor(env, 'MTN_MOMO_COG', 'collection').name, payout: providerFor(env, 'MTN_MOMO_COG', 'payout').name },
-          providers: PROVIDER_NAMES.filter((n) => env === 'sandbox' || n !== 'simulator').map((name) => ({ name, configured: providerByName(name).configured(env) })),
+          providers: PROVIDERS_OF[env].map((name) => ({ name, configured: providerByName(name).configured(env) })),
           stats: await providerStats(env, 'month'),
         };
       });

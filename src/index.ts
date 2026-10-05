@@ -13,7 +13,6 @@ import { pendingPayouts, resolvePayout } from './db/payouts.js';
 import { MAINAPP_KEY_PREFIX, verifyMainappKey } from './security/app-identity.js';
 import { externalMoneyRoutes } from './routes/external.js';
 import { adminRoutes } from './routes/admin.js';
-import { gatewayRoutes } from './routes/gateways.js';
 import { sdkDistributionRoutes } from './routes/sdk.js';
 import { merchantRoutes } from './routes/merchant.js';
 import { faucetRoutes } from './routes/faucet.js';
@@ -162,13 +161,11 @@ server.addHook('onRequest', async (request, reply) => {
 
   // Exceptions publiques strictes :
   // - /health pour le monitoring du container
-  // - /v1/gateways/webhook/* pour les notifications certifiées des agrégateurs externes
   // - /v1/sdk/* pour la distribution du SDK client
   // - /v1/merchant/apps/register pour l'onboarding autonome d'application grossiste
   if (
     url === '/health' ||
-    url.startsWith('/v1/gateways/webhook') ||
-    // Provider notifications (signature verified in the route).
+    // Provider notifications (verified in the route: signature, or status re-read from the provider).
     url.startsWith('/v1/providers/') ||
     url.startsWith('/v1/sdk') ||
     url === '/v1/merchant/apps/register' ||
@@ -281,7 +278,6 @@ const sweep = async () => {
 setInterval(() => void sweep(), 60_000).unref();
 server.register(externalMoneyRoutes, { prefix: '/v1' });
 server.register(adminRoutes, { prefix: '/v1/admin' });
-server.register(gatewayRoutes, { prefix: '/v1/gateways' });
 server.register(sdkDistributionRoutes, { prefix: '/v1/sdk' });
 server.register(merchantRoutes, { prefix: '/v1/merchant' });
 server.register(faucetRoutes);

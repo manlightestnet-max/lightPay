@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import type { MobileMoneyProvider, MobileNetwork, RailOperation, RailResult } from './mobile-money.js';
+import type { Environment } from '../types/index.js';
 
 /**
  * SasPay (https://docs.saspay.me) — Congo-Brazzaville only here (CG, XAF).
@@ -61,9 +62,9 @@ export class SasPayError extends Error {
 
 export class SasPayProvider implements MobileMoneyProvider {
   name = 'saspay';
-  // One SasPay account for both ledgers.
-  configured() {
-    return Boolean(process.env.SASPAY_SECRET_KEY);
+  // Real ledger only: SasPay has no test mode.
+  configured(env: Environment) {
+    return env === 'production' && Boolean(process.env.SASPAY_SECRET_KEY);
   }
 
   private async call(method: 'GET' | 'POST', path: string, body?: unknown, idempotencyKey?: string) {

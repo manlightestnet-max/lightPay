@@ -320,9 +320,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
    * depuis le SYSTEM_CASH_GATEWAY sans passer par le Main Treasury Wallet,
    * créant ainsi de l'argent ex-nihilo (fraude comptable).
    *
-   * La seule voie légale pour injecter de la liquidité est :
-   *   POST /v1/gateways/webhook/:provider  → alimente SYSTEM_MAIN_TREASURY
-   *   POST /v1/admin/treasury/distribute   → distribue depuis SYSTEM_MAIN_TREASURY
+   * L'argent n'entre que par un provider mobile money (encaissement vérifié auprès de lui),
+   * puis POST /v1/admin/treasury/distribute distribue depuis SYSTEM_MAIN_TREASURY.
    */
 
   /**

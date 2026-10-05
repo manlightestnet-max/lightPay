@@ -9,6 +9,16 @@ import { Environment } from '../types/index.js';
  */
 export const PROVIDER_NAMES = ['saspay', 'pawapay', 'simulator'] as const;
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
+
+/**
+ * Who may serve each ledger. SasPay has no test mode: the test ledger never reaches it
+ * (pawaPay's sandbox or the simulator instead). The simulator invents money: never real.
+ */
+export const PROVIDERS_OF: Record<Environment, readonly ProviderName[]> = {
+  production: ['saspay', 'pawapay'],
+  sandbox: ['pawapay', 'simulator'],
+};
+export const servesLedger = (env: Environment, name: string) => (PROVIDERS_OF[env] as readonly string[]).includes(name);
 export type RailKind = 'collection' | 'payout';
 
 export interface ProviderSettings {
@@ -29,13 +39,12 @@ export class ProviderSettingsError extends Error {
 
 const isName = (v: unknown): v is ProviderName => typeof v === 'string' && (PROVIDER_NAMES as readonly string[]).includes(v);
 
-/** Both kinds required; the simulator never serves the real ledger (it invents money). */
+/** Both kinds required, each a provider allowed on this ledger (PROVIDERS_OF). */
 export function validateProviderSettings(env: Environment, input: unknown): ProviderSettings {
   const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   if (!isName(raw.collection) || !isName(raw.payout)) throw new ProviderSettingsError(`Fournisseur inconnu : ${PROVIDER_NAMES.join(', ')}.`);
-  if (env === 'production' && (raw.collection === 'simulator' || raw.payout === 'simulator')) {
-    throw new ProviderSettingsError('Le simulateur ne sert que le compte de test.');
-  }
+  const refused = [raw.collection, raw.payout].find((n) => !servesLedger(env, n));
+  if (refused) throw new ProviderSettingsError(env === 'sandbox' ? `${refused} ne sert pas le compte de test.` : `${refused} ne sert pas le compte réel.`);
   return { collection: raw.collection, payout: raw.payout };
 }
 

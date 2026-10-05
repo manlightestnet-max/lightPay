@@ -16,7 +16,7 @@
 import { Environment } from '../types/index.js';
 import { SasPayProvider } from './saspay.js';
 import { PawaPayProvider } from './pawapay.js';
-import { RailKind, providerSettings } from './provider-settings.js';
+import { RailKind, providerSettings, servesLedger } from './provider-settings.js';
 
 export type MobileNetwork = 'MTN_MOMO_COG' | 'AIRTEL_COG';
 export const MOBILE_NETWORKS: MobileNetwork[] = ['MTN_MOMO_COG', 'AIRTEL_COG'];
@@ -131,7 +131,9 @@ const routes = (): Record<string, string> =>
 
 /** The provider that takes new collections (or payouts) on this ledger today. */
 export function providerFor(env: Environment, network: MobileNetwork, kind: RailKind = 'collection'): MobileMoneyProvider {
-  const chosen = providerSettings(env);
-  if (chosen) return providerByName(chosen[kind]);
-  return providerByName(routes()[network] || process.env.MOBILE_MONEY_PROVIDER || 'simulator');
+  const chosen = providerSettings(env)?.[kind];
+  const name = chosen && servesLedger(env, chosen) ? chosen : routes()[network] || process.env.MOBILE_MONEY_PROVIDER || 'simulator';
+  // A provider that does not serve this ledger is never used: the test ledger falls back to the
+  // simulator (SasPay has no test mode), the real one stays refused (simulator check at the call).
+  return providerByName(servesLedger(env, name) ? name : env === 'sandbox' ? 'simulator' : name);
 }
