@@ -1,15 +1,22 @@
 /**
- * Mobile-money rails (collections and payouts), pluggable per network.
+ * Mobile-money rails (collections and payouts), pluggable.
  *
  * The ledger never talks to a provider directly: checkout, deposits, refunds and
- * withdrawals go through this registry. Each network is routed to a provider:
+ * withdrawals go through this registry. The provider of new operations is chosen per ledger
+ * by the admin (./provider-settings.ts: one for collections, one for payouts). Without a
+ * saved choice:
  *
  *   MOBILE_MONEY_ROUTES="MTN_MOMO_COG=saspay,AIRTEL_COG=saspay"   (per network)
  *   MOBILE_MONEY_PROVIDER=simulator                                 (default for the rest)
  *
+ * An operation keeps the provider it started with (providerByName). Providers are LightPay's
+ * business: people and apps only ever see "mobile money".
  * Adding a provider = one file implementing MobileMoneyProvider + one line in PROVIDERS.
  */
+import { Environment } from '../types/index.js';
 import { SasPayProvider } from './saspay.js';
+import { PawaPayProvider } from './pawapay.js';
+import { RailKind, providerSettings } from './provider-settings.js';
 
 export type MobileNetwork = 'MTN_MOMO_COG' | 'AIRTEL_COG';
 export const MOBILE_NETWORKS: MobileNetwork[] = ['MTN_MOMO_COG', 'AIRTEL_COG'];
@@ -19,6 +26,8 @@ export type RailStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED';
 export interface RailOperation {
   /** Our id (ca_… / po_…), also sent as the provider's idempotency key. */
   id: string;
+  /** The ledger: a provider may use separate accounts (pawaPay sandbox / live). */
+  environment: Environment;
   msisdn: string;
   amount: bigint;
   currency: string;
@@ -41,6 +50,8 @@ export interface RailResult {
 
 export interface MobileMoneyProvider {
   name: string;
+  /** Keys present for this ledger (shown in the admin before choosing it). */
+  configured(env: Environment): boolean;
   /** Sends the payment request to the payer's phone. */
   requestCollection(op: RailOperation): Promise<RailResult>;
   /** Current state of a collection (webhooks only trigger this check). */
@@ -66,6 +77,9 @@ export function normalizeCongoMsisdn(input: string): string | null {
  */
 export class SimulatorProvider implements MobileMoneyProvider {
   name = 'simulator';
+  configured(env: Environment) {
+    return env === 'sandbox';
+  }
   constructor(private approveAfterMs = 4_000, private timeoutAfterMs = 20_000) {}
 
   async requestCollection(op: RailOperation): Promise<RailResult> {
@@ -93,6 +107,7 @@ export class SimulatorProvider implements MobileMoneyProvider {
 const PROVIDERS: Record<string, () => MobileMoneyProvider> = {
   simulator: () => new SimulatorProvider(Number(process.env.SIMULATOR_APPROVE_MS || 4_000), Number(process.env.SIMULATOR_TIMEOUT_MS || 20_000)),
   saspay: () => new SasPayProvider(),
+  pawapay: () => new PawaPayProvider(),
 };
 
 const instances = new Map<string, MobileMoneyProvider>();
@@ -114,7 +129,9 @@ const routes = (): Record<string, string> =>
       .filter(([network, provider]) => network && provider)
   );
 
-/** The provider that serves a network today. */
-export function providerFor(network: MobileNetwork): MobileMoneyProvider {
+/** The provider that takes new collections (or payouts) on this ledger today. */
+export function providerFor(env: Environment, network: MobileNetwork, kind: RailKind = 'collection'): MobileMoneyProvider {
+  const chosen = providerSettings(env);
+  if (chosen) return providerByName(chosen[kind]);
   return providerByName(routes()[network] || process.env.MOBILE_MONEY_PROVIDER || 'simulator');
 }

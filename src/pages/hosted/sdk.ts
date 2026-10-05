@@ -28,11 +28,22 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
     '.frame { position: relative; width: 440px; max-width: 100%; height: min(760px, calc(100dvh - 32px)); border-radius: 20px; overflow: hidden; background: #141416; box-shadow: 0 30px 80px -20px rgba(0,0,0,.6); animation: rise .22s cubic-bezier(.2,.7,.2,1); }',
     'iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; opacity: 0; transition: opacity .15s; }',
     '.loaded iframe { opacity: 1; }',
-    '.spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }',
-    '.spin::after { content: ""; width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(255,255,255,.15); border-top-color: #f2f2f2; animation: spin .9s linear infinite; }',
-    '.loaded .spin { display: none; }',
+    // Shimmer of the payment page while it loads (same layout), in the app's theme.
+    '.frame.light { background: #ffffff; }',
+    '.sk { position: absolute; inset: 0; padding: 18px 24px; box-sizing: border-box; display: flex; flex-direction: column; pointer-events: none; --a: #1c1c1e; --b: #2e2e32; }',
+    '.light .sk { --a: #ececee; --b: #f8f8f9; }',
+    '.loaded .sk { display: none; }',
+    '.sk i { display: block; border-radius: 8px; background: linear-gradient(100deg, var(--a) 20%, var(--b) 50%, var(--a) 80%); background-size: 250% 100%; animation: sh 1.2s linear infinite; }',
+    '.sk .bar { height: 12px; width: 30%; margin: 6px auto 0; }',
+    '.sk .sub { height: 11px; width: 42%; margin: 34px auto 0; }',
+    '.sk .amt { height: 46px; width: 52%; margin: 14px auto 0; }',
+    '.sk .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 40px; }',
+    '.sk .tile { height: 74px; border-radius: 16px; }',
+    '.sk .field { height: 52px; margin-top: 30px; border-radius: 10px; }',
+    '.sk .row { height: 11px; margin-top: 16px; }',
+    '.sk .btn { height: 52px; margin-top: auto; border-radius: 14px; }',
     '@media (max-width: 520px) { .backdrop { padding: 0; } .frame { width: 100%; height: 100%; border-radius: 0; } }',
-    '@keyframes fade { from { opacity: 0 } } @keyframes rise { from { opacity: 0; transform: translateY(12px) } } @keyframes spin { to { transform: rotate(360deg) } }',
+    '@keyframes fade { from { opacity: 0 } } @keyframes rise { from { opacity: 0; transform: translateY(12px) } } @keyframes sh { from { background-position: 100% 0 } to { background-position: -150% 0 } }',
     '@media (prefers-reduced-motion: reduce) { .backdrop, .frame { animation: none; } }',
   ].join('\\n');
 
@@ -58,12 +69,21 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
       var backdrop = document.createElement('div');
       backdrop.className = 'backdrop';
       var frame = document.createElement('div');
-      frame.className = 'frame';
+      var light = Boolean(options && options.theme === 'light');
+      frame.className = light ? 'frame light' : 'frame';
       frame.setAttribute('role', 'dialog');
       frame.setAttribute('aria-modal', 'true');
       frame.setAttribute('aria-label', 'Paiement LightPay');
       var spin = document.createElement('div');
-      spin.className = 'spin';
+      spin.className = 'sk';
+      spin.setAttribute('aria-hidden', 'true');
+      ['bar', 'sub', 'amt', 'tiles', 'field', 'row', 'row', 'row', 'btn'].forEach(function (k) {
+        var n = document.createElement(k === 'tiles' ? 'div' : 'i');
+        n.className = k;
+        if (k === 'tiles') for (var t = 0; t < 3; t++) { var c = document.createElement('i'); c.className = 'tile'; n.appendChild(c); }
+        if (k === 'row') n.style.width = ['70%', '55%', '80%'][spin.querySelectorAll('.row').length];
+        spin.appendChild(n);
+      });
       var iframe = document.createElement('iframe');
       iframe.title = 'Paiement LightPay';
       iframe.src = src.toString();
@@ -82,7 +102,7 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
         var d = e.data || {};
         if (d.source !== 'lightpay' || d.session !== session) return;
         if (d.type === 'ready') {
-          ready = true; frame.className = 'frame loaded'; clearTimeout(timer); iframe.focus();
+          ready = true; frame.className = light ? 'frame light loaded' : 'frame loaded'; clearTimeout(timer); iframe.focus();
           // Only to LightPay's own frame, never in the address.
           if (idToken) iframe.contentWindow.postMessage({ source: 'lightpay-app', type: 'identity', session: session, idToken: idToken }, ORIGIN);
         }

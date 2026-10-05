@@ -153,7 +153,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     PROVIDER_CANCELLED: 'Paiement annulé depuis le téléphone.',
     PROVIDER_EXPIRED: 'La demande a expiré sans validation. Réessayez.',
   };
-  const failText = (code) => FAIL[code] || (code && code.indexOf('PROVIDER_') === 0 ? 'L’opérateur a refusé ce paiement (' + code.slice(9).toLowerCase().replace(/_/g, ' ') + '). Réessayez ou changez de numéro.' : 'Le paiement a échoué. Réessayez.');
+  const failText = (code, reason) => FAIL[code] || reason || (code && code.indexOf('PROVIDER_') === 0 ? 'L’opérateur a refusé ce paiement (' + code.slice(9).toLowerCase().replace(/_/g, ' ') + '). Réessayez ou changez de numéro.' : 'Le paiement a échoué. Réessayez.');
   const NET_NAME = { MTN_MOMO_COG: 'MTN MoMo', AIRTEL_COG: 'Airtel Money' };
   // false: the person signed in on the app has no LightPay wallet, so only mobile money is offered.
   let payerHasWallet = null;
@@ -275,10 +275,10 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       const wasWaiting = !document.querySelector('[data-screen="waiting"]').hidden;
       stop();
       const failedNow = a && a.status === 'FAILED' && a.at !== lastAttemptAt;
-      if (failedNow && wasWaiting) { lastAttemptAt = a.at; $('failedText').textContent = failText(a.failure_code); screen('failed'); }
+      if (failedNow && wasWaiting) { lastAttemptAt = a.at; $('failedText').textContent = failText(a.failure_code, a.reason); screen('failed'); }
       else {
         if (first || wasWaiting) { screen('pay'); openMethod(); }
-        if (failedNow) { lastAttemptAt = a.at; say('msg', failText(a.failure_code), 'err'); }
+        if (failedNow) { lastAttemptAt = a.at; say('msg', failText(a.failure_code, a.reason), 'err'); }
       }
     } else {
       stop();

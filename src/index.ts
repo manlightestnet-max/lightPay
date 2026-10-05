@@ -21,6 +21,7 @@ import { adminConsoleRoutes, adminHost } from './routes/admin-console.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { refreshFeeSettings } from './payments/fee-settings.js';
+import { refreshProviderSettings } from './payments/provider-settings.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
 import { registerRateLimits } from './security/rate-limit.js';
 import crypto from 'crypto';
@@ -292,7 +293,8 @@ async function start() {
     await runMigrations();
     // Fees and minimums come from the admin's settings; re-read every minute.
     await refreshFeeSettings();
-    setInterval(() => void refreshFeeSettings(), 60_000).unref();
+    await refreshProviderSettings();
+    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); }, 60_000).unref();
 
     await server.listen({
       port: config.port,

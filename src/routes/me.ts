@@ -242,7 +242,7 @@ export async function meRoutes(fastify: FastifyInstance) {
     const raw = String((request.query as any).amount ?? '');
     if (!/^\d{1,12}$/.test(raw) || BigInt(raw) <= 0n) return reply.status(400).send({ error: 'INVALID_AMOUNT', message: 'Montant invalide.' });
     const amount = BigInt(raw);
-    return { status: 'success', quotes: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(envOf(request), amount, providerFor(n).name)])) };
+    return { status: 'success', quotes: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(envOf(request), amount, providerFor(envOf(request), n).name)])) };
   });
 
   fastify.delete('/', async (request, reply) => {

@@ -61,6 +61,7 @@ export interface SendPayoutInput {
 
 const railOf = (p: PayoutRow): RailOperation => ({
   id: p.id,
+  environment: p.environment,
   msisdn: p.msisdn,
   amount: BigInt(p.amount),
   currency: p.currency,
@@ -77,7 +78,7 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
 
   const outflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, input.currency);
   const payoutId = `po_${crypto.randomBytes(18).toString('base64url')}`;
-  const provider = providerFor(input.network);
+  const provider = providerFor(env, input.network, 'payout');
   // The simulator pays nobody: real money never "leaves" through it (nothing is debited).
   if (env === 'production' && provider.name === 'simulator') throw new Error('Le mobile money est indisponible pour le moment. Réessayez plus tard.');
   const operatorFee = input.operatorFee ?? 0n;

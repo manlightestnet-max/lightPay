@@ -19,6 +19,9 @@ export interface FeeSettings {
   withdrawal_lightpay_fee_bps: number;
   withdrawal_operator_fee_bps: number;
   withdrawal_operator_fee_min: number;
+  /** pawaPay: operator fee asked on top of a deposit (covers pawaPay's fee), and on a payout. */
+  pawapay_deposit_fee_bps: number;
+  pawapay_payout_fee_bps: number;
 }
 
 export const DEFAULT_FEE_SETTINGS: Readonly<FeeSettings> = Object.freeze({
@@ -31,6 +34,8 @@ export const DEFAULT_FEE_SETTINGS: Readonly<FeeSettings> = Object.freeze({
   withdrawal_lightpay_fee_bps: 0,
   withdrawal_operator_fee_bps: 400,
   withdrawal_operator_fee_min: 0,
+  pawapay_deposit_fee_bps: 0,
+  pawapay_payout_fee_bps: 0,
 });
 
 const KEYS = Object.keys(DEFAULT_FEE_SETTINGS) as (keyof FeeSettings)[];

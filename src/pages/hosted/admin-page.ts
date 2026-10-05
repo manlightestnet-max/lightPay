@@ -5,7 +5,7 @@ import { CONSOLE_CSS } from './console.js';
 /**
  * /admin — the owner's console (LightPay sign-in listed in ADMIN_UIDS). Revenue first, then the
  * provider reserves, users, apps, every movement, the main wallet and the admin log.
- * Hash routes: #/home · #/reserves · #/users[/<wallet>] · #/apps[/<id>] · #/developers[/<uid>] · #/moves[/<tx>] · #/main · #/fees · #/audit
+ * Hash routes: #/home · #/reserves · #/users[/<wallet>] · #/apps[/<id>] · #/developers[/<uid>] · #/moves[/<tx>] · #/main · #/fees · #/providers · #/audit
  * ?env=sandbox for the test ledger. No withdrawal from here, on purpose.
  */
 
@@ -27,6 +27,8 @@ const ADMIN_CSS = `
 .share { white-space: pre-wrap; font-size: 14px; line-height: 1.6; padding: 14px 16px; border-radius: 12px; background: var(--raised); }
 .search { width: 100%; max-width: 320px; height: 36px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--card); padding: 0 12px; font-size: 14px; }
 .search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field select { width: 100%; height: 46px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--card); color: var(--text); padding: 0 12px; font: inherit; font-size: 15px; }
+.field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .debit { color: var(--danger); } .credit { color: var(--accent-ink); }
 .console .grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -81,6 +83,7 @@ export const adminPage = (nonce: string, env: string) => {
     ${navItem('main', 'main', 'wallet', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>')}
     <div class="nav-label">Réglages</div>
     ${navItem('fees', 'fees', 'settings', 'Frais et minimums')}
+    ${navItem('providers', 'providers', 'swap', 'Fournisseurs')}
     ${navItem('audit', 'audit', 'clock', 'Journal admin')}
   </nav>
   <div class="side-foot"><div class="me"><span class="avatar" id="meAvatar" aria-hidden="true"></span><span class="me-main"><span class="me-name" id="meName"></span><span class="me-mail">Administrateur</span></span><button class="icon-btn" type="button" id="signOutSide" aria-label="Se déconnecter" title="Se déconnecter">${iconSvg('logout')}</button></div></div>
@@ -106,6 +109,7 @@ ${page('home', 'Revenus et activité', `
     ${panel('D’où viennent vos bénéfices', '<div class="rows" id="revRows"></div>')}
     ${panel('Équilibre du grand livre', '<div id="ledgerCheck"></div><div class="rows mt" id="ledgerRows"></div>')}
   </div>
+  ${panel('Par fournisseur', '<div id="provHome"></div>', { flush: true, foot: 'Visible ici seulement : les utilisateurs et les apps ne voient jamais quel fournisseur les a servis.' })}
   ${panel('30 derniers jours', '<div class="bars" id="bars" aria-hidden="true"></div><div class="bars-axis"><span id="barsFrom"></span><span id="barsTo"></span></div>', {
     actions: seg('series', [['transactions', 'Transactions'], ['revenue', 'Bénéfices']]),
   })}
@@ -192,6 +196,21 @@ ${page('main', '<span data-real>Wallet main</span><span data-test hidden>Faucet<
   ${panel('<span data-real>Mouvements du wallet main</span><span data-test hidden>Mouvements du faucet</span>', '<div id="mainMoves"></div>', { flush: true })}
 `)}
 
+${page('providers', 'Fournisseurs mobile money', `
+  <div class="grid-2">
+    ${panel('Fournisseur par défaut', `
+      <form id="provForm" novalidate>
+        <div class="field"><label for="provCollection">Encaissements : dépôts et paiements</label><select id="provCollection"></select></div>
+        <div class="field"><label for="provPayout">Envois : retraits et remboursements</label><select id="provPayout"></select></div>
+        <div class="msg" id="provSaveMsg" role="status" aria-live="polite"></div>
+        <button class="btn mt" type="submit" id="provGo">${iconSvg('check')}Enregistrer</button>
+        <p class="hint">Pour les nouvelles opérations, sur cet environnement seulement. Une opération en cours reste chez son fournisseur. Inscrit au journal admin.</p>
+      </form>`)}
+    ${panel('Clés', '<div class="rows" id="provKeys"></div>', { foot: 'Un fournisseur sans clés ne peut pas être choisi.' })}
+  </div>
+  ${panel('Par fournisseur · 30 derniers jours', '<div id="provStats"></div>', { flush: true })}
+`)}
+
 ${page('fees', 'Frais et minimums', `
   <form id="feesForm" novalidate>
   <div class="grid-2">
@@ -199,15 +218,18 @@ ${page('fees', 'Frais et minimums', `
       ${feeField('deposit_min', 'Montant minimum', 'fcfa', 'Plus petit dépôt ou plus petit paiement accepté.')}
       ${feeField('deposit_lightpay_fee_min', 'Frais LightPay minimum', 'fcfa')}
       ${feeField('deposit_lightpay_fee_bps', 'Frais LightPay', 'pct', 'Le plus grand des deux s’applique.')}
-      ${feeField('deposit_operator_fee_bps', 'Frais opérateur estimés', 'pct', 'Affichés avant le paiement. Le montant exact vient de l’opérateur.')}
+      ${feeField('deposit_operator_fee_bps', 'SasPay : frais opérateur estimés', 'pct', 'Affichés avant le paiement. Le montant exact vient de SasPay.')}
       <div class="rows mt" id="feesDepEx"></div>`)}
     ${panel('Retraits', `
       ${feeField('withdrawal_min', 'Montant minimum', 'fcfa', 'Plus petit retrait accepté.')}
       ${feeField('withdrawal_lightpay_fee_min', 'Frais LightPay minimum', 'fcfa')}
       ${feeField('withdrawal_lightpay_fee_bps', 'Frais LightPay', 'pct', 'Le plus grand des deux s’applique.')}
-      ${feeField('withdrawal_operator_fee_min', 'Frais opérateur minimum', 'fcfa')}
-      ${feeField('withdrawal_operator_fee_bps', 'Frais opérateur', 'pct', 'Ce que le provider prend sur chaque envoi.')}
+      ${feeField('withdrawal_operator_fee_min', 'SasPay : frais opérateur minimum', 'fcfa')}
+      ${feeField('withdrawal_operator_fee_bps', 'SasPay : frais opérateur', 'pct', 'Ce que SasPay prend sur chaque envoi.')}
       <div class="rows mt" id="feesWdEx"></div>`)}
+    ${panel('pawaPay', `
+      ${feeField('pawapay_deposit_fee_bps', 'Frais opérateur sur dépôts et paiements', 'pct', 'Demandés au payeur en plus : ils couvrent la commission que pawaPay prend sur notre solde pawaPay.')}
+      ${feeField('pawapay_payout_fee_bps', 'Frais opérateur sur retraits', 'pct', 'Débités du wallet avec le retrait, pour couvrir la commission pawaPay.')}`)}
   </div>
   <div class="msg" id="feesSaveMsg" role="status" aria-live="polite"></div>
   <button class="btn mt" type="submit" id="feesGo">${iconSvg('check')}Enregistrer</button>
@@ -250,11 +272,12 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   const TYPE = { COLLECTION: 'Encaissement', PAYMENT: 'Paiement', HOLD: 'Paiement protégé', HOLD_CAPTURE: 'Versé au vendeur', HOLD_RELEASE: 'Séquestre rendu', TRANSFER: 'Transfert', PAYOUT: 'Retrait', REFUND: 'Remboursement', FAUCET: 'Recharge faucet' };
   const STATUS = { SUCCESS: ['ok', 'réussi'], PENDING: ['warn', 'en cours'], FAILED: ['err', 'échoué'], REVERSED: ['err', 'annulé'], GIVEN_BACK: ['', 'restitué'] };
   const SOURCE = { deposit: 'Frais de dépôt', payment: 'Frais de paiement', withdrawal: 'Frais de retrait', other: 'Autres' };
-  const PROVIDER = { SASPAY: 'SasPay', SIMULATOR: 'Simulateur', AUTRE: 'Sans provider indiqué' };
+  const PROVIDER = { SASPAY: 'SasPay', PAWAPAY: 'pawaPay', SIMULATOR: 'Simulateur', AUTRE: 'Sans provider indiqué' };
   const ACTION = LP.ENV === 'sandbox'
     ? { MAIN_SEND: 'Envoi depuis le faucet', FAUCET_ISSUE: 'Émission d’argent de test' }
     : { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Dépôt sur le wallet main' };
   ACTION.FEES_UPDATE = 'Frais et minimums modifiés';
+  ACTION.PROVIDERS_UPDATE = 'Fournisseur mobile money changé';
   ACTION.DEVELOPER_APPROVED = 'Mode avancé validé';
   ACTION.DEVELOPER_REJECTED = 'Mode avancé refusé';
   const pill = (status) => { const s = STATUS[status] || ['', String(status || '').toLowerCase()]; return el('span', { class: 'pill ' + s[0], text: s[1] }); };
@@ -382,6 +405,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       rows($('ledgerRows'), [['Total des débits', money(o.ledger.debit)], ['Total des crédits', money(o.ledger.credit)]]
         .concat(o.ledger.unbalanced.map((t) => [(t.type === 'INITIAL_FAUCET' ? 'Réserve de départ du faucet' : TYPE[t.type] || t.type) + ' · ' + fmtDate(t.created_at), (Number(t.gap) > 0 ? '+' : '') + money(t.gap)])));
       series = o.daily; drawBars();
+      providerTable($('provHome'), o.by_provider || []);
       $('stUsers').textContent = num(o.users); $('stUsersHint').textContent = '+' + num(o.new_users) + ' sur la période · ' + num(o.guests) + ' invités';
       $('stApps').textContent = num(o.apps); $('stAppsHint').textContent = num(o.connections) + ' comptes connectés';
       $('stPayments').textContent = money(o.payments_volume); $('stPaymentsHint').textContent = num(o.payments) + ' paiements';
@@ -612,6 +636,41 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     $('rechargeGo').disabled = false;
   });
 
+  // ---------------------------------------------------------------- providers (admin only)
+  const provName = (n) => PROVIDER[String(n).toUpperCase()] || n;
+  function providerTable(host, list) {
+    table(host, [{ label: 'Fournisseur' }, { label: 'Encaissé', cls: 'num' }, { label: 'Envoyé', cls: 'num' }, { label: 'Échecs', cls: 'num' }], list.map((p) => ({
+      cells: [
+        cell(provName(p.provider), num(p.collections.succeeded) + ' encaissements · ' + num(p.payouts.succeeded) + ' envois' + (p.collections.pending + p.payouts.pending ? ' · ' + num(p.collections.pending + p.payouts.pending) + ' en cours' : '')),
+        money(p.collections.amount), money(p.payouts.amount), num(p.collections.failed + p.payouts.failed),
+      ],
+    })), 'Aucune opération mobile money sur la période.');
+  }
+  let provInfo = null;
+  async function enterProviders() {
+    crumbs('Réglages', 'Fournisseurs');
+    await load('providers', async () => {
+      provInfo = await LP.api('GET', '/v1/admin-console/providers');
+      ['provCollection', 'provPayout'].forEach((id) => {
+        const kind = id === 'provCollection' ? 'collection' : 'payout';
+        $(id).replaceChildren.apply($(id), provInfo.providers.map((p) => el('option', { value: p.name, text: provName(p.name) + (p.configured ? '' : ' (clés absentes)'), disabled: p.configured ? null : true, selected: provInfo.current[kind] === p.name ? true : null })));
+        $(id).value = provInfo.current[kind];
+      });
+      rows($('provKeys'), provInfo.providers.map((p) => [provName(p.name), p.configured ? 'Configurées' : 'Absentes']));
+      providerTable($('provStats'), provInfo.stats);
+      say('provSaveMsg', provInfo.saved ? '' : 'Aucun choix enregistré : la configuration du serveur s’applique (' + provName(provInfo.current.collection) + ').');
+    });
+  }
+  $('provForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); say('provSaveMsg', '');
+    $('provGo').disabled = true;
+    await guarded(async () => {
+      const r = await LP.api('PUT', '/v1/admin-console/providers', { collection: $('provCollection').value, payout: $('provPayout').value });
+      say('provSaveMsg', 'Enregistré : encaissements par ' + provName(r.current.collection) + ', envois par ' + provName(r.current.payout) + '.', 'ok');
+    }, 'provSaveMsg');
+    $('provGo').disabled = false;
+  });
+
   // ---------------------------------------------------------------- fees and minimums
   const feeInputs = () => Array.prototype.slice.call(document.querySelectorAll('[data-fee]'));
   const pctText = (bps) => String(bps / 100).replace('.', ',');
@@ -683,6 +742,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     moves: { parent: 'home', enter: withNav('moves', enterMoves) },
     main: { parent: 'home', enter: withNav('main', enterMain) },
     fees: { parent: 'home', enter: withNav('fees', enterFees) },
+    providers: { parent: 'home', enter: withNav('providers', enterProviders) },
     audit: { parent: 'home', enter: withNav('audit', enterAudit) },
     denied: { enter: () => {} },
   };

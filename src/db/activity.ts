@@ -57,6 +57,19 @@ export const REASONS: Record<string, string> = {
   // Our side, not the person's: the provider refused our server (configuration to fix).
   IP_NOT_WHITELISTED: 'Le service de retrait est momentanément indisponible. Réessayez plus tard.',
   PROVIDER_REFUSED: 'Le service de retrait est momentanément indisponible. Réessayez plus tard.',
+  PROVIDER_AUTHENTICATION_ERROR: 'Le mobile money est momentanément indisponible. Réessayez plus tard.',
+  PROVIDER_AUTHORISATION_ERROR: 'Le mobile money est momentanément indisponible. Réessayez plus tard.',
+  PROVIDER_NO_AUTHENTICATION: 'Le mobile money est momentanément indisponible. Réessayez plus tard.',
+  PROVIDER_DEPOSITS_NOT_ALLOWED: 'Le mobile money est momentanément indisponible. Réessayez plus tard.',
+  PROVIDER_PAYOUTS_NOT_ALLOWED: 'Le service de retrait est momentanément indisponible. Réessayez plus tard.',
+  PROVIDER_PROVIDER_TEMPORARILY_UNAVAILABLE: 'L’opérateur est momentanément indisponible. Réessayez dans quelques minutes.',
+  PROVIDER_PAYER_NOT_FOUND: 'Ce numéro n’a pas de compte mobile money chez cet opérateur.',
+  PROVIDER_RECIPIENT_NOT_FOUND: 'Ce numéro n’a pas de compte mobile money chez cet opérateur.',
+  PROVIDER_INVALID_PHONE_NUMBER: 'Numéro de téléphone invalide.',
+  PROVIDER_AMOUNT_OUT_OF_BOUNDS: 'Montant hors des limites de l’opérateur.',
+  PROVIDER_PAYMENT_IN_PROGRESS: 'Un autre paiement attend déjà votre validation sur ce téléphone. Réessayez dans quelques minutes.',
+  PROVIDER_WALLET_LIMIT_REACHED: 'Limite de votre compte mobile money atteinte.',
+  PROVIDER_PAWAPAY_WALLET_OUT_OF_FUNDS: 'Le service de retrait est momentanément indisponible. Réessayez plus tard.',
 };
 
 export const reasonFor = (code?: string | null, fallback?: string | null) =>

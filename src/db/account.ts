@@ -132,7 +132,7 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   if (!MOBILE_NETWORKS.includes(network)) throw await refused(new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK'));
   const msisdn = normalizeCongoMsisdn(String(input.msisdn ?? ''));
   if (!msisdn) throw await refused(new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN'));
-  const provider = providerFor(network).name;
+  const provider = providerFor(environment, network, 'payout').name;
   const operatorFee = providerPayoutFee(environment, provider, amount);
   const lightpayFee = lightpayPayoutFee(environment, amount);
   if (BigInt(wallet.available_balance) < amount + operatorFee + lightpayFee) {
@@ -239,5 +239,5 @@ export function quoteWithdrawal(environment: Environment, amountInput: unknown, 
   const amount = positive(amountInput);
   const network = String(networkInput ?? '') as MobileNetwork;
   if (!MOBILE_NETWORKS.includes(network)) throw new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
-  return withdrawalQuote(environment, amount, providerFor(network).name, 'XAF');
+  return withdrawalQuote(environment, amount, providerFor(environment, network, 'payout').name, 'XAF');
 }

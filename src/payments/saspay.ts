@@ -61,6 +61,10 @@ export class SasPayError extends Error {
 
 export class SasPayProvider implements MobileMoneyProvider {
   name = 'saspay';
+  // One SasPay account for both ledgers.
+  configured() {
+    return Boolean(process.env.SASPAY_SECRET_KEY);
+  }
 
   private async call(method: 'GET' | 'POST', path: string, body?: unknown, idempotencyKey?: string) {
     const key = process.env.SASPAY_SECRET_KEY;

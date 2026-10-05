@@ -23,7 +23,9 @@ import {
 } from '../db/admin-console.js';
 import { Environment } from '../types/index.js';
 import { DEFAULT_FEE_SETTINGS, FeeSettingsError, feeSettings, loadFeeSettings, saveFeeSettings, validateFeeSettings } from '../payments/fee-settings.js';
-import { auditAction } from '../db/admin-console.js';
+import { auditAction, providerStats } from '../db/admin-console.js';
+import { PROVIDER_NAMES, ProviderSettingsError, loadProviderSettings, providerSettings, saveProviderSettings, validateProviderSettings } from '../payments/provider-settings.js';
+import { providerByName, providerFor } from '../payments/mobile-money.js';
 import { decideDeveloperAccess, listDeveloperRequests } from '../db/identity.js';
 import { ConnectError } from '../db/connect.js';
 
@@ -42,6 +44,8 @@ import { ConnectError } from '../db/connect.js';
  *   POST /v1/admin-console/faucet/issue         { amount }             test only: issue test money into the faucet
  *   GET  /v1/admin-console/fees                 fees and minimums of this ledger (+ the defaults)
  *   PUT  /v1/admin-console/fees                 { …all settings }   recent sign-in; applied at once, logged
+ *   GET  /v1/admin-console/providers            provider of new collections / payouts, keys present, 30-day figures
+ *   PUT  /v1/admin-console/providers            { collection, payout }   recent sign-in; applied at once, logged
  *   GET  /v1/admin-console/developers[?status=] advanced-mode requests (pending first)
  *   POST /v1/admin-console/developers/:uid      { approve, note }   decide a request (logged)
  *   GET  /v1/admin-console/audit                admin actions log
@@ -208,6 +212,38 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         const changed = Object.fromEntries(Object.keys(after).filter((k) => (before as any)[k] !== (after as any)[k]).map((k) => [k, { from: (before as any)[k], to: (after as any)[k] }]));
         if (Object.keys(changed).length) await auditAction(env, admin, 'FEES_UPDATE', null, null, { changed });
         return { status: 'success', settings: after };
+      });
+
+      api.get('/providers', async (request) => {
+        const env = envOf(request);
+        const saved = await loadProviderSettings(env).catch(() => providerSettings(env));
+        return {
+          status: 'success',
+          saved: Boolean(saved),
+          current: { collection: providerFor(env, 'MTN_MOMO_COG', 'collection').name, payout: providerFor(env, 'MTN_MOMO_COG', 'payout').name },
+          providers: PROVIDER_NAMES.filter((n) => env === 'sandbox' || n !== 'simulator').map((name) => ({ name, configured: providerByName(name).configured(env) })),
+          stats: await providerStats(env, 'month'),
+        };
+      });
+      api.put('/providers', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        let next;
+        try {
+          next = validateProviderSettings(env, request.body);
+        } catch (e) {
+          if (e instanceof ProviderSettingsError) return reply.status(400).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
+        // Never route money to a provider without keys on this ledger.
+        const missing = [next.collection, next.payout].find((n) => !providerByName(n).configured(env));
+        if (missing) return reply.status(400).send({ status: 'error', error: 'PROVIDER_NOT_CONFIGURED', message: `Clés ${missing} absentes pour cet environnement.` });
+        const admin = adminOf(request);
+        const { before, after } = await saveProviderSettings(env, next, admin.email || admin.uid);
+        if (!before || before.collection !== after.collection || before.payout !== after.payout) {
+          await auditAction(env, admin, 'PROVIDERS_UPDATE', null, null, { from: before, to: after });
+        }
+        return { status: 'success', current: after };
       });
 
       api.get('/developers', async (request) => {

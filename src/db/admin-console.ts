@@ -82,7 +82,7 @@ const SHOWN_STATUS = `CASE
 
 export async function overview(env: Environment, period: Period) {
   const from = since(period);
-  const [revenue, flows, counts, daily, ledger, main] = await Promise.all([
+  const [revenue, flows, counts, daily, ledger, main, byProvider] = await Promise.all([
     // LightPay's own revenue: what its fee wallet kept, by what produced it.
     query(
       `SELECT CASE
@@ -147,6 +147,7 @@ export async function overview(env: Environment, period: Period) {
       env
     ),
     mainBalance(env),
+    providerStats(env, period),
   ]);
   // Transactions whose debits and credits differ (only the sandbox faucet's initial test money).
   const unbalanced =
@@ -177,7 +178,40 @@ export async function overview(env: Environment, period: Period) {
     daily,
     ledger: { debit: ledger[0].debit, credit: ledger[0].credit, balanced: ledger[0].debit === ledger[0].credit, unbalanced },
     main_balance: main,
+    by_provider: byProvider,
   };
+}
+
+// ---------------------------------------------------------------- mobile money per provider
+
+/**
+ * Collections and payouts per provider over the period (admin only: people and apps never
+ * see which provider served them). Collected = what the provider brought in for us (amount +
+ * LightPay's fee); sent = what reached the phones.
+ */
+export async function providerStats(env: Environment, period: Period) {
+  const from = since(period);
+  const stats = (table: string) =>
+    query(
+      `SELECT provider,
+              COUNT(*) FILTER (WHERE status = 'SUCCEEDED')::int AS succeeded,
+              COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed,
+              COUNT(*) FILTER (WHERE status = 'PENDING')::int AS pending,
+              COALESCE(SUM(amount) FILTER (WHERE status = 'SUCCEEDED'), 0)::text AS amount
+       FROM ${table} WHERE created_at >= ${from} GROUP BY provider`,
+      [],
+      env
+    );
+  const [ins, outs] = await Promise.all([stats('collection_attempts'), stats('payouts')]);
+  const empty = { succeeded: 0, failed: 0, pending: 0, amount: '0' };
+  const names = [...new Set([...ins, ...outs].map((r) => r.provider))].sort();
+  return names.map((provider) => {
+    const pick = (rows: any[]) => {
+      const r = rows.find((x) => x.provider === provider);
+      return r ? { succeeded: r.succeeded, failed: r.failed, pending: r.pending, amount: r.amount } : { ...empty };
+    };
+    return { provider, collections: pick(ins), payouts: pick(outs) };
+  });
 }
 
 // ---------------------------------------------------------------- provider reserves

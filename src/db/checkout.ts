@@ -6,7 +6,7 @@ import { Environment } from '../types/index.js';
 import { MOBILE_NETWORKS, MobileNetwork, RailOperation, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
 import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayFeeWallet } from './fee-wallet.js';
-import { appName, failureOf, logActivity, updateActivity } from './activity.js';
+import { appName, failureOf, logActivity, reasonFor, updateActivity } from './activity.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
 import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundSendable } from '../payments/fees.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
@@ -230,11 +230,12 @@ export async function publicView(id: string) {
     cancel_url: session.cancel_url,
     expires_at: session.expires_at,
     // What the payer will pay by mobile money, per network (exact once the operator reports it).
-    fees: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(session.environment, BigInt(session.amount), providerFor(n).name)])) as Record<MobileNetwork, FeeQuote>,
+    fees: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(session.environment, BigInt(session.amount), providerFor(session.environment, n).name)])) as Record<MobileNetwork, FeeQuote>,
     last_attempt: attempt
       ? {
           status: attempt.status,
           failure_code: attempt.failure_code,
+          reason: attempt.failure_code ? reasonFor(attempt.failure_code) : null,
           network: attempt.network,
           msisdn: maskMsisdn(attempt.msisdn),
           at: attempt.created_at,
@@ -250,6 +251,7 @@ export async function publicView(id: string) {
 
 const railOp = (a: Attempt): RailOperation => ({
   id: a.id,
+  environment: a.environment,
   msisdn: a.msisdn,
   amount: BigInt(a.amount),
   currency: a.currency,
@@ -279,7 +281,7 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   } catch (err: any) {
     throw new CheckoutError(err.message, err.code || 'QUOTA_EXCEEDED', 403);
   }
-  const provider = providerFor(network as MobileNetwork);
+  const provider = providerFor(environment, network as MobileNetwork);
   // The simulator invents money: it never collects for the real ledger.
   if (environment === 'production' && provider.name === 'simulator') {
     throw new CheckoutError('Le mobile money est indisponible pour le moment. Réessayez plus tard.', 'PROVIDER_NOT_CONFIGURED', 503);
@@ -580,7 +582,7 @@ export async function refundGuestPayer(hold: HoldRecord) {
   // The operator fee of a refund is paid out of the refund itself (LightPay takes nothing):
   // the guest gets the largest amount that, fee included, fits in what they paid.
   const total = BigInt(hold.amount);
-  const provider = providerFor(network).name;
+  const provider = providerFor(env, network, 'payout').name;
   const sendable = refundSendable(env, total, provider);
   if (sendable <= 0n) {
     // Nothing can be sent without losing money: the amount stays in the guest wallet (bound to

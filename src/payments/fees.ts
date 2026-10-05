@@ -8,13 +8,16 @@ import { feeSettings } from './fee-settings.js';
  * Deposits and mobile-money payments
  *   LightPay fee   max(deposit_lightpay_fee_min, ceil(amount × deposit_lightpay_fee_bps / 10 000)),
  *                  added on top, paid by the payer
- *   Operator fee   charged by the provider on top (SasPay ADD_ON). Shown as an estimate
- *                  (deposit_operator_fee_bps) until the provider reports the exact amount debited.
+ *   Operator fee   charged on top, per provider:
+ *                  SasPay   its own fee (ADD_ON), shown as an estimate (deposit_operator_fee_bps)
+ *                           until SasPay reports the exact amount debited
+ *                  pawaPay  pawapay_deposit_fee_bps, asked on top by us (exact): it covers the
+ *                           fee pawaPay takes out of our pawaPay balance
  *   The payee (or the wallet being topped up) always receives the requested amount.
  *
  * Payouts (withdrawals, refunds)
- *   Operator fee   max(withdrawal_operator_fee_min, amount × withdrawal_operator_fee_bps), charged
- *                  on top from our provider balance (ADD_ON)
+ *   Operator fee   SasPay: max(withdrawal_operator_fee_min, amount × withdrawal_operator_fee_bps);
+ *                  pawaPay: amount × pawapay_payout_fee_bps. Paid from our provider balance
  *   LightPay fee   max(withdrawal_lightpay_fee_min, amount × withdrawal_lightpay_fee_bps)
  *   The person receives exactly the amount asked; the wallet is debited amount + both fees.
  *   Refunds carry no LightPay fee: the guest gets the largest amount the refund can cover.
@@ -31,6 +34,7 @@ export function lightpayCollectionFee(env: Environment, amount: bigint): bigint 
 /** Estimated operator fee for a provider, on the amount it is asked to collect. */
 export function providerFeeEstimate(env: Environment, provider: string, collected: bigint): bigint {
   if (provider === 'saspay') return ceilBps(collected, feeSettings(env).deposit_operator_fee_bps);
+  if (provider === 'pawapay') return ceilBps(collected, feeSettings(env).pawapay_deposit_fee_bps);
   return 0n;
 }
 
@@ -57,7 +61,8 @@ export function quote(env: Environment, amount: bigint, provider: string): FeeQu
     operator_fee: operator.toString(),
     total: (amount + lightpay + operator).toString(),
     minimum: minMobileMoneyAmount(env).toString(),
-    estimated: operator > 0n,
+    // pawaPay's is exactly what we ask; SasPay's is only known once it reports it.
+    estimated: provider === 'saspay' && operator > 0n,
   };
 }
 
@@ -73,6 +78,7 @@ export function lightpayPayoutFee(env: Environment, amount: bigint): bigint {
 
 /** Operator fee on a payout of `amount` (what the phone receives). */
 export function providerPayoutFee(env: Environment, provider: string, amount: bigint): bigint {
+  if (provider === 'pawapay') return ceilBps(amount, feeSettings(env).pawapay_payout_fee_bps);
   if (provider !== 'saspay') return 0n;
   const s = feeSettings(env);
   return atLeast(ceilBps(amount, s.withdrawal_operator_fee_bps), s.withdrawal_operator_fee_min);
