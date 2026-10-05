@@ -77,6 +77,11 @@ h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 html, body { height: 100%; overflow: hidden; }
 .app { position: relative; width: 100%; height: 100vh; height: 100dvh; background: var(--card); display: flex; flex-direction: column; overflow: hidden; }
 .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; animation: enter .2s var(--ease); }
+.screen[data-nav="fwd"] { animation: push-in .3s var(--ease); }
+.screen[data-nav="back"] { animation: pop-in .3s var(--ease); }
+.screen[data-nav="fade"] { animation: fade .22s var(--ease); }
+@keyframes push-in { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
+@keyframes pop-in { from { opacity: 0; transform: translateX(-32px); } to { opacity: 1; transform: none; } }
 .content, .screen > .state { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .content::-webkit-scrollbar, .screen > .state::-webkit-scrollbar { display: none; }
 .content { padding: 0 24px 28px; }
@@ -136,9 +141,12 @@ svg.i { width: 20px; height: 20px; flex-shrink: 0; }
 .chip.primary { background: var(--accent); color: var(--on-accent); }
 .chip:active { transform: scale(.97); }
 .chip:hover { filter: brightness(1.06); }
-.home-hero { padding: 64px 0 34px; }
-.home-hero .amount-xl { font-size: 44px; }
-.home-actions { display: flex; justify-content: center; gap: 8px; margin-top: 30px; flex-wrap: wrap; }
+.home-hero { min-height: 42vh; min-height: 42dvh; display: flex; flex-direction: column; justify-content: center; padding: 40px 0 30px; }
+.home-hero .amount-xl { font-size: 52px; }
+.home-hero .hero-sub { margin-top: 10px; }
+/* The three actions fill the row, edge to edge. */
+.home-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 36px; }
+.home-actions .chip { height: 50px; border-radius: 16px; padding: 0 8px; font-size: 14px; }
 .home-more { display: block; margin: 8px 0 4px; padding: 14px; border-radius: 14px; background: var(--raised); text-align: center; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500; }
 .send-link { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 14px; background: var(--raised); color: var(--text); text-decoration: none; font-size: 14px; }
 .send-link svg { width: 18px; height: 18px; } .send-link .chev { color: var(--faint); } .send-link span { flex: 1; }
@@ -215,7 +223,8 @@ a.tx:active { background: var(--raised); }
 .input-prefix { display: flex; align-items: center; gap: 10px; padding: 0 0 0 14px; }
 .input-prefix span { color: var(--muted); font-variant-numeric: tabular-nums; }
 .input-prefix input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; padding: 0 14px 0 0; font-size: 16px; }
-.input-prefix input:focus { outline: none; }
+/* The box carries the border and the focus ring; the input inside never draws its own (no double stroke). */
+.field .input-prefix input, .field .input-prefix input:focus, .input-prefix input:focus { outline: none; border: 0; box-shadow: none; border-radius: 0; height: 100%; padding: 0 14px 0 0; }
 .amount-wrap { margin-top: 8px; padding: 20px 16px 16px; border-radius: 16px; background: var(--raised); border: 1px solid transparent; text-align: center; transition: border-color .15s, box-shadow .15s; }
 .amount-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .amount-input { width: 100%; border: 0; background: transparent; text-align: center; font-size: 38px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
@@ -369,6 +378,10 @@ a.tx:active { background: var(--raised); }
 .sk-line { margin-top: 12px; }
 .sk-btn { height: 52px; margin-top: 30px; border-radius: 14px; }
 .sk-card { height: 200px; margin-top: 22px; border-radius: 16px; }
+.sk-kv { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; }
+.sk-kv .sk-v { width: 72px; }
+.sk-block { padding-top: 18px; }
+.sk-block .sk + .sk { margin-top: 12px; }
 .sk-center { margin: 12px auto 0; }
 .detail-head .sk-amount { height: 40px; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }

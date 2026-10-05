@@ -253,6 +253,15 @@ export const CLIENT = (env: string) => `
     const node = o.href ? el('a', { class: cls, href: o.href }, inner) : o.onClick ? el('button', { class: cls, type: 'button', on: { click: o.onClick } }, inner) : el('div', { class: cls }, inner);
     return el('li', {}, [node]);
   }
+  // Shimmer of a summary (label left, amount right) while its figures are asked.
+  function skRows(host, n) {
+    const out = [];
+    for (let i = 0; i < (n || 3); i++) {
+      out.push(el('div', { class: 'sk-kv', 'aria-hidden': 'true' }, [el('span', { class: 'sk sk-s ' + ['w-30', 'w-45', 'w-30', 'w-45'][i % 4] }), el('span', { class: 'sk sk-s sk-v' })]));
+    }
+    host.replaceChildren.apply(host, out);
+    host.hidden = false;
+  }
   function skeleton(host, n, tag) {
     if (!host || host.children.length) return;
     const rows = [];
@@ -341,14 +350,18 @@ export const CLIENT = (env: string) => `
       const route = parse();
       let resolved = opts.resolve ? opts.resolve(route) : [route, null];
       if (!resolved || !opts.screens[resolved[0]]) resolved = [opts.root, null];
+      // Motion: forward slides in from the right, back from the left, tabs (no parent) fade.
+      let dir = 'fwd';
       if (replacing && stack.length) stack[stack.length - 1] = route;
-      else if (stack.length > 1 && stack[stack.length - 2] === route) stack.pop();
+      else if (stack.length > 1 && stack[stack.length - 2] === route) { stack.pop(); dir = 'back'; }
       else if (stack[stack.length - 1] !== route) stack.push(route);
       replacing = false;
       const sameScreen = current && current.name === resolved[0];
       current = { route: route, name: resolved[0], param: resolved[1] };
       const section = document.querySelector('[data-screen="' + resolved[0] + '"]');
       if (section) {
+        const def0 = opts.screens[resolved[0]];
+        if (!sameScreen) section.dataset.nav = def0 && def0.parent === undefined ? 'fade' : dir;
         showOnly(section);
         const h = section.querySelector('h1');
         if (h && !sameScreen) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }

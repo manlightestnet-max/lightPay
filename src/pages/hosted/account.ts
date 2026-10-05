@@ -11,7 +11,7 @@ import { iconSvg } from './icons.js';
  * Hash routes:
  *   #/home  #/activity → #/activity/<id>  #/account → #/username · #/email · #/password ·
  *   #/developer · #/delete · #/apps → #/apps/<id>
- *   #/deposit  #/send → (confirmation sheet) → #/send/done  #/withdraw → (confirmation sheet) → #/withdraw/done
+ *   #/deposit → (confirmation sheet) → #/deposit/done  #/send → (confirmation sheet) → #/send/done  #/withdraw → (confirmation sheet) → #/withdraw/done
  * ?env=sandbox for the test wallet (switchable in place) · ?return=<url> shows a way back to the app.
  */
 export const accountPage = (nonce: string, env: string) => {
@@ -58,11 +58,18 @@ export const accountPage = (nonce: string, env: string) => {
         <button class="seg-opt" type="button" data-dep-net="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true"></span>Airtel Money</button>
       </div>
     </div>
+    <div class="field"><label for="depPhone">Numéro qui paie</label><div class="input-prefix"><span>+242</span><input id="depPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
     <div class="fees" id="depFees" hidden></div>
     <div class="msg" id="depMsg" role="status" aria-live="polite"></div>
     <div class="note">${iconSvg('info')}<p>Vous validerez le paiement sur votre téléphone. Le montant déposé est crédité dès la confirmation de l’opérateur.</p></div>
   </div>
-  <div class="actions-bar"><button class="btn" type="button" id="depGo" disabled>Continuer vers le paiement</button></div>
+  <div class="actions-bar"><button class="btn" type="button" id="depGo" disabled>Déposer</button></div>
+</section>
+
+<section class="screen" data-screen="deposit-done" hidden>
+  ${bar('Dépôt')}
+  <div class="state"><span class="state-icon" id="depDoneIcon"></span><h2 id="depDoneTitle"></h2><p id="depDoneText"></p></div>
+  <div class="actions-bar"><button class="btn btn-secondary" type="button" id="depRetry" hidden>Réessayer</button><button class="btn" type="button" data-home>Terminé</button></div>
 </section>
 
 <section class="screen" data-screen="send" hidden>
@@ -233,6 +240,7 @@ export const accountPage = (nonce: string, env: string) => {
 <section class="screen" data-screen="developer" hidden>
   ${bar('Mode avancé')}
   <div class="content">
+    <div class="sk-block" id="devSk" aria-busy="true" hidden><span class="sk sk-t w-75"></span><span class="sk sk-t w-60"></span><span class="sk sk-field"></span><span class="sk sk-field"></span><span class="sk sk-card"></span></div>
     <div id="devForm" hidden>
       <p class="small muted mt">La console et l’espace développeur (clés API, webhooks, paiements de vos apps) s’ouvrent après validation de votre demande par LightPay.</p>
       <div class="note warn" id="devRefused" hidden>${iconSvg('alert')}<p id="devRefusedText"></p></div>
@@ -423,16 +431,27 @@ export const accountPage = (nonce: string, env: string) => {
   }
 
   // ---------------------------------------------------------------- deposit
-  let depNet = 'MTN_MOMO_COG', depQuotes = null;
+  // Amount, operator and the paying number are chosen here, once: confirming sends the request
+  // to the phone straight away (no second payment page, no second choice).
+  let depNet = 'MTN_MOMO_COG', depQuotes = null, depBusy = false, depState = null, depResult = null;
+  const depPhone = () => digits($('depPhone').value).replace(/^242/, '');
+  const pickDepNet = (net) => { depNet = net; document.querySelectorAll('[data-dep-net]').forEach((o) => o.setAttribute('aria-pressed', String(o.dataset.depNet === net))); };
   document.querySelectorAll('[data-dep-net]').forEach((b) => b.addEventListener('click', () => {
-    depNet = b.dataset.depNet;
-    document.querySelectorAll('[data-dep-net]').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
+    pickDepNet(b.dataset.depNet);
+    const n = networkOf(depPhone());
+    if (n && n !== depNet) { $('depPhone').value = ''; $('depPhone').focus(); }
     renderDepFees();
   }));
+  $('depPhone').addEventListener('input', () => {
+    const n = networkOf(depPhone());
+    if (n && n !== depNet) pickDepNet(n);
+    renderDepFees();
+  });
   function renderDepFees() {
     const q = depQuotes && depQuotes[depNet];
     const amount = Number(amountDigits($('depAmount').value));
     $('depGo').disabled = true;
+    $('depGo').textContent = 'Déposer';
     if (!amount) { $('depFees').hidden = true; $('depMin').classList.remove('below'); say('depMsg', ''); return; }
     // Below the minimum: no fees and no error, only the minimum highlighted (the button stays off).
     const min = q ? Number(q.minimum) : lim('deposit_min');
@@ -448,22 +467,83 @@ export const accountPage = (nonce: string, env: string) => {
     ]);
     $('depFees').hidden = false;
     say('depMsg', '');
-    $('depGo').disabled = false;
+    $('depGo').textContent = 'Déposer ' + approx + LP.money(q.total, cur());
+    $('depGo').disabled = !(/^0[4-6]\\d{7}$/.test(depPhone()) && networkOf(depPhone()) === depNet);
   }
   const loadDepQuote = debounce(async () => {
     const amount = amountDigits($('depAmount').value);
     if (!amount) { depQuotes = null; renderDepFees(); return; }
     try { depQuotes = (await LP.api('GET', '/v1/me/deposits/quote?amount=' + amount)).quotes; renderDepFees(); }
-    catch (e) { if (e.signIn) signIn(); else say('depMsg', e.message, 'err'); }
+    catch (e) { if (e.signIn) signIn(); else $('depFees').hidden = true; }
   }, 300);
-  $('depAmount').addEventListener('input', () => { $('depGo').disabled = true; loadDepQuote(); });
-  $('depGo').addEventListener('click', () => guarded(async () => {
+  $('depAmount').addEventListener('input', () => {
     $('depGo').disabled = true;
-    try {
-      const r = await LP.api('POST', '/v1/me/deposits', { amount: amountDigits($('depAmount').value) }, LP.uuid());
-      location.assign(r.checkout_path);
-    } finally { $('depGo').disabled = false; }
-  }, 'depMsg'));
+    if (Number(amountDigits($('depAmount').value)) >= lim('deposit_min')) skRows($('depFees'), 4);
+    loadDepQuote();
+  });
+  $('depGo').addEventListener('click', async () => {
+    const q = depQuotes && depQuotes[depNet];
+    if (depBusy || !q || $('depGo').disabled) return;
+    const msisdn = depPhone(), approx = q.estimated ? '≈ ' : '';
+    depBusy = true;
+    const ok = await confirmSheet({
+      title: 'Vous déposez',
+      amount: approx + LP.money(q.total, cur()),
+      rows: [
+        ['Depuis', (depNet === 'MTN_MOMO_COG' ? 'MTN MoMo' : 'Airtel Money') + ' · +242 ' + fmtPhone(msisdn)],
+        ['Sur votre wallet', LP.money(q.amount, cur())],
+        ['Frais', approx + LP.money(String(Number(q.total) - Number(q.amount)), cur())],
+      ],
+      note: 'Une demande arrive sur ce téléphone : validez-la avec votre code secret.',
+      confirm: 'Confirmer',
+    });
+    if (!ok) { depBusy = false; return; }
+    depState = { amount: q.amount, total: approx + LP.money(q.total, cur()), msisdn: msisdn, network: depNet, key: LP.uuid() };
+    depResult = null;
+    nav.go('deposit/done');
+    await operate('dep', async () => {
+      const r = await LP.api('POST', '/v1/me/deposits', { amount: depState.amount }, depState.key);
+      const res = await fetch('/v1/checkout/public/sessions/' + encodeURIComponent(r.session_id) + '/mobile-money', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msisdn: depState.msisdn, network: depState.network }), signal: deadline(30000),
+      }).catch(() => { throw new Error('Connexion impossible. Vérifiez votre réseau et réessayez.'); });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.message || 'Le dépôt n’a pas pu démarrer. Réessayez.');
+      depState.session = r.session_id;
+      $('depAmount').value = ''; depQuotes = null; renderDepFees();
+      enterDepositDone();
+      followDeposit(r.session_id);
+    });
+    depBusy = false;
+  });
+  $('depRetry').addEventListener('click', () => nav.go('deposit', true));
+  const DEP_FAIL = { INSUFFICIENT_BALANCE: 'Solde insuffisant sur ce compte mobile money.', PAYER_DECLINED: 'Paiement refusé depuis le téléphone.', PAYER_TIMEOUT: 'Aucune validation reçue à temps sur le téléphone.' };
+  function enterDepositDone() {
+    if (depResult) return result('dep', depResult[0], depResult[1], depResult[2]);
+    if (!depState) return nav.go('home', true);
+    result('dep', 'wait', depState.session ? 'Validez sur votre téléphone' : 'Envoi de la demande',
+      (depState.session ? 'Demande envoyée au +242 ' : 'Au +242 ') + fmtPhone(depState.msisdn) + ' pour ' + depState.total + ', frais compris.');
+  }
+  // The deposit is followed until the operator answers (the server closes it after a few minutes).
+  let depFollow = null;
+  function followDeposit(sessionId, tries = 0) {
+    clearTimeout(depFollow);
+    if (tries > 240 || !depState || depState.session !== sessionId) return;
+    depFollow = setTimeout(async () => {
+      try {
+        const res = await fetch('/v1/checkout/public/sessions/' + encodeURIComponent(sessionId), { cache: 'no-store', signal: deadline(15000) });
+        const s = res.ok ? (await res.json()).session : null;
+        const a = s && s.last_attempt;
+        if (s && s.status === 'COMPLETED') {
+          depResult = ['ok', 'Dépôt reçu', LP.money(s.amount, cur()) + ' ajoutés à votre wallet LightPay.'];
+          await loadMe().catch(() => {});
+        } else if (s && (s.status === 'EXPIRED' || s.status === 'CANCELLED' || (s.status === 'OPEN' && a && a.status === 'FAILED'))) {
+          depResult = ['err', 'Dépôt non effectué', (a && (DEP_FAIL[a.failure_code] || a.reason)) || 'L’opérateur n’a pas confirmé le paiement. Aucun argent n’a été pris.'];
+        }
+        if (depResult) { const c = nav.current(); if (c && c.name === 'deposit-done') enterDepositDone(); return; }
+      } catch (e) { /* next try */ }
+      followDeposit(sessionId, tries + 1);
+    }, 2000);
+  }
 
   // ---------------------------------------------------------------- result screens (waiting, done, refused)
   // Errors of an operation only ever show here, never on the form where it was typed.
@@ -474,22 +554,25 @@ export const accountPage = (nonce: string, env: string) => {
     $(prefix + 'DoneTitle').textContent = title;
     $(prefix + 'DoneText').textContent = text;
     $(prefix + 'Retry').hidden = kind !== 'err';
-    document.querySelector('[data-screen="' + (prefix === 'wd' ? 'withdraw' : 'send') + '-done"] [data-home]').hidden = kind === 'wait';
+    document.querySelector('[data-screen="' + ({ wd: 'withdraw', send: 'send', dep: 'deposit' })[prefix] + '-done"] [data-home]').hidden = kind === 'wait';
   }
   // Runs the operation from its result screen: sign-in again if needed, any refusal shown there.
   async function operate(prefix, action) {
     await guarded(async () => {
       try { await action(); }
-      catch (e) { if (e.reauth || e.signIn) throw e; result(prefix, 'err', prefix === 'wd' ? 'Retrait non effectué' : 'Envoi non effectué', e.message); }
+      catch (e) { if (e.reauth || e.signIn) throw e; result(prefix, 'err', ({ wd: 'Retrait non effectué', send: 'Envoi non effectué', dep: 'Dépôt non effectué' })[prefix], e.message); }
     }, prefix + 'DoneText');
   }
 
   // ---------------------------------------------------------------- send
   let sendState = null, sendResult = null, sendBusy = false;
+  // The amount takes the keyboard as soon as its screen opens (after the slide, so it does not jump).
+  const focusAmount = (id) => setTimeout(() => { const i = $(id); if (i && !i.closest('[hidden]')) i.focus(); }, 320);
   function enterSend() {
     $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur());
     say('sendMsg', '');
     sendCheck();
+    focusAmount($('sendTo').value ? 'sendAmount' : 'sendTo');
   }
   let sendWho = null, sendWhoSeq = 0;
   const lookupRecipient = debounce(async () => {
@@ -592,7 +675,11 @@ export const accountPage = (nonce: string, env: string) => {
       wdQuote = r.quote; renderWdFees(); wdCheck();
     } catch (e) { if (e.signIn) signIn(); }
   }, 300);
-  $('wdAmount').addEventListener('input', () => { $('wdNext').disabled = true; loadWdQuote(); });
+  $('wdAmount').addEventListener('input', () => {
+    $('wdNext').disabled = true;
+    if (Number(amountDigits($('wdAmount').value)) >= lim('withdrawal_min')) skRows($('wdFees'), 4);
+    loadWdQuote();
+  });
   // The number picks its operator (06 MTN, 05/04 Airtel).
   $('wdPhone').addEventListener('input', () => {
     const n = networkOf(digits($('wdPhone').value).replace(/^242/, ''));
@@ -600,8 +687,10 @@ export const accountPage = (nonce: string, env: string) => {
     wdCheck();
   });
   async function enterWithdraw() {
+    focusAmount('wdAmount');
     $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR');
     wdCheck();
+    if (!$('wdList').children.length) { $('wdListHead').hidden = false; skeleton($('wdList'), 3, 'div'); }
     try {
       const r = await LP.api('GET', '/v1/me/withdrawals');
       $('wdListHead').hidden = !r.withdrawals.length;
@@ -609,7 +698,7 @@ export const accountPage = (nonce: string, env: string) => {
         const st = WD_STATUS[w.status] || ['', w.status];
         return txRow({ icon: w.status === 'FAILED' ? 'x' : 'withdraw', amount: LP.money(w.amount, w.currency), desc: 'Vers ' + w.to, end: w.status === 'SUCCEEDED' ? shortDay(w.created_at) : st[1], cls: w.status === 'FAILED' ? 'void' : w.status === 'PENDING' ? 'wait' : '' });
       }));
-    } catch (e) { /* history is optional */ }
+    } catch (e) { $('wdList').replaceChildren(); $('wdListHead').hidden = true; /* history is optional */ }
   }
   $('wdNext').addEventListener('click', async () => {
     if (wdBusy || !wdQuote || $('wdNext').disabled) return;
@@ -820,6 +909,7 @@ export const accountPage = (nonce: string, env: string) => {
     say('accMsg', '');
     $('envSwitchTitle').textContent = LP.ENV === 'sandbox' ? 'Passer au compte réel' : 'Passer au compte de test';
     $('envSwitchSub').textContent = LP.ENV === 'sandbox' ? 'Vous êtes dans l’environnement de test' : 'Pour essayer sans argent réel';
+    if (!connections.length) $('accAppsSub').replaceChildren(el('span', { class: 'sk sk-s w-45 inline' }));
     try {
       await loadConnections();
       $('accAppsSub').textContent = connections.length ? connections.length + (connections.length > 1 ? ' apps autorisées' : ' app autorisée') : 'Aucune app autorisée';
@@ -861,8 +951,10 @@ export const accountPage = (nonce: string, env: string) => {
   async function enterDeveloper() {
     say('devMsg', '');
     ['devForm', 'devPending', 'devApproved', 'devGo', 'devOpen'].forEach((id) => { $(id).hidden = true; });
+    $('devSk').hidden = false;
     await guarded(async () => {
       const a = (await LP.api('GET', '/v1/me/developer-access')).access;
+      $('devSk').hidden = true;
       if (a.status === 'APPROVED') { $('devApproved').hidden = false; $('devOpen').hidden = false; return; }
       if (a.status === 'PENDING') { $('devPending').hidden = false; $('devPendingDate').textContent = new Date(a.requested_at).toLocaleDateString('fr-FR'); return; }
       $('devForm').hidden = false; $('devGo').hidden = false;
@@ -916,7 +1008,8 @@ export const accountPage = (nonce: string, env: string) => {
     },
     screens: {
       home: { enter: enterHome },
-      deposit: { parent: 'home', enter: () => { say('depMsg', ''); renderDepFees(); } },
+      deposit: { parent: 'home', enter: () => { say('depMsg', ''); renderDepFees(); focusAmount('depAmount'); } },
+      'deposit-done': { parent: 'home', enter: enterDepositDone },
       send: { parent: 'home', enter: enterSend },
       'send-done': { parent: 'home', enter: enterSendDone },
       withdraw: { parent: 'home', enter: enterWithdraw },
