@@ -55,10 +55,10 @@ export const shell = (o: { title: string; nonce: string; env: string; body: stri
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
-<meta name="theme-color" content="#0c0f0e">
+<meta name="theme-color" content="#131314">
 <link rel="icon" type="image/png" href="${FAVICON_PNG}">
 <title>${escapeHtml(o.title)} · LightPay</title>
-<script nonce="${o.nonce}">try { var t = localStorage.getItem('lightpay.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
+<script nonce="${o.nonce}">try { var t = new URLSearchParams(location.search).get('theme') || localStorage.getItem('lightpay.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&amp;display=swap">

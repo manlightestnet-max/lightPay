@@ -2,8 +2,8 @@ import { AIRTEL_PNG, MARK_PNG, MTN_PNG } from './brand.js';
 
 /**
  * LightPay hosted pages — design system (one stylesheet, served under the page nonce).
- * Brand: the green ribbon mark, green (#01E399) for the primary action and money received,
- * everything else in neutral ink. Dark by default, light available.
+ * Brand: the green ribbon mark; green for the primary action and money received, everything
+ * else in neutral ink. Colours from Salacope's tokens. Night by default, day available.
  *
  * Layout
  *   <div class="app">                         full-bleed on phones, centered 440px card from 480px
@@ -34,45 +34,32 @@ import { AIRTEL_PNG, MARK_PNG, MTN_PNG } from './brand.js';
  * Utilities: .muted .small .mt .mt-lg .center .num
  */
 export const CSS = `
+/* Colours: Salacope's tokens are the source of truth (src/styles/tokens.css there).
+   Night by default, like Salacope; day with data-theme="light". */
 :root {
   color-scheme: dark;
   --mark: url("${MARK_PNG}"); --mtn: url("${MTN_PNG}"); --airtel: url("${AIRTEL_PNG}");
-  --bg: #050706; --card: #0c0f0e; --raised: #151917; --line: #1f2422; --line-strong: #333a37;
-  --text: #f3f6f4; --muted: #98a19d; --faint: #6c7571;
-  --accent: #01e399; --on-accent: #03140d; --accent-soft: rgba(1, 227, 153, .12); --accent-ink: #2df0ad;
-  --danger: #ff7a7a; --danger-soft: rgba(255, 122, 122, .12); --warn: #f5bd4f; --warn-soft: rgba(245, 189, 79, .12);
-  --sk: #161b19; --sk-hi: #27302c;
-  --focus: #01e399; --shadow: 0 1px 0 rgba(255,255,255,.03), 0 30px 80px -24px rgba(0,0,0,.8);
+  --bg: #0b0b0c; --card: #131314; --raised: #1c1c1e; --line: #2a2a2d; --line-strong: #3a3a3e;
+  --text: #f4f4f5; --muted: #9b9ba2; --faint: #6e6e75;
+  --accent: #34d399; --on-accent: #04130d; --accent-soft: rgba(52, 211, 153, .12); --accent-ink: #34d399;
+  --danger: #f87171; --danger-soft: rgba(248, 113, 113, .12); --warn: #fbbf24; --warn-soft: rgba(251, 191, 36, .12);
+  --sk: #1c1c1e; --sk-hi: #2e2e32;
+  --focus: #34d399; --shadow: 0 1px 0 rgba(255,255,255,.03), 0 30px 80px -24px rgba(0,0,0,.8);
   --radius: 24px; --radius-sm: 10px; --ease: cubic-bezier(.2,.7,.2,1);
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    color-scheme: light;
-    --bg: #f2f4f3; --card: #ffffff; --raised: #f3f5f4; --line: #eaeeec; --line-strong: #d2d9d6;
-    --text: #0c100e; --muted: #66706b; --faint: #8d9691;
-    --accent: #01e399; --on-accent: #03140d; --accent-soft: rgba(1, 190, 128, .10); --accent-ink: #00895b;
-    --danger: #d92d2d; --danger-soft: rgba(217, 45, 45, .08); --warn: #b26b00; --warn-soft: rgba(178, 107, 0, .09);
-    --sk: #edf0ef; --sk-hi: #f9fbfa;
-    --focus: #00895b; --shadow: 0 1px 2px rgba(0,0,0,.04), 0 30px 80px -28px rgba(0,0,0,.2);
-  }
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f2f4f3; --card: #ffffff; --raised: #f3f5f4; --line: #eaeeec; --line-strong: #d2d9d6;
-  --text: #0c100e; --muted: #66706b; --faint: #8d9691;
-  --accent: #01e399; --on-accent: #03140d; --accent-soft: rgba(1, 190, 128, .10); --accent-ink: #00895b;
-  --danger: #d92d2d; --danger-soft: rgba(217, 45, 45, .08); --warn: #b26b00; --warn-soft: rgba(178, 107, 0, .09);
-  --sk: #edf0ef; --sk-hi: #f9fbfa;
-  --focus: #00895b; --shadow: 0 1px 2px rgba(0,0,0,.04), 0 30px 80px -28px rgba(0,0,0,.2);
+  --bg: #f4f4f6; --card: #ffffff; --raised: #f4f4f5; --line: #e4e4e7; --line-strong: #d4d4d8;
+  --text: #18181b; --muted: #71717a; --faint: #a1a1aa;
+  --accent: #047857; --on-accent: #ffffff; --accent-soft: #ecfdf5; --accent-ink: #047857;
+  --danger: #dc2626; --danger-soft: #fef2f2; --warn: #d97706; --warn-soft: #fffbeb;
+  --sk: #ececee; --sk-hi: #f8f8f9;
+  --focus: #047857; --shadow: 0 1px 2px rgba(0,0,0,.04), 0 30px 80px -28px rgba(0,0,0,.2);
 }
 /* Theme toggle shows the icon of the theme you would switch to. */
 .theme-dark-icon { display: none; }
 :root[data-theme="light"] .theme-dark-icon { display: inline-flex; }
 :root[data-theme="light"] .theme-light-icon { display: none; }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) .theme-dark-icon { display: inline-flex; }
-  :root:not([data-theme]) .theme-light-icon { display: none; }
-}
 * { box-sizing: border-box; margin: 0; }
 html { -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
 body {

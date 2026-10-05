@@ -4,6 +4,7 @@
  *   <script src="https://checkout.smlab.xyz/lightpay.js"></script>
  *   const result = await LightPay.pay(checkoutUrl);   // { status: 'completed' | 'closed', session }
  *   LightPay.pay(checkoutUrl, { idToken })            // payer already signed in with LightPay: no second sign-in
+ *   LightPay.pay(checkoutUrl, { theme: 'dark' })      // the dialog in the app's theme ('dark' | 'light')
  *
  * Opens the LightPay payment page in a dialog over the app. The page stays on LightPay's
  * origin: the app can open and close it, never read or change it. `completed` is only a hint
@@ -47,6 +48,7 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
       var src = new URL(url.pathname, ORIGIN);
       src.searchParams.set('embed', '1');
       src.searchParams.set('origin', location.origin);
+      if (options && (options.theme === 'dark' || options.theme === 'light')) src.searchParams.set('theme', options.theme);
 
       var host = document.createElement('div');
       host.setAttribute('data-lightpay', '');

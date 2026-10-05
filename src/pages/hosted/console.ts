@@ -223,7 +223,7 @@ textarea.field-area:focus { outline: none; border-color: var(--accent); box-shad
 
 /* ---------- sign in: brand panel + form ---------- */
 html.console-page #auth { flex-direction: row; background: var(--bg); }
-.auth-aside { flex: 1.1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 56px; background: radial-gradient(120% 80% at 100% 0%, rgba(1,227,153,.16), transparent 55%), #070a09; color: #f3f6f4; position: relative; overflow: hidden; }
+.auth-aside { flex: 1.1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 56px; background: radial-gradient(120% 80% at 100% 0%, rgba(52,211,153,.14), transparent 55%), #0b0b0c; color: #f4f4f5; position: relative; overflow: hidden; }
 .auth-aside::after { content: none; }
 .auth-aside .pill-brand { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; font-size: 13px; font-weight: 600; }
 .auth-aside h2 { margin-top: 28px; font-size: 40px; line-height: 1.08; letter-spacing: -.02em; font-weight: 600; max-width: 460px; }

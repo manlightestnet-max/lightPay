@@ -267,11 +267,11 @@ export const CLIENT = (env: string) => `
     return date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
   }
   const timeLabel = (d) => new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  // Theme: saved choice, else the system preference. Every [data-theme-toggle] flips it.
+  // Theme: the app's (?theme=) or the saved choice, else night like Salacope. Every [data-theme-toggle] flips it.
   function currentTheme() {
     const t = document.documentElement.getAttribute('data-theme');
     if (t) return t;
-    return window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    return 'dark';
   }
   document.addEventListener('click', function (e) {
     const b = e.target.closest && e.target.closest('[data-theme-toggle]');
