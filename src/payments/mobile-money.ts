@@ -62,6 +62,13 @@ export interface MobileMoneyProvider {
   payoutStatus(op: RailOperation): Promise<RailResult>;
 }
 
+/** Congo prefixes: MTN 06, Airtel 05 and 04. A number only works with its own operator. */
+export function networkOfMsisdn(msisdn: string): MobileNetwork | null {
+  const prefix = msisdn.replace(/^242/, '').slice(0, 2);
+  return prefix === '06' ? 'MTN_MOMO_COG' : prefix === '05' || prefix === '04' ? 'AIRTEL_COG' : null;
+}
+export const NETWORK_NAMES: Record<MobileNetwork, string> = { MTN_MOMO_COG: 'MTN MoMo', AIRTEL_COG: 'Airtel Money' };
+
 /** Congo numbers: "06 512 44 81", "+242 06…", "24206…" → "242065124481". */
 export function normalizeCongoMsisdn(input: string): string | null {
   const digits = String(input ?? '').replace(/\D/g, '');

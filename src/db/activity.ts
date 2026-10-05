@@ -39,6 +39,7 @@ export const REASONS: Record<string, string> = {
   BELOW_MOBILE_MONEY_MINIMUM: 'Le mobile money accepte au minimum 1 000 FCFA.',
   INVALID_AMOUNT: 'Montant invalide.',
   INVALID_MSISDN: 'Numéro de téléphone invalide.',
+  NETWORK_MISMATCH: 'Ce numéro n’appartient pas à l’opérateur choisi.',
   INVALID_NETWORK: 'Opérateur non pris en charge.',
   INVALID_RECIPIENT: 'Adresse e-mail du destinataire invalide.',
   RECIPIENT_NOT_FOUND: 'Aucun compte LightPay avec cet e-mail.',

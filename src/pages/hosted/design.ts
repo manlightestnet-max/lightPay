@@ -136,9 +136,9 @@ svg.i { width: 20px; height: 20px; flex-shrink: 0; }
 .chip.primary { background: var(--accent); color: var(--on-accent); }
 .chip:active { transform: scale(.97); }
 .chip:hover { filter: brightness(1.06); }
-.home-hero { padding: 30px 0 22px; }
+.home-hero { padding: 64px 0 34px; }
 .home-hero .amount-xl { font-size: 44px; }
-.home-actions { display: flex; justify-content: center; gap: 8px; margin-top: 22px; flex-wrap: wrap; }
+.home-actions { display: flex; justify-content: center; gap: 8px; margin-top: 30px; flex-wrap: wrap; }
 .home-more { display: block; margin: 8px 0 4px; padding: 14px; border-radius: 14px; background: var(--raised); text-align: center; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500; }
 .send-link { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 14px; background: var(--raised); color: var(--text); text-decoration: none; font-size: 14px; }
 .send-link svg { width: 18px; height: 18px; } .send-link .chev { color: var(--faint); } .send-link span { flex: 1; }

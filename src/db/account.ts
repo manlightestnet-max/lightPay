@@ -5,7 +5,7 @@ import { Environment } from '../types/index.js';
 import { findRecipient } from './identity.js';
 import { LightPayUser } from '../security/user-token.js';
 import { ConnectError, SCOPES, Scope, userWallet } from './connect.js';
-import { MOBILE_NETWORKS, MobileNetwork, normalizeCongoMsisdn } from '../payments/mobile-money.js';
+import { MOBILE_NETWORKS, MobileNetwork, NETWORK_NAMES, networkOfMsisdn, normalizeCongoMsisdn } from '../payments/mobile-money.js';
 import { sendPayout } from './payouts.js';
 import { failureOf, logActivity } from './activity.js';
 import { lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
@@ -132,6 +132,7 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   if (!MOBILE_NETWORKS.includes(network)) throw await refused(new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK'));
   const msisdn = normalizeCongoMsisdn(String(input.msisdn ?? ''));
   if (!msisdn) throw await refused(new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN'));
+  if (networkOfMsisdn(msisdn) !== network) throw await refused(new ConnectError(`Ce numéro n’est pas un numéro ${NETWORK_NAMES[network]}.`, 'NETWORK_MISMATCH'));
   const provider = providerFor(environment, network, 'payout').name;
   const operatorFee = providerPayoutFee(environment, provider, amount);
   const lightpayFee = lightpayPayoutFee(environment, amount);

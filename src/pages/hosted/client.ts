@@ -29,6 +29,8 @@ export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_
  *     (aside: a brand panel shown beside the form on wide screens)
  */
 export const CLIENT = (env: string) => `
+  // AbortSignal with a deadline (older browsers: none, the call just has no deadline).
+  const deadline = (ms) => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
   const LP = (() => {
     const KEY = ${JSON.stringify(FIREBASE_WEB_API_KEY())};
     let ENV = ${JSON.stringify(env)};
@@ -82,7 +84,9 @@ export const CLIENT = (env: string) => `
       const headers = { Authorization: 'Bearer ' + t, 'X-Environment': ENV };
       if (body) headers['Content-Type'] = 'application/json';
       if (idem) headers['Idempotency-Key'] = idem;
-      const res = await fetch(path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+      // Never waits forever: past 25 s the call is given up (an idempotency key makes a retry safe).
+      const res = await fetch(path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store', signal: deadline(25000) })
+        .catch((e) => { throw new Error(e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 'Le serveur ne répond pas. Vérifiez votre connexion et réessayez.' : 'Connexion impossible. Vérifiez votre réseau et réessayez.'); });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 && data.error === 'RECENT_SIGN_IN_REQUIRED') throw Object.assign(new Error(data.message), { reauth: true });
       if (res.status === 401) { write(null); throw Object.assign(new Error(data.message || 'Session expirée.'), { signIn: true }); }
@@ -224,6 +228,8 @@ export const CLIENT = (env: string) => `
     if (bad && !warn) { warn = el('p', { class: 'amount-bad', role: 'alert', text: 'Montant en FCFA entiers, sans virgule ni point (ex. 1000).' }); box.after(warn); }
     if (!bad && warn) warn.remove();
   }, true);
+  // Congo prefixes: MTN 06, Airtel 05 and 04 (a number only works with its own operator).
+  const networkOf = (national) => (/^06/.test(national) ? 'MTN_MOMO_COG' : /^0[45]/.test(national) ? 'AIRTEL_COG' : null);
   const debounce = (fn, ms) => { let t = null; return function () { const a = arguments; clearTimeout(t); t = setTimeout(function () { fn.apply(null, a); }, ms); }; };
   function say(target, text, kind) {
     const n = typeof target === 'string' ? $(target) : target;

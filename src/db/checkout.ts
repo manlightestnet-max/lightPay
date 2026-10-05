@@ -3,7 +3,7 @@ import { LedgerEngine } from './ledger.js';
 import { Escrow, HoldRecord } from './escrow.js';
 import { query } from './pool.js';
 import { Environment } from '../types/index.js';
-import { MOBILE_NETWORKS, MobileNetwork, RailOperation, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
+import { MOBILE_NETWORKS, MobileNetwork, NETWORK_NAMES, RailOperation, RailResult, networkOfMsisdn, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
 import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayFeeWallet } from './fee-wallet.js';
 import { appName, failureOf, logActivity, reasonFor, updateActivity } from './activity.js';
@@ -270,6 +270,7 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   if (!MOBILE_NETWORKS.includes(network as MobileNetwork)) throw new CheckoutError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
   const msisdn = normalizeCongoMsisdn(msisdnInput);
   if (!msisdn) throw new CheckoutError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81', 'INVALID_MSISDN');
+  if (networkOfMsisdn(msisdn) !== network) throw new CheckoutError(`Ce numéro n’est pas un numéro ${NETWORK_NAMES[network as MobileNetwork]}.`, 'NETWORK_MISMATCH');
   if (BigInt(session.amount) < minMobileMoneyAmount(environment)) {
     throw new CheckoutError(`Le mobile money accepte au minimum ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   }
@@ -357,16 +358,33 @@ function watch(attempt: Attempt, tries = 0) {
 // One resolver per attempt at a time in this process (page polling + background watch).
 const resolving = new Set<string>();
 
+/**
+ * A payer who never validates on the phone: past this, the attempt is closed on our side
+ * (PAYER_TIMEOUT) and the session reopens, so nothing stays "en cours" forever. The provider is
+ * still asked for LATE_SUCCESS_HOURS: if it reports the money arrived after all, it is credited.
+ */
+const COLLECTION_TIMEOUT_MS = Number(process.env.COLLECTION_TIMEOUT_MINUTES || 5) * 60_000;
+const LATE_SUCCESS_HOURS = 24;
+const TIMED_OUT = 'PAYER_TIMEOUT';
+
 async function resolveAttempt(attempt: Attempt) {
   if (attempt.status !== 'PENDING' || resolving.has(attempt.id)) return;
   resolving.add(attempt.id);
   try {
     const provider = providerByName(attempt.provider);
-    // No provider id yet (request lost): re-send it, the provider deduplicates on our id.
-    let result = attempt.provider_reference ? await provider.collectionStatus(railOp(attempt)) : await provider.requestCollection(railOp(attempt));
-    if (!attempt.provider_reference && result.providerReference) {
-      await query(`UPDATE collection_attempts SET provider_reference = $2 WHERE id = $1`, [attempt.id, result.providerReference], attempt.environment);
-      if (result.status === 'PENDING') result = await provider.collectionStatus({ ...railOp(attempt), providerReference: result.providerReference });
+    const expired = Date.now() - new Date(attempt.created_at).getTime() > COLLECTION_TIMEOUT_MS;
+    let result: RailResult;
+    try {
+      // No provider id yet (request lost): re-send it, the provider deduplicates on our id.
+      result = attempt.provider_reference ? await provider.collectionStatus(railOp(attempt)) : await provider.requestCollection(railOp(attempt));
+      if (!attempt.provider_reference && result.providerReference) {
+        await query(`UPDATE collection_attempts SET provider_reference = $2 WHERE id = $1`, [attempt.id, result.providerReference], attempt.environment);
+        if (result.status === 'PENDING') result = await provider.collectionStatus({ ...railOp(attempt), providerReference: result.providerReference });
+      }
+    } catch (err) {
+      // Provider unreachable past the deadline: closed on our side too (the late check follows up).
+      if (expired) return await failAttempt(attempt, TIMED_OUT);
+      throw err;
     }
     if (result.providerFee !== undefined || result.charged !== undefined) {
       await query(
@@ -375,7 +393,10 @@ async function resolveAttempt(attempt: Attempt) {
         attempt.environment
       );
     }
-    if (result.status === 'PENDING') return;
+    if (result.status === 'PENDING') {
+      if (expired) await failAttempt(attempt, TIMED_OUT);
+      return;
+    }
     if (result.status === 'FAILED') return await failAttempt(attempt, result.failureCode ?? 'FAILED');
     return await completeCollection(attempt, result.providerReference);
   } finally {
@@ -758,5 +779,52 @@ export async function sweepPendingCollections() {
       env
     );
     for (const attempt of pending) await resolveAttempt(attempt).catch((err) => console.error('[SWEEP] collection', attempt.id, err?.message));
+    // Closed by our timeout: still asked to the provider for a day, in case it went through late.
+    const late = await query(
+      `SELECT * FROM collection_attempts WHERE status = 'FAILED' AND failure_code = $1 AND created_at > NOW() - make_interval(hours => $2) ORDER BY created_at LIMIT 50`,
+      [TIMED_OUT, LATE_SUCCESS_HOURS],
+      env
+    );
+    for (const attempt of late) await resolveLate(attempt).catch((err) => console.error('[SWEEP] late collection', attempt.id, err?.message));
+  }
+}
+
+/** An attempt closed by our timeout that the provider finally settles. */
+async function resolveLate(attempt: Attempt) {
+  if (resolving.has(attempt.id)) return;
+  resolving.add(attempt.id);
+  try {
+    const env = attempt.environment;
+    const result = await providerByName(attempt.provider).collectionStatus(railOp(attempt));
+    if (result.status === 'PENDING') return;
+    if (result.status === 'FAILED') {
+      // Final at the provider too: keep its reason and stop asking.
+      await query(`UPDATE collection_attempts SET failure_code = $2, updated_at = NOW() WHERE id = $1 AND status = 'FAILED' AND failure_code = $3`, [attempt.id, result.failureCode ?? 'FAILED', TIMED_OUT], env);
+      await updateActivity(env, 'collection', attempt.id, { status: 'FAILED', reasonCode: result.failureCode ?? 'FAILED' });
+      return;
+    }
+    // The money arrived late. A payment already settled by another attempt is not paid twice:
+    // left to the admin (the payer is refunded by hand), loudly logged.
+    const [session] = await query(`SELECT * FROM checkout_sessions WHERE id = $1`, [attempt.session_id], env);
+    if (session?.status === 'COMPLETED' && session.kind !== 'DEPOSIT') {
+      console.error('[CHECKOUT] late collection on a settled payment, refund by hand', attempt.id, session.id);
+      return;
+    }
+    const reopened = await query(
+      `UPDATE collection_attempts SET status = 'PENDING', failure_code = NULL, updated_at = NOW() WHERE id = $1 AND status = 'FAILED' AND failure_code = $2 RETURNING *`,
+      [attempt.id, TIMED_OUT],
+      env
+    ).catch((err) => {
+      // Another attempt of the same session is pending (one at a time): retried next sweep.
+      if (err.code === '23505') return [];
+      throw err;
+    });
+    if (!reopened.length) return;
+    if (result.providerFee !== undefined || result.charged !== undefined) {
+      await query(`UPDATE collection_attempts SET provider_fee = COALESCE($2, provider_fee), charged_amount = COALESCE($3, charged_amount) WHERE id = $1`, [attempt.id, result.providerFee?.toString() ?? null, result.charged?.toString() ?? null], env);
+    }
+    await completeCollection(reopened[0], result.providerReference);
+  } finally {
+    resolving.delete(attempt.id);
   }
 }

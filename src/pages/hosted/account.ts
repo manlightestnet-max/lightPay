@@ -530,9 +530,12 @@ export const accountPage = (nonce: string, env: string) => {
 
   // ---------------------------------------------------------------- withdraw
   let wdNet = 'MTN_MOMO_COG', wdQuote = null, wdState = null, wdResult = null, wdSeq = 0, wdBusy = false;
+  const pickWdNet = (net) => { wdNet = net; document.querySelectorAll('[data-wd-net]').forEach((o) => o.setAttribute('aria-pressed', String(o.dataset.wdNet === net))); };
   document.querySelectorAll('[data-wd-net]').forEach((b) => b.addEventListener('click', () => {
-    wdNet = b.dataset.wdNet;
-    document.querySelectorAll('[data-wd-net]').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
+    pickWdNet(b.dataset.wdNet);
+    // Another operator than the number typed: the number goes.
+    const n = networkOf(digits($('wdPhone').value).replace(/^242/, ''));
+    if (n && n !== wdNet) { $('wdPhone').value = ''; $('wdPhone').focus(); }
     loadWdQuote();
   }));
   function wdCheck() {
@@ -545,7 +548,7 @@ export const accountPage = (nonce: string, env: string) => {
     $('wdAvail').classList.toggle('below', below || tooMuch);
     if (!q) return;
     if (below) { $('wdFees').hidden = true; return; }
-    if (tooMuch || !/^0[4-6]\\d{7}$/.test(phone)) return;
+    if (tooMuch || !/^0[4-6]\\d{7}$/.test(phone) || networkOf(phone) !== wdNet) return;
     $('wdNext').disabled = false;
   }
   function renderWdFees() {
@@ -570,7 +573,12 @@ export const accountPage = (nonce: string, env: string) => {
     } catch (e) { if (e.signIn) signIn(); }
   }, 300);
   $('wdAmount').addEventListener('input', () => { $('wdNext').disabled = true; loadWdQuote(); });
-  $('wdPhone').addEventListener('input', wdCheck);
+  // The number picks its operator (06 MTN, 05/04 Airtel).
+  $('wdPhone').addEventListener('input', () => {
+    const n = networkOf(digits($('wdPhone').value).replace(/^242/, ''));
+    if (n && n !== wdNet) { pickWdNet(n); loadWdQuote(); }
+    wdCheck();
+  });
   async function enterWithdraw() {
     $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR');
     wdCheck();

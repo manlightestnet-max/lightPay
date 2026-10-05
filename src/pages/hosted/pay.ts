@@ -162,7 +162,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   try { typed = sessionStorage.getItem('lightpay.msisdn.' + id); } catch (e) {}
   const fullPhone = (d) => '+242 ' + d.replace(/^(\\d{2})(\\d{3})(\\d{2})(\\d{2})$/, '$1 $2 $3 $4');
   const phoneOf = (masked) => (typed && masked && masked.slice(-2) === typed.slice(-2) && masked.indexOf('+242 ' + typed.slice(0, 2)) === 0 ? fullPhone(typed) : masked || 'numéro indiqué');
-  const phoneOk = () => /^0[4-6]\\d{7}$/.test(digits($('msisdn').value).replace(/^242/, ''));
+  const phoneOk = () => { const d = digits($('msisdn').value).replace(/^242/, ''); return /^0[4-6]\\d{7}$/.test(d) && networkOf(d) === network; };
   let busy = false;
   const accountUrl = (hash) => (LP.ENV === 'sandbox' ? '/account?env=sandbox' : '/account') + (hash || '');
 
@@ -185,7 +185,12 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   document.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
     const was = method;
     if (b.dataset.pick === 'lightpay_wallet') method = 'lightpay_wallet';
-    else { method = 'mobile_money'; network = b.dataset.pick; }
+    else {
+      method = 'mobile_money'; network = b.dataset.pick;
+      // Another operator than the number typed: the number goes, it cannot pay with this one.
+      const n = networkOf(digits($('msisdn').value).replace(/^242/, ''));
+      if (n && n !== network) { $('msisdn').value = ''; setTimeout(() => $('msisdn').focus(), 0); }
+    }
     sync();
     say('msg', '');
     if (method !== was) openMethod(); else renderFees();
@@ -330,7 +335,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   }
 
   const load = async () => {
-    const res = await fetch('/v1/checkout/public/sessions/' + encodeURIComponent(id), { cache: 'no-store' }).catch(() => null);
+    const res = await fetch('/v1/checkout/public/sessions/' + encodeURIComponent(id), { cache: 'no-store', signal: deadline(15000) }).catch(() => null);
     if (!res || !res.ok) {
       if (session) return; // transient network error while polling: keep the current state
       stop(); $('closedTitle').textContent = 'Lien invalide'; $('closedText').textContent = 'Ce lien de paiement est invalide ou a expiré.'; screen('closed'); return;
@@ -352,7 +357,13 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     $('waitText').textContent = text;
     screen('waiting');
   }
-  $('msisdn').addEventListener('input', () => { if (method === 'mobile_money') renderFees(); });
+  // The number picks its operator (06 MTN, 05/04 Airtel): the two can never disagree.
+  $('msisdn').addEventListener('input', () => {
+    if (method !== 'mobile_money') return;
+    const n = networkOf(digits($('msisdn').value).replace(/^242/, ''));
+    if (n && n !== network) { network = n; sync(); }
+    renderFees();
+  });
   $('payMomo').addEventListener('click', async () => {
     if (busy || $('payMomo').disabled || !phoneOk()) return;
     const msisdn = digits($('msisdn').value).replace(/^242/, '');
@@ -375,7 +386,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     waiting('Envoi de la demande au ' + fullPhone(msisdn) + '…');
     try {
       const res = await fetch('/v1/checkout/public/sessions/' + encodeURIComponent(id) + '/mobile-money', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msisdn: msisdn, network: network }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msisdn: msisdn, network: network }), signal: deadline(30000),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) showFailed(body.message || 'Le paiement n’a pas pu démarrer. Réessayez.');
