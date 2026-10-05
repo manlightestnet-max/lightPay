@@ -42,7 +42,7 @@ export const consolePage = (nonce: string, env: string) => {
   const body = `
 <div class="console-shell" hidden>
 <aside class="side" id="side" aria-label="Menu">
-  <div class="side-head"><span class="brand"><span class="brand-mark">${iconSvg('bolt')}</span><span>LightPay<small>Compte et développeurs</small></span></span></div>
+  <div class="side-head"><span class="brand"><span class="brand-mark" aria-hidden="true"></span><span>LightPay<small>Compte et développeurs</small></span></span></div>
   <div class="env-switch" role="group" aria-label="Environnement"><button type="button" id="envReal">Réel</button><button type="button" id="envTest" class="test">Test</button></div>
   <nav class="side-nav" aria-label="Navigation">
     <div class="nav-label">Mon argent</div>
@@ -349,7 +349,7 @@ ${flow(
   </div>
   <nav class="tabbar console-tabbar" aria-label="Navigation">
     <a href="#/home" data-tab="home">${iconSvg('home')}<span>Accueil</span></a>
-    <a href="#/activity" data-tab="activity">${iconSvg('list')}<span>Activité</span></a>
+    <a href="#/activity" data-tab="activity">${iconSvg('pulse')}<span>Activité</span></a>
     <a href="#/security" data-tab="security">${iconSvg('user')}<span>Compte</span></a>
   </nav>
 </div>
@@ -1271,7 +1271,7 @@ ${flow(
     const tool = (ic, title, text) => el('div', { class: 'auth-tool' }, [el('span', { class: 'tool-icon' }, [icon(ic)]), el('span', {}, [el('b', { text: title }), el('span', { text: text })])]);
     const point = (text) => el('li', {}, [icon('check'), text]);
     return el('aside', { class: 'auth-aside' }, [
-      el('span', { class: 'pill-brand' }, [el('span', { class: 'brand-mark' }, [icon('bolt')]), 'Compte LightPay']),
+      el('span', { class: 'pill-brand' }, [el('span', { class: 'brand-mark', 'aria-hidden': 'true' }), 'Compte LightPay']),
       el('h2', { text: 'Un seul compte, votre argent et vos apps.' }),
       el('p', { text: 'La même adresse et le même mot de passe pour votre wallet, pour payer sur les sites partenaires et pour gérer vos intégrations.' }),
       el('div', { class: 'auth-tools' }, [

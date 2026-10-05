@@ -122,7 +122,7 @@ html.console-page .foot { display: none; }
 .stat { min-width: 0; }
 .stat-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .stat-value { margin-top: 6px; font-size: 26px; font-weight: 750; letter-spacing: -.025em; line-height: 1.15; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.stat-value.accent { color: var(--accent); }
+.stat-value.accent { color: var(--accent-ink); }
 .stat-hint { margin-top: 4px; font-size: 12px; color: var(--muted); }
 
 /* ---------- help tip ---------- */
@@ -144,7 +144,7 @@ html.console-page .foot { display: none; }
 .tbl tr[data-href]:hover { background: var(--raised); }
 .tbl tr[aria-selected="true"] { background: var(--raised); box-shadow: inset 3px 0 0 var(--accent); }
 .tbl .strong { font-weight: 650; }
-.tbl .in { color: var(--accent); } .tbl .void { color: var(--faint); text-decoration: line-through; } .tbl .held { color: var(--warn); }
+.tbl .in { color: var(--accent-ink); } .tbl .void { color: var(--faint); text-decoration: line-through; } .tbl .held { color: var(--warn); }
 .cell { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .cell .row-icon { width: 34px; height: 34px; }
 .cell-main { min-width: 0; }
@@ -175,7 +175,7 @@ html.console-page .foot { display: none; }
 textarea.field-area { width: 100%; min-height: 110px; padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--card); font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); resize: vertical; }
 textarea.field-area:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .hero-empty { padding: 44px 24px; text-align: center; }
-.hero-empty .state-icon { margin: 0 auto; background: var(--accent-soft); color: var(--accent); }
+.hero-empty .state-icon { margin: 0 auto; background: var(--accent-soft); color: var(--accent-ink); }
 .hero-empty h2 { margin-top: 14px; font-size: 18px; font-weight: 700; }
 .hero-empty p { margin: 6px auto 0; max-width: 440px; color: var(--muted); font-size: 14px; }
 .hero-empty .btn { width: auto; margin-top: 18px; }
@@ -201,7 +201,7 @@ textarea.field-area:focus { outline: none; border-color: var(--accent); box-shad
   .grid-2:has(> .detail-panel):not(.has-detail) > .detail-panel { display: none; }
   .grid-2.has-detail > :not(.detail-panel) { display: none; }
   .show-narrow { display: inline; }
-  .console-tabbar { display: grid; }
+  .console-tabbar { display: flex; }
   .screen.fill > .page { padding-bottom: 12px; }
   .well { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; padding: 14px 16px; }
   .stat-value { font-size: 20px; }
@@ -217,13 +217,13 @@ textarea.field-area:focus { outline: none; border-color: var(--accent); box-shad
   .hide-sm { display: none; }
   .tbl th, .tbl td { padding-left: 14px; padding-right: 14px; }
   .panel-head, .panel-body, .panel-foot, .panel-actions { padding-left: 16px; padding-right: 16px; }
-  .page-actions { width: 100%; margin-left: 0; }
-  .page-actions .btn { flex: 1; }
+  .page-actions { width: 100%; margin-left: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .page-actions .btn { min-height: 44px; padding: 0 6px; font-size: 10.5px; letter-spacing: .08em; }
 }
 
 /* ---------- sign in: brand panel + form ---------- */
 html.console-page #auth { flex-direction: row; background: var(--bg); }
-.auth-aside { flex: 1.1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 56px; background: #1c1c1c; color: #f2f2f2; position: relative; overflow: hidden; }
+.auth-aside { flex: 1.1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 56px; background: radial-gradient(120% 80% at 100% 0%, rgba(1,227,153,.16), transparent 55%), #070a09; color: #f3f6f4; position: relative; overflow: hidden; }
 .auth-aside::after { content: none; }
 .auth-aside .pill-brand { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; font-size: 13px; font-weight: 600; }
 .auth-aside h2 { margin-top: 28px; font-size: 40px; line-height: 1.08; letter-spacing: -.02em; font-weight: 600; max-width: 460px; }

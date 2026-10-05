@@ -27,14 +27,14 @@ export const accountPage = (nonce: string, env: string) => {
         <div class="hero-sub" id="homeLockedLine" hidden>${iconSvg('lock')}<span id="homeLocked"></span></div>
       </div>
       <div class="hero-actions" id="homeActions">
-        <button class="btn btn-sm" type="button" data-go="deposit">${iconSvg('plus')}Dépôt</button>
-        <button class="btn btn-sm btn-secondary" type="button" data-go="withdraw">${iconSvg('withdraw')}Retrait</button>
+        <button class="chip primary" type="button" data-go="deposit">${iconSvg('plus')}Dépôt</button>
+        <button class="chip" type="button" data-go="withdraw">${iconSvg('withdraw')}Retrait</button>
       </div>
     </div>
     <a class="send-link" href="#/send">${iconSvg('send')}<span>Envoyer à un @pseudo</span>${iconSvg('chevron-right', 'chev')}</a>
     <div class="note warn" id="homeClosed" hidden>${iconSvg('alert')}<p>Ce compte LightPay est fermé : il ne peut plus recevoir ni envoyer d’argent.</p></div>
     <div class="section-head sticky"><h2>Activité</h2><a class="link" href="#/activity">Tout voir</a></div>
-    <ul class="list" id="homeActivity">${skeletonRows(4)}</ul>
+    <div id="homeActivity" aria-busy="true">${skeletonRows(6, 'div')}</div>
     <div class="msg" id="homeMsg" role="status" aria-live="polite"></div>
   </div>
 </section>
@@ -46,8 +46,8 @@ export const accountPage = (nonce: string, env: string) => {
     <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="depMin">FCFA</div></div>
     <div class="field"><span class="label" id="depNetLabel">Payer avec</span>
       <div class="seg" role="group" aria-labelledby="depNetLabel">
-        <button class="seg-opt" type="button" data-dep-net="MTN_MOMO_COG" aria-pressed="true">MTN MoMo</button>
-        <button class="seg-opt" type="button" data-dep-net="AIRTEL_COG" aria-pressed="false">Airtel Money</button>
+        <button class="seg-opt" type="button" data-dep-net="MTN_MOMO_COG" aria-pressed="true"><span class="op-dot mtn"></span>MTN MoMo</button>
+        <button class="seg-opt" type="button" data-dep-net="AIRTEL_COG" aria-pressed="false"><span class="op-dot airtel"></span>Airtel Money</button>
       </div>
     </div>
     <div class="fees" id="depFees" hidden></div>
@@ -92,8 +92,8 @@ export const accountPage = (nonce: string, env: string) => {
   <div class="content">
     <div class="field"><span class="label" id="wdNetLabel">Vers</span>
       <div class="seg" role="group" aria-labelledby="wdNetLabel">
-        <button class="seg-opt" type="button" data-wd-net="MTN_MOMO_COG" aria-pressed="true">MTN MoMo</button>
-        <button class="seg-opt" type="button" data-wd-net="AIRTEL_COG" aria-pressed="false">Airtel Money</button>
+        <button class="seg-opt" type="button" data-wd-net="MTN_MOMO_COG" aria-pressed="true"><span class="op-dot mtn"></span>MTN MoMo</button>
+        <button class="seg-opt" type="button" data-wd-net="AIRTEL_COG" aria-pressed="false"><span class="op-dot airtel"></span>Airtel Money</button>
       </div>
     </div>
     <div class="field"><label for="wdPhone">Numéro qui reçoit</label><div class="input-prefix"><span>+242</span><input id="wdPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
@@ -102,7 +102,7 @@ export const accountPage = (nonce: string, env: string) => {
     <div class="fees" id="wdFees" hidden></div>
     <div class="msg" id="wdMsg" role="status" aria-live="polite"></div>
     <div class="section-head" id="wdListHead" hidden><h2>Derniers retraits</h2></div>
-    <ul class="list" id="wdList"></ul>
+    <div id="wdList"></div>
   </div>
   <div class="actions-bar"><button class="btn" type="button" id="wdNext" disabled>Continuer</button></div>
 </section>
@@ -126,15 +126,32 @@ export const accountPage = (nonce: string, env: string) => {
 
 <section class="screen" data-screen="activity" hidden>
   ${topbar({ title: 'Activité', back: false, env })}
-  <div class="content"><div id="actList"></div><div class="msg" id="actMsg" role="status" aria-live="polite"></div></div>
+  <div class="filters" role="group" aria-label="Filtrer l’activité">
+    <button type="button" data-filter="all" aria-pressed="true">Tout</button>
+    <button type="button" data-filter="in" aria-pressed="false">Entrées</button>
+    <button type="button" data-filter="out" aria-pressed="false">Sorties</button>
+    <button type="button" data-filter="wait" aria-pressed="false">En attente</button>
+  </div>
+  <div class="content" id="actScroll"><div id="actList" aria-busy="true">${skeletonRows(8, 'div')}</div><div class="msg" id="actMsg" role="status" aria-live="polite"></div></div>
 </section>
 
 <section class="screen" data-screen="activity-item" hidden>
-  ${bar('Détail de l’opération')}
+  ${bar('Opération')}
   <div class="content">
-    <div class="center mt"><span class="avatar avatar-lg" id="itemIcon" aria-hidden="true"></span><p class="small muted mt" id="itemKind"></p><div class="amount-xl" id="itemAmount"></div><p class="mt"><span class="pill" id="itemStatus"></span></p></div>
-    <div class="note warn" id="itemReasonBox" hidden>${iconSvg('alert')}<p id="itemReason"></p></div>
-    <div class="receipt" id="itemRows"></div>
+    <div id="itemSk" aria-busy="true" aria-label="Chargement">
+      <div class="detail-head"><span class="sk sk-circle"></span><span class="sk sk-s w-30 sk-center"></span><span class="sk sk-amount sk-center"></span><span class="sk sk-s w-30 sk-center"></span></div>
+      <span class="sk sk-card"></span>
+    </div>
+    <div id="itemReal" hidden>
+      <div class="detail-head">
+        <span class="detail-icon" id="itemIcon" aria-hidden="true"></span>
+        <p class="detail-kind" id="itemKind"></p>
+        <div class="amount-xl" id="itemAmount"></div>
+        <span class="status" id="itemStatus"></span>
+      </div>
+      <div class="note warn" id="itemReasonBox" hidden>${iconSvg('alert')}<p id="itemReason"></p></div>
+      <div class="receipt card" id="itemRows"></div>
+    </div>
     <div class="msg" id="itemMsg" role="status" aria-live="polite"></div>
   </div>
 </section>
@@ -174,22 +191,24 @@ export const accountPage = (nonce: string, env: string) => {
       <span class="avatar avatar-lg" id="accAvatar" aria-hidden="true"></span>
       <div class="profile-main"><div class="profile-name" id="accName"></div><div class="profile-handle" id="accHandle"></div></div>
     </div>
-    <div class="section-head"><h2>Profil</h2></div>
-    <ul class="list">
+    <p class="group-title">Profil</p>
+    <ul class="group">
       <li><a class="row" href="#/username"><span class="row-icon">${iconSvg('user')}</span><span class="row-main"><span class="row-title">Nom d’utilisateur</span><span class="row-sub" id="accUsername"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
       <li><a class="row" href="#/email"><span class="row-icon">${iconSvg('mail')}</span><span class="row-main"><span class="row-title">E-mail</span><span class="row-sub" id="secEmail"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-      <li><a class="row" href="#/password"><span class="row-icon">${iconSvg('lock')}</span><span class="row-main"><span class="row-title">Mot de passe</span><span class="row-sub">Le changer</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><a class="row" href="#/password"><span class="row-icon">${iconSvg('lock')}</span><span class="row-main"><span class="row-title">Mot de passe</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
     </ul>
-    <div class="section-head"><h2>Autorisations</h2></div>
-    <ul class="list">
+    <p class="group-title">Autorisations</p>
+    <ul class="group">
       <li><a class="row" href="#/apps"><span class="row-icon">${iconSvg('apps')}</span><span class="row-main"><span class="row-title">Apps connectées</span><span class="row-sub" id="accAppsSub">Accès et permissions</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
-      <li><a class="row" href="#/developer"><span class="row-icon">${iconSvg('code')}</span><span class="row-main"><span class="row-title">Mode avancé</span><span class="row-sub" id="accDevSub">Console et espace développeur, sur demande</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+      <li><a class="row" href="#/developer"><span class="row-icon">${iconSvg('code')}</span><span class="row-main"><span class="row-title">Mode avancé</span><span class="row-sub" id="accDevSub">Sur demande</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
     </ul>
-    <div class="section-head"><h2>Environnement</h2></div>
-    <ul class="list">
+    <p class="group-title">Session</p>
+    <ul class="group">
       <li><button class="row" type="button" id="envSwitch"><span class="row-icon">${iconSvg('swap')}</span><span class="row-main"><span class="row-title" id="envSwitchTitle"></span><span class="row-sub" id="envSwitchSub"></span></span></button></li>
       <li><button class="row" type="button" id="signOut"><span class="row-icon">${iconSvg('logout')}</span><span class="row-main"><span class="row-title">Se déconnecter</span></span></button></li>
-      <li><a class="row" href="#/delete"><span class="row-icon">${iconSvg('trash')}</span><span class="row-main"><span class="row-title">Supprimer mon compte</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+    </ul>
+    <ul class="group mt-lg">
+      <li><a class="row danger" href="#/delete"><span class="row-icon">${iconSvg('trash')}</span><span class="row-main"><span class="row-title">Supprimer mon compte</span></span></a></li>
     </ul>
     <div class="msg" id="accMsg" role="status" aria-live="polite"></div>
   </div>
@@ -259,7 +278,7 @@ export const accountPage = (nonce: string, env: string) => {
 
 <nav class="tabbar" id="tabbar" aria-label="Navigation" hidden>
   <a href="#/home" data-tab="home">${iconSvg('home')}<span>Accueil</span></a>
-  <a href="#/activity" data-tab="activity">${iconSvg('list')}<span>Activité</span></a>
+  <a href="#/activity" data-tab="activity">${iconSvg('pulse')}<span>Activité</span></a>
   <a href="#/account" data-tab="account">${iconSvg('user')}<span>Compte</span></a>
 </nav>
 
@@ -316,9 +335,9 @@ export const accountPage = (nonce: string, env: string) => {
   function actTitle(a) {
     const who = a.counterparty || '';
     switch (a.kind) {
-      case 'DEPOSIT': return 'Dépôt';
+      case 'DEPOSIT': return who ? 'Dépôt · ' + who : 'Dépôt';
       case 'TRANSFER': return a.direction === 'IN' ? 'Reçu de ' + who : 'Envoi à ' + (who || '—');
-      case 'WITHDRAWAL': return 'Retrait';
+      case 'WITHDRAWAL': return who ? 'Retrait · ' + who : 'Retrait';
       case 'PAYMENT': return 'Paiement · ' + who;
       case 'CHARGE': return 'Débit par ' + who;
       case 'SALE': return 'Vente · ' + who;
@@ -328,24 +347,32 @@ export const accountPage = (nonce: string, env: string) => {
     }
   }
   const settledOk = (a) => a.status === 'SUCCEEDED' || a.status === 'LOCKED' || a.status === 'PENDING';
-  function actRow(a) {
-    const st = STATUS[a.status] || ['', a.status];
+  const END_LABEL = { FAILED: 'Refusé', PENDING: 'En cours', LOCKED: 'Bloqué', REFUNDED: 'Remboursé', EXPIRED: 'Expiré', CANCELLED: 'Annulé' };
+  const shortDay = (d) => { const x = new Date(d); return sameDay(x, new Date()) ? timeLabel(d) : x.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }); };
+  // Balance written as "12 450" + a smaller "FCFA".
+  function amountParts(host, value, currency) {
+    const t = LP.money(value, currency); const i = t.lastIndexOf(' ');
+    host.replaceChildren(t.slice(0, i), el('span', { class: 'cur', text: t.slice(i + 1) }));
+  }
+  // One operation: icon · amount over a short description · time or state.
+  function txRow(o) {
+    const inner = [
+      el('span', { class: 'tx-icon', 'aria-hidden': 'true' }, [icon(o.icon)]),
+      el('span', { class: 'tx-main' }, [el('span', { class: 'tx-amt', text: o.amount }), el('span', { class: 'tx-desc', text: o.desc })]),
+      el('span', { class: 'tx-end', text: o.end || '' }),
+    ];
+    return o.href ? el('a', { class: 'tx ' + (o.cls || ''), href: o.href }, inner) : el('div', { class: 'tx ' + (o.cls || '') }, inner);
+  }
+  function actRow(a, short) {
     const incoming = a.direction === 'IN';
-    const sub = timeLabel(a.created_at) + ' · ' + st[1] + (a.status === 'FAILED' && a.reason ? ' — ' + a.reason : '');
-    const row = listRow({
+    return txRow({
       icon: a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock'),
-      iconClass: incoming && a.status === 'SUCCEEDED' ? 'in' : '',
-      title: actTitle(a),
-      sub: sub,
-      end: (incoming ? '+' : '−') + LP.money(a.amount, a.currency),
-      endClass: !settledOk(a) || a.status === 'REFUNDED' && incoming ? 'void' : a.status === 'LOCKED' ? 'held' : incoming && a.status === 'SUCCEEDED' ? 'in' : '',
+      amount: (incoming ? '+' : '−') + LP.money(a.amount, a.currency),
+      desc: actTitle(a),
+      end: END_LABEL[a.status] || (short ? shortDay(a.created_at) : timeLabel(a.created_at)),
+      cls: !settledOk(a) || (a.status === 'REFUNDED' && incoming) ? 'void' : a.status === 'LOCKED' ? 'held' : a.status === 'PENDING' ? 'wait' : incoming ? 'in' : '',
       href: '#/activity/' + encodeURIComponent(a.id),
-      chev: true,
     });
-    const subEl = row.querySelector('.row-sub');
-    if (subEl && (a.status === 'FAILED')) subEl.classList.add('err');
-    if (subEl && (a.status === 'PENDING' || a.status === 'LOCKED')) subEl.classList.add('warn');
-    return row;
   }
 
   // ---------------------------------------------------------------- home
@@ -354,7 +381,7 @@ export const accountPage = (nonce: string, env: string) => {
   async function loadMe() {
     me = await LP.api('GET', '/v1/me');
     const name = me.user.name || (me.user.email || '').split('@')[0];
-    $('homeAvailable').textContent = LP.money(me.wallet.available_balance, cur());
+    amountParts($('homeAvailable'), me.wallet.available_balance, cur());
     const locked = Number(me.wallet.locked_balance);
     $('homeLockedLine').hidden = !locked;
     $('homeLocked').textContent = LP.money(locked, cur()) + ' bloqués jusqu’à la livraison';
@@ -370,12 +397,14 @@ export const accountPage = (nonce: string, env: string) => {
     $('secEmail').textContent = me.user.email || '—';
     $('accDevSub').textContent = DEV_SUB[me.developer] || DEV_SUB.NONE;
   }
-  const DEV_SUB = { NONE: 'Console et espace développeur, sur demande', PENDING: 'Demande en cours d’examen', APPROVED: 'Activé', REJECTED: 'Demande refusée · vous pouvez la refaire' };
+  const DEV_SUB = { NONE: 'Sur demande', PENDING: 'Demande en cours d’examen', APPROVED: 'Activé', REJECTED: 'Demande refusée · vous pouvez la refaire' };
   async function enterHome() {
     await guarded(async () => {
       await loadMe();
       const act = await LP.api('GET', '/v1/me/activity?limit=30');
-      $('homeActivity').replaceChildren.apply($('homeActivity'), act.activity.length ? act.activity.map(actRow) : [el('li', { class: 'empty', text: 'Aucune opération pour l’instant.' })]);
+      actCache = act.activity;
+      $('homeActivity').replaceChildren.apply($('homeActivity'), act.activity.length ? act.activity.map((a) => actRow(a, true)) : [el('p', { class: 'empty', text: 'Aucune opération pour l’instant.' })]);
+      $('homeActivity').removeAttribute('aria-busy');
     }, 'homeMsg');
   }
   document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => nav.go(b.dataset.go)));
@@ -551,7 +580,7 @@ export const accountPage = (nonce: string, env: string) => {
       $('wdListHead').hidden = !r.withdrawals.length;
       $('wdList').replaceChildren.apply($('wdList'), r.withdrawals.slice(0, 5).map((w) => {
         const st = WD_STATUS[w.status] || ['', w.status];
-        return listRow({ icon: 'withdraw', title: LP.money(w.amount, w.currency) + ' vers ' + w.to, sub: dayLabel(w.created_at) + ' · ' + timeLabel(w.created_at), end: el('span', { class: 'pill ' + st[0], text: st[1] }) });
+        return txRow({ icon: w.status === 'FAILED' ? 'x' : 'withdraw', amount: LP.money(w.amount, w.currency), desc: 'Vers ' + w.to, end: w.status === 'SUCCEEDED' ? shortDay(w.created_at) : st[1], cls: w.status === 'FAILED' ? 'void' : w.status === 'PENDING' ? 'wait' : '' });
       }));
     } catch (e) { /* history is optional */ }
   }
@@ -617,30 +646,57 @@ export const accountPage = (nonce: string, env: string) => {
   }
 
   // ---------------------------------------------------------------- activity
+  let actCache = null, actFilter = 'all';
+  const FILTERS = {
+    all: () => true,
+    in: (a) => a.direction === 'IN',
+    out: (a) => a.direction !== 'IN',
+    wait: (a) => a.status === 'PENDING' || a.status === 'LOCKED',
+  };
+  function renderActivity() {
+    const list = (actCache || []).filter(FILTERS[actFilter]);
+    $('actList').removeAttribute('aria-busy');
+    if (!list.length) { $('actList').replaceChildren(el('p', { class: 'empty', text: actCache && actCache.length ? 'Rien dans ce filtre.' : 'Aucune opération pour l’instant.' })); return; }
+    const out = []; let day = '';
+    list.forEach((a) => {
+      const d = dayLabel(a.created_at);
+      if (d !== day) { day = d; out.push(el('h2', { class: 'day-label', text: d.charAt(0).toUpperCase() + d.slice(1) })); }
+      out.push(actRow(a, false));
+    });
+    $('actList').replaceChildren.apply($('actList'), out);
+  }
+  document.querySelectorAll('[data-filter]').forEach((b) => b.addEventListener('click', () => {
+    actFilter = b.dataset.filter;
+    document.querySelectorAll('[data-filter]').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
+    $('actScroll').scrollTop = 0;
+    renderActivity();
+  }));
   async function enterActivity() {
-    skeleton($('actList'), 6, 'div');
+    if (actCache) renderActivity(); else { $('actList').setAttribute('aria-busy', 'true'); skeleton($('actList'), 8, 'div'); }
     await guarded(async () => {
-      const r = await LP.api('GET', '/v1/me/activity?limit=100');
-      if (!r.activity.length) { $('actList').replaceChildren(el('p', { class: 'empty', text: 'Aucune opération pour l’instant.' })); return; }
-      const out = []; let day = '';
-      r.activity.forEach((a) => {
-        const d = dayLabel(a.created_at);
-        if (d !== day) { day = d; out.push(el('h2', { class: 'group-label', text: d.charAt(0).toUpperCase() + d.slice(1) })); out.push(el('ul', { class: 'list' })); }
-        out[out.length - 1].append(actRow(a));
-      });
-      $('actList').replaceChildren.apply($('actList'), out);
+      actCache = (await LP.api('GET', '/v1/me/activity?limit=100')).activity;
+      renderActivity();
     }, 'actMsg');
   }
+  // The detail screen is reused from one operation to the next: another operation shows the
+  // shimmer first (never the previous amount), and a late answer for an older one is dropped.
+  let itemShown = null, itemSeq = 0;
   async function enterActivityItem(id) {
     say('itemMsg', '');
+    const seq = ++itemSeq;
+    if (id !== itemShown) { $('itemReal').hidden = true; $('itemSk').hidden = false; }
     await guarded(async () => {
       const a = (await LP.api('GET', '/v1/me/activity/' + encodeURIComponent(id))).activity;
+      if (seq !== itemSeq) return;
       const st = STATUS[a.status] || ['', a.status];
       const incoming = a.direction === 'IN';
-      $('itemIcon').replaceChildren(icon(a.status === 'FAILED' ? 'x' : KIND_ICON[a.kind] || 'clock'));
+      const failed = !settledOk(a) || (a.status === 'REFUNDED' && incoming);
+      $('itemIcon').className = 'detail-icon' + (a.status === 'FAILED' ? ' err' : incoming && !failed ? ' in' : '');
+      $('itemIcon').replaceChildren(icon(a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock')));
       $('itemKind').textContent = actTitle(a);
+      $('itemAmount').className = 'amount-xl' + (failed ? ' void' : incoming ? ' in' : '');
       $('itemAmount').textContent = (incoming ? '+' : '−') + LP.money(a.amount, a.currency);
-      $('itemStatus').className = 'pill ' + st[0];
+      $('itemStatus').className = 'status ' + st[0];
       $('itemStatus').textContent = st[1];
       $('itemReasonBox').hidden = !a.reason;
       $('itemReason').textContent = a.reason || '';
@@ -656,11 +712,14 @@ export const accountPage = (nonce: string, env: string) => {
       if (a.metadata && a.metadata.via) rows.push(['Via', a.metadata.via]);
       if (a.metadata && a.metadata.reference) rows.push(['Référence', a.metadata.reference]);
       if (a.metadata && a.metadata.note) rows.push(['Message', a.metadata.note]);
-      rows.push(['Créée le', new Date(a.created_at).toLocaleString('fr-FR')]);
-      if (a.updated_at && a.updated_at !== a.created_at) rows.push(['Mise à jour', new Date(a.updated_at).toLocaleString('fr-FR')]);
+      rows.push(['Date', new Date(a.created_at).toLocaleString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })]);
+      if (a.updated_at && a.updated_at !== a.created_at && a.status !== 'SUCCEEDED') rows.push(['Mise à jour', new Date(a.updated_at).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })]);
       rows.push(['N° d’opération', a.id, true]);
       feeRows($('itemRows'), rows);
+      itemShown = id;
+      $('itemSk').hidden = true; $('itemReal').hidden = false;
     }, 'itemMsg');
+    if (seq === itemSeq && itemShown !== id) $('itemSk').hidden = true;
   }
 
   // ---------------------------------------------------------------- apps
@@ -799,8 +858,8 @@ export const accountPage = (nonce: string, env: string) => {
   $('envSwitch').addEventListener('click', async () => {
     LP.setEnv(LP.ENV === 'sandbox' ? 'production' : 'sandbox');
     $('homeAvailable').replaceChildren(el('span', { class: 'sk sk-amount' }));
-    $('homeActivity').replaceChildren(); skeleton($('homeActivity'), 4);
-    $('actList').replaceChildren();
+    $('homeActivity').replaceChildren(); skeleton($('homeActivity'), 6, 'div');
+    $('actList').replaceChildren(); actCache = null; itemShown = null;
     if (liveStop) liveStop();
     liveStop = LP.live(onLive);
     await enterAccount();

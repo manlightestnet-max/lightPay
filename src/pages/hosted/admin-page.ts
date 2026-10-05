@@ -23,12 +23,12 @@ const ADMIN_CSS = `
 .rows > div.total span { color: var(--text); font-weight: 700; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .check svg { width: 18px; height: 18px; flex-shrink: 0; }
-.check.ok { color: var(--accent); } .check.err { color: var(--danger); }
+.check.ok { color: var(--accent-ink); } .check.err { color: var(--danger); }
 .share { white-space: pre-wrap; font-size: 14px; line-height: 1.6; padding: 14px 16px; border-radius: 12px; background: var(--raised); }
 .search { width: 100%; max-width: 320px; height: 36px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--card); padding: 0 12px; font-size: 14px; }
 .search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-.debit { color: var(--danger); } .credit { color: var(--accent); }
+.debit { color: var(--danger); } .credit { color: var(--accent-ink); }
 .console .grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .console .grid-2 > .sticky .panel + .panel { margin-top: 20px; }
 .items { list-style: none; margin: 0; padding: 0; }
@@ -66,7 +66,7 @@ export const adminPage = (nonce: string, env: string) => {
   const body = `
 <div class="console-shell" hidden>
 <aside class="side" id="side" aria-label="Menu">
-  <div class="side-head"><span class="brand"><span class="brand-mark">${iconSvg('bolt')}</span><span>LightPay<small>Administration</small></span></span></div>
+  <div class="side-head"><span class="brand"><span class="brand-mark" aria-hidden="true"></span><span>LightPay<small>Administration</small></span></span></div>
   <nav class="env-switch" aria-label="Environnement"><a id="envReal" href="/admin">Réel</a><a id="envTest" class="test" href="/admin?env=sandbox">Test</a></nav>
   <nav class="side-nav" aria-label="Navigation">
     <div class="nav-label">Pilotage</div>
@@ -698,7 +698,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   function authAside() {
     const point = (text) => el('li', {}, [icon('check'), text]);
     return el('aside', { class: 'auth-aside' }, [
-      el('span', { class: 'pill-brand' }, [el('span', { class: 'brand-mark' }, [icon('bolt')]), 'Administration']),
+      el('span', { class: 'pill-brand' }, [el('span', { class: 'brand-mark', 'aria-hidden': 'true' }), 'Administration']),
       el('h2', { text: 'Le tableau de bord de LightPay.' }),
       el('p', { text: 'Vos revenus, les réserves chez chaque provider, les comptes, les apps et chaque mouvement du grand livre.' }),
       el('ul', { class: 'auth-points' }, [

@@ -165,7 +165,8 @@ export const CLIENT = (env: string) => `
         run();
         return () => { stopped = true; clearTimeout(timer); };
       },
-      money:(v, c) => Number(v).toLocaleString('fr-FR') + ' ' + (!c || c === 'XAF' ? 'FCFA' : c),
+      // Thousands with a no-break space Poppins draws (its narrow one renders as nothing).
+      money:(v, c) => Number(v).toLocaleString('fr-FR').replace(/[\u202f\u00a0]/g, '\u00a0') + ' ' + (!c || c === 'XAF' ? 'FCFA' : c),
       uuid: () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9_-]/g, ''),
       updateIdentity: async (fields) => {
         const t = await token();
@@ -362,7 +363,7 @@ export const CLIENT = (env: string) => `
       const title = mode === 'in' ? (o.title || 'Connexion à LightPay') : mode === 'up' ? 'Créer votre compte LightPay' : 'Mot de passe oublié';
       const sub = mode === 'reset' ? 'Recevez un lien pour choisir un nouveau mot de passe.' : (o.subtitle || 'Un seul compte pour payer, recevoir et envoyer de l’argent.');
       const back = o.onBack ? el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Retour', on: { click: o.onBack } }, [icon('arrow-left')]) : null;
-      const bar = el('header', { class: 'topbar' }, [back, el('span', { class: 'topbar-title' + (back ? '' : ' pad') }, [el('span', { class: 'brand' }, [el('span', { class: 'brand-mark' }, [icon('bolt')]), 'LightPay'])]), el('span', { class: 'topbar-end' }, [LP.ENV === 'sandbox' ? el('span', { class: 'badge', text: 'Test' }) : null, themeButton()])]);
+      const bar = el('header', { class: 'topbar' }, [back, el('span', { class: 'topbar-title' + (back ? '' : ' pad') }, []), el('span', { class: 'topbar-end' }, [LP.ENV === 'sandbox' ? el('span', { class: 'badge', text: 'Test' }) : null, themeButton()])]);
       const fields = [];
       const field = (id, label, type, auto) => {
         const input = el('input', { id: id, type: type, autocomplete: auto, required: true });
@@ -379,6 +380,7 @@ export const CLIENT = (env: string) => `
         : ['Déjà un compte ? ', el('button', { class: 'link', type: 'button', text: 'Se connecter', on: { click: () => { mode = 'in'; render(); } } })]);
       const forgot = mode === 'in' ? el('p', { class: 'small mt' }, [el('button', { class: 'link', type: 'button', text: 'Mot de passe oublié ?', on: { click: () => { mode = 'reset'; render(); } } })]) : null;
       const form = el('form', { class: 'content', novalidate: true }, [
+        el('span', { class: 'auth-mark', 'aria-hidden': 'true' }),
         el('h1', { class: 'title mt', text: title }),
         el('p', { class: 'muted small mt', text: sub }),
         nameF, emailF, passF, forgot, msg,

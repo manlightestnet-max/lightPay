@@ -30,7 +30,7 @@ const PAY_CSS = `
 .state .secure { margin-top: 24px; }
 .phone-ring { position: relative; width: 104px; height: 104px; border-radius: 999px; background: var(--raised); display: flex; align-items: center; justify-content: center; }
 .phone-ring::after { content: ''; position: absolute; inset: 8px; border-radius: 999px; border: 2px solid transparent; border-top-color: var(--accent); animation: spin 1.4s linear infinite; }
-.phone-ring span { width: 56px; height: 56px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; }
+.phone-ring span { width: 56px; height: 56px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); display: flex; align-items: center; justify-content: center; }
 .phone-ring svg { width: 24px; height: 24px; }
 .steps { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 12px; text-align: left; }
 .steps li { display: flex; align-items: center; gap: 12px; font-size: 14px; }

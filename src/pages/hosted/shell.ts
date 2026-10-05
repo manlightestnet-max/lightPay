@@ -1,6 +1,10 @@
 import { CSS } from './design.js';
 import { CLIENT } from './client.js';
 import { iconSvg } from './icons.js';
+import { FAVICON_PNG } from './brand.js';
+
+/** LightPay logo: the green ribbon mark and the wordmark. */
+export const brandMarkup = `<span class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-word">Light<b>Pay</b></span></span>`;
 
 /** Light/dark switch (the page script wires every [data-theme-toggle]). */
 export const themeToggle = () =>
@@ -40,7 +44,7 @@ export const topbar = (o: { title?: string; back?: boolean; brand?: boolean; env
   `<header class="topbar">${
     o.back ? `<button class="icon-btn" type="button" data-back${o.backId ? ` id="${o.backId}"` : ''} aria-label="Retour">${iconSvg('arrow-left')}</button>` : ''
   }<h1 class="topbar-title${o.back ? '' : ' pad'}">${
-    o.brand ? `<span class="brand"><span class="brand-mark">${iconSvg('bolt')}</span>LightPay</span>` : escapeHtml(o.title ?? '')
+    o.brand ? brandMarkup : escapeHtml(o.title ?? '')
   }</h1><span class="topbar-end"><span class="badge" data-env-badge${o.env === 'sandbox' ? '' : ' hidden'}>Test</span>${themeToggle()}${o.end ?? ''}</span></header>`;
 
 /** Full document: nonce'd design system + page css, page body in .app, shared client + page script. */
@@ -51,6 +55,8 @@ export const shell = (o: { title: string; nonce: string; env: string; body: stri
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0c0f0e">
+<link rel="icon" type="image/png" href="${FAVICON_PNG}">
 <title>${escapeHtml(o.title)} · LightPay</title>
 <script nonce="${o.nonce}">try { var t = localStorage.getItem('lightpay.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

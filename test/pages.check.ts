@@ -6,8 +6,9 @@
 import { accountPage, adminPage, connectPage, consolePage, payPage } from '../src/pages/hosted.js';
 
 const NONCE = 'TESTNONCE';
-// Ids created at runtime by the shared sign-in form (mountAuth).
-const RUNTIME_IDS = new Set(['lp-name', 'lp-email', 'lp-pass']);
+// Ids created at runtime: the shared sign-in form (mountAuth), the home top-bar balance,
+// the admin's refusal note.
+const RUNTIME_IDS = new Set(['lp-name', 'lp-email', 'lp-pass', 'topBalance', 'devNote']);
 let failures = 0;
 
 for (const [name, html] of [
