@@ -110,9 +110,11 @@ export async function checkoutPublicRoutes(fastify: FastifyInstance) {
     // Dialog: only for a site the app declared; anywhere else the page refuses to be framed.
     const embedOrigin = valid && q.embed === '1' && typeof q.origin === 'string' ? await embedOriginFor(id, q.origin) : null;
     if (embedOrigin) (request as any).framingAllowed = true;
+    // The session goes in the page: the first screen shows without waiting for another request.
+    const initial = valid ? await publicView(id).catch(() => null) : null;
     return html(
       reply,
-      (nonce) => payPage(nonce, valid ? id : '', env, { embedOrigin }),
+      (nonce) => payPage(nonce, valid ? id : '', env, { embedOrigin, initial }),
       embedOrigin ?? undefined
     );
   });

@@ -32,7 +32,7 @@ export const skeletonRows = (n = 3, tag: 'li' | 'div' = 'li') =>
 
 /** Shimmer version of a payment screen, shown while it loads. */
 export const skeletonScreen = () =>
-  `<div class="sk-screen" aria-busy="true" aria-label="Chargement"><span class="sk sk-hero"></span><span class="sk sk-sub"></span><span class="sk sk-s w-30"></span><div class="sk-pills"><span class="sk sk-pill"></span><span class="sk sk-pill"></span></div><span class="sk sk-field"></span><span class="sk sk-t w-75 sk-line"></span><span class="sk sk-t w-60 sk-line"></span><span class="sk sk-t w-45 sk-line"></span><span class="sk sk-btn"></span></div>`;
+  `<div class="sk-screen" aria-busy="true" aria-label="Chargement"><span class="sk sk-s w-45 sk-center"></span><span class="sk sk-hero"></span><span class="sk sk-s w-60 sk-center"></span><div class="sk-pills"><span class="sk sk-pill"></span><span class="sk sk-pill"></span><span class="sk sk-pill"></span></div><span class="sk sk-field"></span><span class="sk sk-t w-75 sk-line"></span><span class="sk sk-t w-60 sk-line"></span><span class="sk sk-t w-45 sk-line"></span><span class="sk sk-btn"></span></div>`;
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -59,6 +59,7 @@ export const shell = (o: { title: string; nonce: string; env: string; body: stri
 <link rel="icon" type="image/png" href="${FAVICON_PNG}">
 <title>${escapeHtml(o.title)} · LightPay</title>
 <script nonce="${o.nonce}">try { var t = localStorage.getItem('lightpay.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&amp;display=swap">
 <style nonce="${o.nonce}">${CSS}${o.css ?? ''}</style>

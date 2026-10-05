@@ -1,4 +1,4 @@
-import { MARK_PNG } from './brand.js';
+import { AIRTEL_PNG, MARK_PNG, MTN_PNG } from './brand.js';
 
 /**
  * LightPay hosted pages — design system (one stylesheet, served under the page nonce).
@@ -36,7 +36,7 @@ import { MARK_PNG } from './brand.js';
 export const CSS = `
 :root {
   color-scheme: dark;
-  --mark: url("${MARK_PNG}");
+  --mark: url("${MARK_PNG}"); --mtn: url("${MTN_PNG}"); --airtel: url("${AIRTEL_PNG}");
   --bg: #050706; --card: #0c0f0e; --raised: #151917; --line: #1f2422; --line-strong: #333a37;
   --text: #f3f6f4; --muted: #98a19d; --faint: #6c7571;
   --accent: #01e399; --on-accent: #03140d; --accent-soft: rgba(1, 227, 153, .12); --accent-ink: #2df0ad;
@@ -223,9 +223,10 @@ a.tx:active { background: var(--raised); }
 .seg { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .seg-opt { min-height: 46px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; font-weight: 500; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: border-color .15s, background .15s; }
 .seg-opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
-.op-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-.op-dot.mtn { background: #ffcb05; box-shadow: 0 0 0 1px #c9a000; }
-.op-dot.airtel { background: #e40000; }
+.op-logo { width: 22px; height: 22px; flex-shrink: 0; border-radius: 6px; background: center / cover no-repeat; }
+.op-logo.mtn { background-image: var(--mtn); }
+.op-logo.airtel { background-image: var(--airtel); }
+.op-logo.lp { background-image: var(--mark); background-size: 78%; background-color: var(--card); box-shadow: inset 0 0 0 1px var(--line-strong); }
 
 /* ---------- buttons ---------- */
 .btn { width: 100%; min-height: 52px; padding: 0 20px; border: 0; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: filter .15s, opacity .15s, transform .08s; text-decoration: none; }
@@ -344,13 +345,13 @@ a.tx:active { background: var(--raised); }
 .hero .sk-amount { margin-left: auto; margin-right: auto; }
 .hero-split .sk-amount { margin-left: 0; }
 .sk-circle { width: 56px; height: 56px; border-radius: 999px; margin: 0 auto; }
-.sk-hero { width: 55%; height: 40px; margin: 28px auto 8px; }
+.sk-hero { width: 55%; height: 44px; margin: 14px auto 10px; }
 .sk-sub { width: 40%; height: 10px; margin: 0 auto 30px; }
-.sk-pills { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-.sk-pill { height: 44px; border-radius: 999px; }
+.sk-pills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 30px; }
+.sk-pill { height: 74px; border-radius: 16px; }
 .sk-field { height: 48px; margin-top: 14px; }
 .sk-line { margin-top: 12px; }
-.sk-btn { height: 48px; margin-top: 26px; }
+.sk-btn { height: 52px; margin-top: 30px; border-radius: 14px; }
 .sk-card { height: 200px; margin-top: 22px; border-radius: 16px; }
 .sk-center { margin: 12px auto 0; }
 .detail-head .sk-amount { height: 40px; }

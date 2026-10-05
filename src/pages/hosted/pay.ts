@@ -3,30 +3,28 @@ import { iconSvg } from './icons.js';
 
 /** Payment screen: merchant and amount on top, the ways to pay as cards side by side, one summary, one button. */
 const PAY_CSS = `
-.pay-head { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
-.pay-head .row-main { flex: 1; min-width: 0; }
-.pay-total { font-size: 20px; font-weight: 750; letter-spacing: -.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.pay-desc { margin-top: 14px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.pay-hero { text-align: center; padding: 18px 0 6px; }
+.pay-merchant { font-size: 13px; color: var(--muted); }
+.pay-merchant b { font-weight: 600; color: var(--text); }
+.pay-hero .amount-xl { font-size: 42px; margin-top: 8px; }
+.pay-desc { margin: 8px auto 0; max-width: 300px; font-size: 12px; color: var(--muted); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.pay-escrow { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 5px 12px; border-radius: 999px; background: var(--raised); font-size: 11px; color: var(--muted); letter-spacing: .03em; }
+.pay-escrow svg { width: 13px; height: 13px; }
 .quiet { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 13px; color: var(--muted); line-height: 1.45; }
 .quiet svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
 .quiet.warn { color: var(--warn); }
-.methods { margin-top: 20px; }
-.opts { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; }
-.opt { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--card); color: inherit; text-align: left; transition: border-color .15s, background .15s, box-shadow .15s; }
+.methods { margin-top: 26px; }
+.opts { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.opt { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; min-width: 0; height: 74px; padding: 8px 6px; border-radius: 16px; border: 1px solid var(--line-strong); background: transparent; color: inherit; font-size: 12px; font-weight: 500; text-align: center; transition: border-color .15s, background .15s, box-shadow .15s; }
 .opt:hover { border-color: var(--faint); }
 .opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
-.opt b { display: block; font-size: 14px; font-weight: 600; line-height: 1.25; }
-.opt small { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.op-logo { width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; }
-.op-logo.mtn { background: #ffcb05; color: #111111; }
-.op-logo.airtel { background: #e40000; color: #ffffff; }
-.op-logo.lp { background: var(--raised); color: var(--text); border: 1px solid var(--line); }
-.op-logo svg { width: 16px; height: 16px; }
-@media (max-width: 360px) { .opts { grid-auto-flow: row; grid-template-columns: 1fr 1fr; } }
-.fees { border: 0; }
+.opt .op-logo { width: 26px; height: 26px; border-radius: 7px; }
+.opt span:last-child { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .input-prefix input:-webkit-autofill { -webkit-box-shadow: 0 0 0 40px var(--card) inset; -webkit-text-fill-color: var(--text); }
-.secure { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 10px 0 0; font-size: 12px; color: var(--faint); }
-.secure svg { width: 13px; height: 13px; }
+.pay-note { margin-top: 10px; text-align: center; font-size: 11px; color: var(--muted); letter-spacing: .03em; }
+.secure { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 12px 0 0; font-size: 10px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
+.secure b { color: var(--text); font-weight: 600; }
+.secure .brand-mark { width: 14px; height: 14px; }
 .state .secure { margin-top: 24px; }
 .phone-ring { position: relative; width: 104px; height: 104px; border-radius: 999px; background: var(--raised); display: flex; align-items: center; justify-content: center; }
 .phone-ring::after { content: ''; position: absolute; inset: 8px; border-radius: 999px; border: 2px solid transparent; border-top-color: var(--accent); animation: spin 1.4s linear infinite; }
@@ -34,7 +32,7 @@ const PAY_CSS = `
 .phone-ring svg { width: 24px; height: 24px; }
 .steps { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 12px; text-align: left; }
 .steps li { display: flex; align-items: center; gap: 12px; font-size: 14px; }
-.steps li span { width: 24px; height: 24px; flex-shrink: 0; border-radius: 999px; background: var(--raised); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.steps li span { width: 24px; height: 24px; flex-shrink: 0; border-radius: 999px; background: var(--raised); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
 .state .btn-inline { width: auto; min-width: 160px; margin-top: 20px; padding: 0 28px; }
 @media (prefers-reduced-motion: reduce) { .phone-ring::after { animation-duration: 3s; } }
 `;
@@ -47,8 +45,11 @@ const PAY_CSS = `
  * `embedOrigin`: shown in the app's dialog (lightpay.js). Leaving or finishing tells the app
  * (postMessage to that origin only) instead of navigating; the wallet payment (sign-in included)
  * happens right in the dialog.
+ * `initial`: the session's public view, inlined so the first screen needs no extra request.
  */
-export const payPage = (nonce: string, sessionId: string, env: string, mode: { embedOrigin?: string | null } = {}) => {
+export const payPage = (nonce: string, sessionId: string, env: string, mode: { embedOrigin?: string | null; initial?: unknown } = {}) => {
+  // Inlined in a <script>: "<" escaped so the data can never close the tag.
+  const initialJson = JSON.stringify(mode.initial ?? null).replace(/</g, '\\u003c');
   const body = `
 <section class="screen" data-screen="loading">
   ${topbar({ title: 'Paiement', back: true, env })}
@@ -58,31 +59,30 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
 <section class="screen" data-screen="pay" hidden>
   ${topbar({ title: 'Paiement', back: true, env })}
   <div class="content">
-    <div class="pay-head">
-      <span class="avatar" id="merchantAvatar" aria-hidden="true"></span>
-      <span class="row-main"><span class="row-title" id="merchant"></span><span class="row-sub" id="payee"></span></span>
-      <span class="pay-total" id="amount"></span>
+    <div class="pay-hero">
+      <p class="pay-merchant" id="merchant"></p>
+      <div class="amount-xl" id="amount"></div>
+      <p class="pay-desc" id="desc" hidden></p>
+      <span class="pay-escrow" id="escrow" hidden>${iconSvg('lock')}Protégé jusqu’à la livraison</span>
     </div>
-    <div class="pay-desc" id="desc" hidden></div>
-    <p class="quiet" id="escrow" hidden>${iconSvg('shield')}<span>Paiement protégé : le vendeur n’est payé qu’une fois votre commande validée.</span></p>
 
     <div class="methods" id="methodsBox" hidden>
-      <div class="label">Moyen de paiement</div>
-      <div class="opts" role="group" aria-label="Moyen de paiement">
-        <button class="opt" type="button" data-pick="MTN_MOMO_COG" aria-pressed="true"><span class="op-logo mtn" aria-hidden="true">M</span><span><b>MTN MoMo</b><small data-fee="MTN_MOMO_COG"></small></span></button>
-        <button class="opt" type="button" data-pick="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true">A</span><span><b>Airtel Money</b><small data-fee="AIRTEL_COG"></small></span></button>
-        <button class="opt" type="button" data-pick="lightpay_wallet" aria-pressed="false"><span class="op-logo lp" aria-hidden="true">${iconSvg('wallet')}</span><span><b>Wallet LightPay</b><small>Sans frais</small></span></button>
+      <div class="label">Payer avec</div>
+      <div class="opts" role="group" aria-label="Payer avec">
+        <button class="opt" type="button" data-pick="MTN_MOMO_COG" aria-pressed="true"><span class="op-logo mtn" aria-hidden="true"></span><span>MTN MoMo</span></button>
+        <button class="opt" type="button" data-pick="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true"></span><span>Airtel Money</span></button>
+        <button class="opt" type="button" data-pick="lightpay_wallet" aria-pressed="false"><span class="op-logo lp" aria-hidden="true"></span><span>Wallet</span></button>
       </div>
     </div>
 
     <div id="momo" hidden>
-      <div class="field"><label for="msisdn">Numéro de téléphone</label><div class="input-prefix"><span>+242</span><input id="msisdn" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div><p class="hint">Vous validerez le paiement sur ce téléphone avec votre code secret.</p></div>
+      <div class="field"><label for="msisdn">Numéro qui paie</label><div class="input-prefix"><span>+242</span><input id="msisdn" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
       <div class="fees" id="feeBox" hidden></div>
+      <p class="pay-note">Vous validerez avec votre code secret sur le téléphone.</p>
     </div>
     <div id="wallet" hidden>
-      <ul class="list mt">
-        <li><div class="row"><span class="avatar" id="walletAvatar" aria-hidden="true"></span><span class="row-main"><span class="row-title" id="walletWho"></span><span class="row-sub">Wallet LightPay</span></span><button class="link" type="button" id="walletSwitch">Changer</button></div></li>
-        <li><div class="row"><span class="row-main"><span class="row-title">Solde disponible</span></span><span class="row-end" id="walletBalance"></span></div></li>
+      <ul class="group mt-lg">
+        <li><div class="row"><span class="avatar" id="walletAvatar" aria-hidden="true"></span><span class="row-main"><span class="row-title" id="walletWho"></span><span class="row-sub" id="walletBalance"></span></span><button class="link" type="button" id="walletSwitch">Changer</button></div></li>
       </ul>
       <p class="quiet warn" id="walletLow" hidden>${iconSvg('alert')}<span>Solde insuffisant. <a class="link" id="walletTopup" href="/account#/deposit">Déposer sur mon wallet</a> ou payez par mobile money.</span></p>
       <div class="fees" id="walletFees" hidden></div>
@@ -93,7 +93,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   <div class="actions-bar">
     <button class="btn" type="button" id="payMomo" hidden>Payer</button>
     <button class="btn" type="button" id="payWallet" hidden>Payer avec mon wallet</button>
-    <p class="secure">${iconSvg('lock')}Paiement sécurisé par LightPay</p>
+    <p class="secure"><span class="brand-mark" aria-hidden="true"></span>Sécurisé par <b>LightPay</b></p>
   </div>
 </section>
 
@@ -108,7 +108,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       <li><span>2</span>Composez votre code secret</li>
       <li><span>3</span>Cette page se met à jour toute seule</li>
     </ol>
-    <p class="secure">${iconSvg('lock')}Paiement sécurisé par LightPay</p>
+    <p class="secure"><span class="brand-mark" aria-hidden="true"></span>Sécurisé par <b>LightPay</b></p>
   </div>
 </section>
 
@@ -119,7 +119,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     <h2>Paiement échoué</h2>
     <p id="failedText"></p>
     <button class="btn btn-inline" type="button" id="retry">Réessayer</button>
-    <p class="secure">${iconSvg('lock')}Paiement sécurisé par LightPay</p>
+    <p class="secure"><span class="brand-mark" aria-hidden="true"></span>Sécurisé par <b>LightPay</b></p>
   </div>
 </section>
 
@@ -140,6 +140,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
 
   const script = `
   const id = ${JSON.stringify(sessionId)};
+  const INITIAL = ${initialJson};
   const MODE = { embed: ${JSON.stringify(mode.embedOrigin ?? null)} };
   // In the app's dialog: tell the app (its origin only) that the payer is done or left.
   const tell = (type) => { if (MODE.embed) window.parent.postMessage({ source: 'lightpay', type: type, session: id }, MODE.embed); };
@@ -191,8 +192,9 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     const approx = q.estimated ? '≈ ' : '';
     feeRows($('feeBox'), [
       [session.kind === 'DEPOSIT' ? 'Dépôt' : 'Montant', LP.money(q.amount, c)],
-      ['Frais', approx + '+' + LP.money(String(Number(q.total) - Number(q.amount)), c)],
-      ['Total à payer', approx + LP.money(q.total, c), true],
+      ['Frais LightPay', LP.money(q.lightpay_fee, c)],
+      ['Frais opérateur' + (q.estimated ? ' (estimés)' : ''), approx + LP.money(q.operator_fee, c)],
+      ['Total', approx + LP.money(q.total, c), true],
     ]);
     $('feeBox').hidden = false;
     const tooSmall = Number(q.amount) < Number(q.minimum);
@@ -209,7 +211,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       const who = me.user.name || me.user.email || '';
       $('walletAvatar').textContent = initials(who);
       $('walletWho').textContent = who;
-      $('walletBalance').textContent = LP.money(me.wallet.available_balance, session.currency);
+      $('walletBalance').textContent = 'Wallet LightPay · ' + LP.money(me.wallet.available_balance, session.currency) + ' disponibles';
       const low = walletBalance < Number(session.amount);
       $('walletLow').hidden = !low;
       $('walletTopup').href = accountUrl('#/deposit');
@@ -239,10 +241,6 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     // Only the ways this session accepts are offered; each operator card shows its fees.
     $('methodsBox').hidden = false;
     document.querySelectorAll('[data-pick]').forEach((o) => { o.hidden = (o.dataset.pick === 'lightpay_wallet') !== (method === 'lightpay_wallet') && !both; });
-    document.querySelectorAll('[data-fee]').forEach((f) => {
-      const q = session.fees && session.fees[f.dataset.fee];
-      f.textContent = q ? (q.estimated ? '≈ ' : '') + '+' + LP.money(String(Number(q.total) - Number(q.amount)), session.currency) + ' de frais' : '';
-    });
     sync();
     if (method === 'mobile_money') {
       $('wallet').hidden = true; $('payWallet').hidden = true;
@@ -259,10 +257,9 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     const first = !session;
     session = s;
     const c = s.currency;
-    $('merchantAvatar').textContent = initials(s.kind === 'DEPOSIT' ? 'LightPay' : s.merchant);
-    $('merchant').textContent = s.kind === 'DEPOSIT' ? 'Dépôt LightPay' : s.merchant;
-    $('payee').textContent = s.kind === 'DEPOSIT' ? 'Votre wallet' : (s.payee ? 'Vendeur : ' + s.payee : 'Paiement sécurisé');
-    $('amount').textContent = LP.money(s.amount, c);
+    $('merchant').replaceChildren(el('b', { text: s.kind === 'DEPOSIT' ? 'Dépôt LightPay' : s.merchant }), s.kind === 'DEPOSIT' ? ' · votre wallet' : s.payee ? ' · vendeur ' + s.payee : '');
+    const amt = LP.money(s.amount, c); const cut = amt.lastIndexOf(' ');
+    $('amount').replaceChildren(amt.slice(0, cut), el('span', { class: 'cur', text: amt.slice(cut + 1) }));
     const d = s.kind === 'DEPOSIT' ? '' : [s.description, s.reference].filter(Boolean).join(' · ');
     $('desc').textContent = d; $('desc').hidden = !d;
     $('escrow').hidden = !s.escrow;
@@ -382,6 +379,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
 
   tell('ready');
   if (!id) { $('closedTitle').textContent = 'Lien invalide'; $('closedText').textContent = 'Ce lien de paiement est invalide.'; screen('closed'); }
+  else if (INITIAL) render(INITIAL);
   else load();
 `;
 
