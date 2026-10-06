@@ -106,7 +106,7 @@ export const connectPage = (nonce: string, env: string) => {
     const body = res ? await res.json().catch(() => ({})) : {};
     if (!res || !res.ok) { $('invalidText').textContent = body.message || 'Ce lien d’autorisation est invalide ou incomplet.'; screen('invalid'); return; }
     valid = body;
-    if (LP.signedIn()) consent(); else signInThen();
+    if (LP.isRedirecting()) signInThen(); else if (LP.signedIn()) consent(); else signInThen();
   })();
 `;
 

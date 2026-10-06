@@ -998,7 +998,7 @@ export const accountPage = (nonce: string, env: string) => {
       liveStop = LP.live(onLive);
     } catch (e) { if (e.signIn) signIn(); else { nav.start(); say('homeMsg', e.message, 'err'); } }
   }
-  if (LP.signedIn()) boot(); else signIn();
+  if (LP.isRedirecting()) signIn(); else if (LP.signedIn()) boot(); else signIn();
 `;
 
   return shell({ title: 'Mon compte', nonce, env, body, script });

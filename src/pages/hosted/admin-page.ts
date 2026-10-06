@@ -773,7 +773,7 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
       nav.start(); say('homeMsg', e.message, 'err');
     }
   }
-  if (LP.signedIn()) boot(); else signIn();
+  if (LP.isRedirecting()) signIn(); else if (LP.signedIn()) boot(); else signIn();
 `;
 
   return shell({ title: 'Administration', nonce, env, body, script, css: CONSOLE_CSS + ADMIN_CSS, console: true });

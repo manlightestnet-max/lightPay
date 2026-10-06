@@ -46,7 +46,7 @@ for (const [name, html] of [
   const missing = [...used].filter((id) => !ids.has(id) && !RUNTIME_IDS.has(id));
   if (missing.length) problems.push(`ids used but missing: ${missing.join(', ')}`);
 
-  const urls = [...code.matchAll(/https?:\/\/[^'"\s)]+/g)].map((m) => m[0]).filter((u) => !/^https:\/\/((identitytoolkit|securetoken)\.googleapis\.com\/|accounts\.google\.com\/gsi\/client$)/.test(u));
+  const urls = [...code.matchAll(/https?:\/\/[^'"\s)]+/g)].map((m) => m[0]).filter((u) => !/^https:\/\/((identitytoolkit|securetoken)\.googleapis\.com\/|www\.gstatic\.com\/firebasejs\/)/.test(u));
   if (urls.length) problems.push(`external URLs: ${urls.join(', ')}`);
 
   console.log(`${problems.length ? 'FAIL' : 'PASS'}  ${name} (${html.length} bytes, ${ids.size} ids)${problems.length ? '  ' + problems.join(' | ') : ''}`);

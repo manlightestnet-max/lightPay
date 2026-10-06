@@ -82,6 +82,9 @@ server.addContentTypeParser('application/json', { parseAs: 'string' }, (req, bod
     done(err, undefined);
   }
 });
+server.addContentTypeParser(['application/x-www-form-urlencoded', 'text/html', 'text/plain'], { parseAs: 'buffer' }, (req, body, done) => {
+  done(null, body);
+});
 
 // 1. Healthcheck probe (Indispensable pour Render / Cloudflare / Uptime)
 server.get('/health', async () => {
@@ -134,6 +137,8 @@ server.addHook('onRequest', async (request, reply) => {
     url === '/connect' ||
     url === '/v1/me' ||
     url.startsWith('/v1/me/') ||
+    url.startsWith('/__/auth/') ||
+    url.startsWith('/__/firebase/') ||
     request.method === 'OPTIONS'
   ) return;
   return reply.status(404).send({ error: 'Not Found' });
@@ -151,7 +156,7 @@ server.addHook('onRequest', async (request, reply) => {
     return;
   }
   if (url === '/') return reply.redirect('/admin');
-  if (url === '/health' || isAdminPath(url) || request.method === 'OPTIONS') return;
+  if (url === '/health' || isAdminPath(url) || url.startsWith('/__/auth/') || url.startsWith('/__/firebase/') || request.method === 'OPTIONS') return;
   return reply.status(404).send({ error: 'Not Found' });
 });
 
@@ -179,6 +184,9 @@ server.addHook('onRequest', async (request, reply) => {
     url === '/connect' ||
     url === '/v1/me' ||
     url.startsWith('/v1/me/') ||
+    // Firebase Auth redirect helper routes (same origin proxying to firebaseapp.com)
+    url.startsWith('/__/auth/') ||
+    url.startsWith('/__/firebase/') ||
     // Owner's admin console: LightPay sign-in + ADMIN_UIDS, checked in its routes.
     isAdminPath(url)
   ) {
@@ -282,6 +290,45 @@ server.register(sdkDistributionRoutes, { prefix: '/v1/sdk' });
 server.register(merchantRoutes, { prefix: '/v1/merchant' });
 server.register(faucetRoutes);
 server.register(adminConsoleRoutes);
+
+// Relais transparent Firebase Auth (permet signInWithRedirect sur notre propre domaine)
+const FIREBASE_AUTH_DOMAIN = process.env.LIGHTPAY_FIREBASE_AUTH_DOMAIN || 'lightpay-a5f01.firebaseapp.com';
+const proxyFirebaseAuth = async (request: any, reply: any) => {
+  const targetUrl = `https://${FIREBASE_AUTH_DOMAIN}${request.raw.url}`;
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(request.headers)) {
+    const lk = k.toLowerCase();
+    if (lk === 'host') {
+      headers['host'] = FIREBASE_AUTH_DOMAIN;
+    } else if (lk !== 'content-length' && typeof v === 'string') {
+      headers[k] = v;
+    }
+  }
+  const body = ['GET', 'HEAD'].includes(request.method) ? undefined : request.body;
+  try {
+    const res = await fetch(targetUrl, {
+      method: request.method,
+      headers,
+      body: body ? (Buffer.isBuffer(body) ? new Uint8Array(body) : typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+      redirect: 'manual',
+    });
+    reply.status(res.status);
+    for (const [hk, hv] of res.headers.entries()) {
+      const lk = hk.toLowerCase();
+      if (lk !== 'content-encoding' && lk !== 'content-length') {
+        reply.header(hk, hv);
+      }
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    return reply.send(buf);
+  } catch (err: any) {
+    server.log.error({ err, url: request.raw.url }, 'Échec du relais Firebase Auth');
+    return reply.status(502).send('Bad Gateway');
+  }
+};
+
+server.all('/__/auth/*', proxyFirebaseAuth);
+server.all('/__/firebase/*', proxyFirebaseAuth);
 
 async function start() {
   try {

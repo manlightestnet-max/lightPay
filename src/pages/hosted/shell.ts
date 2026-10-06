@@ -14,12 +14,12 @@ export const themeToggle = () =>
 export const hostedCsp = (nonce: string, frameAncestors?: string) =>
   [
     "default-src 'none'",
-    // Google sign-in (Identity Services): its script, button frame, styles and calls.
-    `script-src 'nonce-${nonce}' https://accounts.google.com/gsi/client`,
-    `style-src 'nonce-${nonce}' https://fonts.googleapis.com https://accounts.google.com/gsi/style`,
+    // Firebase Auth: modular SDK from gstatic, tokens & auth relays.
+    `script-src 'nonce-${nonce}' https://www.gstatic.com`,
+    `style-src 'nonce-${nonce}' https://fonts.googleapis.com`,
     "font-src https://fonts.gstatic.com",
-    "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/",
-    "frame-src https://accounts.google.com/gsi/",
+    "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.googleapis.com https://*.firebaseapp.com",
+    "frame-src 'self' https://*.firebaseapp.com",
     "img-src 'self' data: https://*.googleusercontent.com",
     "form-action 'none'",
     `frame-ancestors ${frameAncestors ?? "'none'"}`,

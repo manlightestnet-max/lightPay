@@ -353,8 +353,13 @@ a.tx:active { background: var(--raised); }
 .hint.err { color: var(--danger); }
 .field textarea { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: transparent; padding: 12px 14px; font-size: 15px; resize: vertical; min-height: 96px; }
 .field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.g-btn { display: flex; justify-content: center; min-height: 44px; margin-top: 28px; }
-.g-sk { width: 100%; max-width: 320px; height: 44px; border-radius: 999px; }
+.g-btn { display: flex; justify-content: center; min-height: 48px; margin-top: 28px; }
+.g-sk { width: 100%; max-width: 320px; height: 48px; border-radius: 999px; }
+.btn-google { display: inline-flex; align-items: center; justify-content: center; gap: 12px; width: 100%; max-width: 340px; height: 48px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--raised); color: var(--text); font-size: 14px; font-weight: 500; cursor: pointer; transition: background .15s, border-color .15s, transform .08s; text-decoration: none; padding: 0 20px; font-family: inherit; }
+.btn-google:hover { background: var(--line-strong); border-color: var(--text); }
+.btn-google:active { transform: scale(.99); }
+.btn-google:disabled { opacity: .5; cursor: not-allowed; }
+.btn-google svg { width: 18px; height: 18px; flex-shrink: 0; }
 .sheet .g-btn { margin-top: 18px; }
 .auth-mark { display: block; width: 52px; height: 52px; margin: 18px 0 4px; background: var(--mark) center / contain no-repeat; }
 

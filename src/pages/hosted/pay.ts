@@ -247,8 +247,9 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   $('walletSwitch').addEventListener('click', () => { LP.signOut(); mountAuth(openWallet, { title: 'Payer avec LightPay', onBack: backFromAuth }); });
 
   function openMethod() {
+    if (LP.isRedirecting()) method = 'lightpay_wallet';
     const both = session.kind === 'PAYMENT' && session.methods.indexOf('mobile_money') >= 0 && session.methods.indexOf('lightpay_wallet') >= 0 && payerHasWallet !== false;
-    if (!both) method = session.kind === 'DEPOSIT' || session.methods.indexOf('mobile_money') >= 0 ? 'mobile_money' : 'lightpay_wallet';
+    if (!both && !LP.isRedirecting()) method = session.kind === 'DEPOSIT' || session.methods.indexOf('mobile_money') >= 0 ? 'mobile_money' : 'lightpay_wallet';
     // Only the ways this session accepts are offered; each operator card shows its fees.
     $('methodsBox').hidden = false;
     document.querySelectorAll('[data-pick]').forEach((o) => { o.hidden = (o.dataset.pick === 'lightpay_wallet') !== (method === 'lightpay_wallet') && !both; });
@@ -258,7 +259,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       $('momo').hidden = false; $('payMomo').hidden = false;
       renderFees();
     } else {
-      if (LP.signedIn()) openWallet();
+      if (!LP.isRedirecting() && LP.signedIn()) openWallet();
       else mountAuth(openWallet, { title: 'Payer avec LightPay', subtitle: 'Connectez-vous pour payer avec votre wallet.', onBack: backFromAuth });
     }
   }
