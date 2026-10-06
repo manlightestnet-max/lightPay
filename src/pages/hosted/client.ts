@@ -3,8 +3,6 @@ import { ICON_PATHS } from './icons.js';
 export const FIREBASE_WEB_API_KEY = () => process.env.LIGHTPAY_FIREBASE_WEB_API_KEY || 'AIzaSyAyOdD8qSUfx8wvHhb5F4EJ4zKjavwnpeI';
 export const FIREBASE_PROJECT_ID = () => process.env.LIGHTPAY_FIREBASE_PROJECT_ID || 'lightpay-a5f01';
 export const FIREBASE_AUTH_DOMAIN = () => process.env.LIGHTPAY_FIREBASE_AUTH_DOMAIN || 'lightpay-a5f01.firebaseapp.com';
-/** Google sign-in: client ID for backwards compatibility or direct token flows. */
-export const GOOGLE_CLIENT_ID = () => process.env.LIGHTPAY_GOOGLE_CLIENT_ID || '';
 
 /**
  * Browser script shared by every hosted page (plain JS, no template literals inside so it
@@ -12,8 +10,9 @@ export const GOOGLE_CLIENT_ID = () => process.env.LIGHTPAY_GOOGLE_CLIENT_ID || '
  *
  * LP                  LightPay client
  *   LP.ENV            'production' | 'sandbox'   LP.setEnv(env): switch ledger in place (badges + URL follow)
- *   LP.signedIn() / LP.email() / LP.uid() / LP.googleSignIn(googleIdToken, sameUid?) / LP.signOut()
- *     Sign-in is Google only via Firebase Auth redirect in same tab (no popup).
+ *   LP.signedIn() / LP.email() / LP.uid() / LP.signOut()
+ *   LP.startGoogleSignIn(sameUid?) / LP.isRedirecting() / LP.finishRedirect()
+ *     Sign-in is Google only: Firebase Auth, same-tab redirect (a popup only inside a frame).
  *   LP.api(method, path, body?, idempotencyKey?) -> JSON   throws Error with .signIn (sign in again)
  *                                                           or .reauth (confirm with Google again) or .status
  *   LP.live(onChange) -> stop()   onChange() when the wallet moves (server-sent signal, reconnects)
@@ -125,90 +124,44 @@ export const CLIENT = (env: string) => `
       },
       email: () => (read() || {}).email || '',
       uid: () => { try { const p = JSON.parse(atob(String((read() || {}).idToken).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); return p.user_id || p.sub || null; } catch (e) { return null; } },
+      // Google sign-in, same tab: the page leaves for Google and comes back with ?g=1 (put in the
+      // address before leaving); finishRedirect() then turns Firebase's answer into a LightPay
+      // session. In a frame (an app's payment dialog) Google refuses to show: a popup there.
+      // sameUid: re-confirmation before a sensitive action, another Google account is refused.
       isRedirecting: () => new URLSearchParams(location.search).get('g') === '1',
       startGoogleSignIn: async (sameUid) => {
-        if (sameUid) sessionStorage.setItem('lightpay.sameUid', sameUid);
-        else sessionStorage.removeItem('lightpay.sameUid');
+        try { if (sameUid) sessionStorage.setItem(SAME_UID, sameUid); else sessionStorage.removeItem(SAME_UID); } catch (e) {}
+        const fb = await loadFirebase();
+        if (window.top !== window) {
+          try { return keep(await fb.signInWithPopup(fb.auth, fb.provider), sameUid); }
+          catch (e) { throw readable(e); }
+        }
         const url = new URL(location.href);
         url.searchParams.set('g', '1');
-        history.replaceState(null, '', url.toString());
-        const fb = await loadFirebase();
-        try {
-          await fb.signInWithRedirect(fb.auth, fb.provider);
-        } catch (err) {
-          if (fb.authDomain !== FIREBASE_DOMAIN) {
-            const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
-            const { initializeAuth, inMemoryPersistence, browserPopupRedirectResolver, GoogleAuthProvider, signInWithRedirect } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-            const fbApp = getApps().find((a) => a.name === 'fb_direct') || initializeApp({ apiKey: FIREBASE_KEY, authDomain: FIREBASE_DOMAIN, projectId: FIREBASE_PROJECT }, 'fb_direct');
-            let fbAuth;
-            try {
-              fbAuth = initializeAuth(fbApp, { persistence: inMemoryPersistence, popupRedirectResolver: browserPopupRedirectResolver });
-            } catch (e) {
-              const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-              fbAuth = getAuth(fbApp);
-            }
-            const p = new GoogleAuthProvider();
-            p.setCustomParameters({ prompt: 'select_account' });
-            await signInWithRedirect(fbAuth, p);
-            return;
-          }
-          throw err;
+        history.replaceState(history.state, '', url.toString());
+        try { await fb.signInWithRedirect(fb.auth, fb.provider); }
+        catch (e) {
+          url.searchParams.delete('g');
+          history.replaceState(history.state, '', url.toString());
+          throw readable(e);
         }
       },
       finishRedirect: async () => {
         if (!new URLSearchParams(location.search).get('g')) return null;
         const url = new URL(location.href);
         url.searchParams.delete('g');
-        history.replaceState(null, '', url.toString());
+        history.replaceState(history.state, '', url.toString());
+        let sameUid = null;
+        try { sameUid = sessionStorage.getItem(SAME_UID); sessionStorage.removeItem(SAME_UID); } catch (e) {}
         const fb = await loadFirebase();
-        let res = null;
-        try {
-          res = await fb.getRedirectResult(fb.auth);
-        } catch (err) { /* fallback checked below */ }
-        if (!res) {
-          try {
-            const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
-            const { initializeAuth, inMemoryPersistence, browserPopupRedirectResolver, getRedirectResult } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-            const fbApp = getApps().find((a) => a.name === 'fb_direct') || initializeApp({ apiKey: FIREBASE_KEY, authDomain: FIREBASE_DOMAIN, projectId: FIREBASE_PROJECT }, 'fb_direct');
-            let fbAuth;
-            try {
-              fbAuth = initializeAuth(fbApp, { persistence: inMemoryPersistence, popupRedirectResolver: browserPopupRedirectResolver });
-            } catch (e) {
-              const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-              fbAuth = getAuth(fbApp);
-            }
-            res = await getRedirectResult(fbAuth).catch(() => null);
-          } catch (e) {}
-        }
-        if (!res || !res.user) return null;
-        const idToken = await res.user.getIdToken();
-        const tokenRes = await res.user.getIdTokenResult().catch(() => null);
-        const sameUid = sessionStorage.getItem('lightpay.sameUid');
-        sessionStorage.removeItem('lightpay.sameUid');
-        if (sameUid && res.user.uid !== sameUid) {
-          throw new Error('Utilisez le compte Google déjà connecté (' + ((read() || {}).email || '') + ').');
-        }
-        const exp = tokenRes && tokenRes.expirationTime ? new Date(tokenRes.expirationTime).getTime() - 60000 : Date.now() + 3500 * 1000;
-        const s = {
-          idToken: idToken,
-          refreshToken: res.user.refreshToken,
-          expiresAt: exp,
-          email: res.user.email || '',
-        };
-        write(s);
-        fb.signOut(fb.auth).catch(() => {});
-        return s;
-      },
-      // Google's ID token -> a LightPay session (first time: the account is created). An account
-      // made earlier with the same e-mail keeps its uid, so its wallet. sameUid: re-confirmation,
-      // another Google account is refused (nothing is saved).
-      googleSignIn: async (googleIdToken, sameUid) => {
-        const d = await auth('accounts:signInWithIdp', { postBody: 'id_token=' + encodeURIComponent(googleIdToken) + '&providerId=google.com', requestUri: location.origin, returnIdpCredential: true });
-        if (!d.idToken || d.needConfirmation) throw new Error('Un compte LightPay existe déjà avec cet e-mail : écrivez-nous pour le relier à Google.');
-        if (sameUid && d.localId !== sameUid) throw new Error('Utilisez le compte Google déjà connecté (' + ((read() || {}).email || '') + ').');
-        save(d);
+        let result = null;
+        try { result = await fb.getRedirectResult(fb.auth); }
+        catch (e) { throw readable(e); }
+        return result ? keep(result, sameUid) : null;
       },
       signOut: () => write(null),
+      // Used by the sign-in code below only.
+      _store: (session) => write(session),
       api: api,
       // Live signal (GET /v1/me/stream): onChange() runs shortly after the wallet moves, and once
       // after each reconnection (to catch up). Reconnects on its own; returns a stop function.
@@ -471,112 +424,128 @@ export const CLIENT = (env: string) => `
     return api;
   }
 
-  // ------------------------------------------------------------------ Google sign-in (Firebase Auth redirect)
-  let fbAuthModule = null;
-  async function loadFirebase() {
-    if (fbAuthModule) return fbAuthModule;
-    const { initializeApp, getApps, getApp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
-    const {
-      initializeAuth,
-      inMemoryPersistence,
-      browserPopupRedirectResolver,
-      GoogleAuthProvider,
-      signInWithRedirect,
-      getRedirectResult,
-      signOut,
-    } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-    const authDomain = location.protocol === 'https:' ? location.host : FIREBASE_DOMAIN;
-    const app = getApps().length ? getApp() : initializeApp({
-      apiKey: FIREBASE_KEY,
-      authDomain: authDomain,
-      projectId: FIREBASE_PROJECT,
-    });
-    let auth;
-    try {
-      auth = initializeAuth(app, {
-        persistence: inMemoryPersistence,
-        popupRedirectResolver: browserPopupRedirectResolver,
-      });
-    } catch (e) {
-      const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-      auth = getAuth(app);
+  // ------------------------------------------------------------------ Google sign-in (Firebase Auth)
+  // Firebase's SDK only signs in; the session it gives is copied into LightPay's own storage and
+  // the SDK forgets it (in-memory persistence, signed out right after). On LightPay's domains the
+  // auth domain is the page's own host (/__/auth/* is relayed to Firebase): no third-party storage.
+  const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
+  const SAME_UID = 'lightpay.sameUid';
+  let fbLoading = null;
+  function loadFirebase() {
+    if (!fbLoading) {
+      fbLoading = (async () => {
+        const appM = await import(SDK + 'firebase-app.js');
+        const authM = await import(SDK + 'firebase-auth.js');
+        const app = appM.getApps().length ? appM.getApp() : appM.initializeApp({
+          apiKey: FIREBASE_KEY,
+          authDomain: location.protocol === 'https:' ? location.host : FIREBASE_DOMAIN,
+          projectId: FIREBASE_PROJECT,
+        });
+        let auth;
+        try { auth = authM.initializeAuth(app, { persistence: authM.inMemoryPersistence, popupRedirectResolver: authM.browserPopupRedirectResolver }); }
+        catch (e) { auth = authM.getAuth(app); }
+        const provider = new authM.GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: 'select_account' });
+        return { auth: auth, provider: provider, signInWithRedirect: authM.signInWithRedirect, signInWithPopup: authM.signInWithPopup, getRedirectResult: authM.getRedirectResult, signOut: authM.signOut };
+      })().catch((e) => { fbLoading = null; throw new Error('Google ne répond pas. Vérifiez votre connexion et réessayez.'); });
     }
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
-    fbAuthModule = { auth, provider, signInWithRedirect, getRedirectResult, signOut, authDomain };
-    return fbAuthModule;
+    return fbLoading;
+  }
+  // Firebase's error codes, in words.
+  function readable(e) {
+    const code = (e && e.code) || '';
+    const text = {
+      'auth/popup-closed-by-user': 'Connexion annulée.',
+      'auth/cancelled-popup-request': 'Connexion annulée.',
+      'auth/popup-blocked': 'Le navigateur a bloqué la fenêtre Google. Autorisez-la, puis réessayez.',
+      'auth/network-request-failed': 'Connexion impossible. Vérifiez votre réseau et réessayez.',
+      'auth/unauthorized-domain': 'Ce site n’est pas encore autorisé pour la connexion Google.',
+      'auth/operation-not-allowed': 'La connexion Google n’est pas activée.',
+      'auth/account-exists-with-different-credential': 'Un compte LightPay existe déjà avec cet e-mail : écrivez-nous pour le relier à Google.',
+      'auth/user-disabled': 'Ce compte est désactivé.',
+      'auth/too-many-requests': 'Trop de tentatives, réessayez dans quelques minutes.',
+    }[code];
+    return new Error(text || (e && e.message && !code ? e.message : 'Connexion Google impossible' + (code ? ' (' + code.replace('auth/', '') + ')' : '') + '. Réessayez.'));
+  }
+  // Firebase's signed-in user -> LightPay's session (then the SDK forgets it).
+  async function keep(result, sameUid) {
+    const fb = await loadFirebase();
+    const user = result && result.user;
+    if (!user) return null;
+    if (sameUid && user.uid !== sameUid) {
+      fb.signOut(fb.auth).catch(() => {});
+      throw new Error('Utilisez le compte Google déjà connecté (' + LP.email() + ').');
+    }
+    const token = await user.getIdTokenResult();
+    LP._store({ idToken: token.token, refreshToken: user.refreshToken, expiresAt: new Date(token.expirationTime).getTime() - 60000, email: user.email || '' });
+    fb.signOut(fb.auth).catch(() => {});
+    return true;
   }
 
+  // Google's sign-in button (Google's colours, label in French).
+  const G_LOGO = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z"/><path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.62H1.29a11.86 11.86 0 0 0 0 10.76l3.98-3.09z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09C6.22 6.86 8.87 4.75 12 4.75z"/></svg>';
   function googleButton(host, onClick, labelText) {
-    const btn = el('button', {
-      class: 'btn-google',
-      type: 'button',
-      on: { click: onClick },
-    }, [
-      el('svg', { class: 'auth-g', viewBox: '0 0 24 24', width: '20', height: '20', 'aria-hidden': 'true' }, [
-        el('path', { fill: '#4285F4', d: 'M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z' }),
-        el('path', { fill: '#34A853', d: 'M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z' }),
-        el('path', { fill: '#FBBC05', d: 'M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.62H1.29a11.86 11.86 0 0 0 0 10.76l3.98-3.09z' }),
-        el('path', { fill: '#EA4335', d: 'M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09C6.22 6.86 8.87 4.75 12 4.75z' }),
-      ]),
-      el('span', { text: labelText || 'Continuer avec Google' }),
-    ]);
+    const btn = el('button', { class: 'btn-google', type: 'button', on: { click: onClick } });
+    const logo = el('span', { class: 'g-logo' });
+    logo.innerHTML = G_LOGO; // static markup above, nothing from outside
+    btn.append(logo, el('span', { class: 'g-label', text: labelText || 'Continuer avec Google' }));
     host.replaceChildren(btn);
     return btn;
   }
+  // The button while Google opens or answers: same place, shimmering, no double tap.
+  const busyButton = (btn, on) => { btn.disabled = on; btn.classList.toggle('busy', on); btn.setAttribute('aria-busy', on ? 'true' : 'false'); };
 
-  // Sign-in screen (Google only, redirect, no popup), rendered in <section id="auth" class="screen">.
+  // Sign-in screen (Google only), rendered in <section id="auth" class="screen">.
   function mountAuth(onDone, options) {
     const o = options || {};
     const box = $('auth');
     const back = o.onBack ? el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Retour', on: { click: o.onBack } }, [icon('arrow-left')]) : null;
     const bar = el('header', { class: 'topbar' }, [back, el('span', { class: 'topbar-title' + (back ? '' : ' pad') }, []), el('span', { class: 'topbar-end' }, [LP.ENV === 'sandbox' ? el('span', { class: 'badge', text: 'Test' }) : null, themeButton()])]);
-    const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
+    const msg = el('div', { class: 'msg auth-msg', role: 'status', 'aria-live': 'polite' });
     const gbtn = el('div', { class: 'g-btn' });
     const form = el('div', { class: 'content auth-google' }, [
-      el('span', { class: 'auth-mark', 'aria-hidden': 'true' }),
-      el('h1', { class: 'title mt', text: o.title || 'Connexion à LightPay' }),
-      el('p', { class: 'muted small mt', text: o.subtitle || 'Un seul compte pour payer, recevoir et envoyer de l’argent.' }),
-      gbtn,
-      msg,
-      el('p', { class: 'small muted mt-lg', text: o.noSignUp ? 'Avec le compte Google de l’administrateur.' : 'Avec votre compte Google. Première connexion : votre compte LightPay est créé.' }),
+      el('div', { class: 'auth-card' }, [
+        el('span', { class: 'auth-mark', 'aria-hidden': 'true' }),
+        el('h1', { class: 'auth-title', text: o.title || 'Bienvenue sur LightPay' }),
+        el('p', { class: 'auth-sub', text: o.subtitle || 'Payez, recevez et envoyez de l’argent avec un seul compte.' }),
+        gbtn,
+        msg,
+      ]),
+      el('p', { class: 'auth-foot', text: o.noSignUp ? 'Réservé aux administrateurs LightPay.' : 'Première connexion : votre compte LightPay est créé avec votre compte Google. Nous ne voyons jamais votre mot de passe Google.' }),
     ]);
     if (o.aside) box.replaceChildren(o.aside, el('div', { class: 'auth-main' }, [bar, form]));
     else if (document.documentElement.classList.contains('console-page')) box.replaceChildren(el('div', { class: 'auth-main' }, [bar, form]));
     else box.replaceChildren(bar, form);
     showOnly(box);
 
-    let btn = null;
-    btn = googleButton(gbtn, async function () {
-      btn.disabled = true;
-      say(msg, 'Ouverture de Google…');
+    const btn = googleButton(gbtn, async function () {
+      if (btn.disabled) return;
+      busyButton(btn, true);
+      say(msg, '');
       try {
-        await LP.startGoogleSignIn();
+        if (await LP.startGoogleSignIn()) { box.hidden = true; onDone(); }   // popup (in a frame): done here
       } catch (err) {
-        btn.disabled = false;
-        say(msg, err.message || 'Impossible d’ouvrir Google.', 'err');
+        busyButton(btn, false);
+        say(msg, err.message, 'err');
       }
-    }, 'Continuer avec Google');
+    });
 
+    // Back from Google: finish here, the button shimmering meanwhile.
     if (LP.isRedirecting()) {
-      btn.disabled = true;
-      say(msg, 'Connexion en cours…');
-      LP.finishRedirect().then(function (res) {
-        if (res) {
-          box.hidden = true;
-          onDone();
-        } else {
-          btn.disabled = false;
-          say(msg, '');
-        }
+      busyButton(btn, true);
+      LP.finishRedirect().then(function (ok) {
+        if (ok) { box.hidden = true; onDone(); return; }
+        busyButton(btn, false);
       }).catch(function (err) {
-        btn.disabled = false;
-        say(msg, err.message || 'Connexion refusée. Réessayez.', 'err');
+        busyButton(btn, false);
+        say(msg, err.message, 'err');
       });
     }
   }
 
-  // Before a sensitive action (recent sign-in required): the same Google account again, in a bottom sheet.
+  // Before a sensitive action (recent sign-in required): the same Google account again, in a
+  // bottom sheet. With the same-tab redirect the page comes back signed in again; the action is
+  // then done once more by the person.
   function confirmIdentity() {
     return new Promise(function (resolve) {
       const uid = LP.uid();
@@ -593,16 +562,12 @@ export const CLIENT = (env: string) => `
       };
       const onKey = (e) => { if (e.key === 'Escape') finish(false); };
       const btn = googleButton(gbtn, async function () {
-        btn.disabled = true;
-        say(msg, 'Ouverture de Google…');
-        try {
-          await LP.startGoogleSignIn(uid);
-        } catch (err) {
-          btn.disabled = false;
-          say(msg, err.message || 'Impossible d’ouvrir Google.', 'err');
-        }
+        if (btn.disabled) return;
+        busyButton(btn, true);
+        say(msg, '');
+        try { if (await LP.startGoogleSignIn(uid)) finish(true); }
+        catch (err) { busyButton(btn, false); say(msg, err.message, 'err'); }
       }, 'Confirmer avec Google');
-
       const sheet = el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Confirmez votre identité' }, [
         el('p', { class: 'eyebrow', text: 'Confirmez votre identité' }),
         el('p', { class: 'small muted mt center', text: 'Pour votre sécurité, reconnectez-vous avec votre compte Google (' + LP.email() + ').' }),

@@ -15,7 +15,8 @@ export const hostedCsp = (nonce: string, frameAncestors?: string) =>
   [
     "default-src 'none'",
     // Firebase Auth: modular SDK from gstatic, tokens & auth relays.
-    `script-src 'nonce-${nonce}' https://www.gstatic.com`,
+    // Firebase Auth: its SDK (gstatic) and, for the redirect, Google's API loader (apis.google.com).
+    `script-src 'nonce-${nonce}' https://www.gstatic.com https://apis.google.com`,
     `style-src 'nonce-${nonce}' https://fonts.googleapis.com`,
     "font-src https://fonts.gstatic.com",
     "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.googleapis.com https://*.firebaseapp.com",

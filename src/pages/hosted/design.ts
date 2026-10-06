@@ -353,14 +353,27 @@ a.tx:active { background: var(--raised); }
 .hint.err { color: var(--danger); }
 .field textarea { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: transparent; padding: 12px 14px; font-size: 15px; resize: vertical; min-height: 96px; }
 .field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.g-btn { display: flex; justify-content: center; min-height: 48px; margin-top: 28px; }
-.g-sk { width: 100%; max-width: 320px; height: 48px; border-radius: 999px; }
-.btn-google { display: inline-flex; align-items: center; justify-content: center; gap: 12px; width: 100%; max-width: 340px; height: 48px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--raised); color: var(--text); font-size: 14px; font-weight: 500; cursor: pointer; transition: background .15s, border-color .15s, transform .08s; text-decoration: none; padding: 0 20px; font-family: inherit; }
-.btn-google:hover { background: var(--line-strong); border-color: var(--text); }
-.btn-google:active { transform: scale(.99); }
-.btn-google:disabled { opacity: .5; cursor: not-allowed; }
-.btn-google svg { width: 18px; height: 18px; flex-shrink: 0; }
-.sheet .g-btn { margin-top: 18px; }
+/* ---------- sign-in (Google) ---------- */
+.auth-google { display: flex; flex-direction: column; justify-content: center; min-height: 100%; padding-top: 12px; padding-bottom: 28px; }
+.auth-card { width: 100%; max-width: 360px; margin: auto auto 0; text-align: center; animation: enter .3s var(--ease); }
+.auth-card .auth-mark { width: 64px; height: 64px; margin: 0 auto 22px; }
+.auth-title { font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 1.2; }
+.auth-sub { margin-top: 10px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+.auth-msg { margin-top: 14px; text-align: center; }
+.auth-foot { max-width: 320px; margin: auto auto 0; padding-top: 28px; font-size: 11.5px; line-height: 1.55; color: var(--faint); text-align: center; }
+.g-btn { display: flex; justify-content: center; margin-top: 32px; }
+.sheet .g-btn { margin-top: 20px; }
+/* Google's button: white with its colours in day, dark with a hairline at night (brand rules). */
+.btn-google { position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 12px; width: 100%; height: 52px; padding: 0 20px; border-radius: 999px; border: 1px solid #dadce0; background: #ffffff; color: #1f1f1f; font: 500 15px/1 'Poppins', system-ui, sans-serif; letter-spacing: .01em; cursor: pointer; transition: background .15s, box-shadow .15s, transform .08s; }
+.btn-google:hover { background: #f8f9fa; box-shadow: 0 1px 3px rgba(60,64,67,.18); }
+.btn-google:active { transform: scale(.985); }
+.btn-google .g-logo { display: inline-flex; width: 20px; height: 20px; flex-shrink: 0; }
+.btn-google .g-logo svg { width: 20px; height: 20px; }
+:root:not([data-theme="light"]) .btn-google { background: #131314; color: #e3e3e3; border-color: #8e918f; }
+:root:not([data-theme="light"]) .btn-google:hover { background: #1c1c1e; box-shadow: none; }
+.btn-google:disabled { cursor: default; }
+.btn-google.busy .g-label, .btn-google.busy .g-logo { opacity: .35; }
+.btn-google.busy::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 20%, rgba(127,127,127,.22) 50%, transparent 80%); background-size: 250% 100%; animation: shimmer 1.1s linear infinite; }
 .auth-mark { display: block; width: 52px; height: 52px; margin: 18px 0 4px; background: var(--mark) center / contain no-repeat; }
 
 /* ---------- shimmer placeholders (while a screen loads) ---------- */
