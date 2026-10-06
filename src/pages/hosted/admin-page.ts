@@ -27,6 +27,46 @@ const ADMIN_CSS = `
 .share { white-space: pre-wrap; font-size: 14px; line-height: 1.6; padding: 14px 16px; border-radius: 12px; background: var(--raised); }
 .search { width: 100%; max-width: 320px; height: 36px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--card); padding: 0 12px; font-size: 14px; }
 .search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* fees: provider choice, one-click edit rows, calculator */
+.fee-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.fee-top-label { font-size: 10px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.fee-top-hint { font-size: 13px; color: var(--muted); }
+.fee-top-hint b { color: var(--text); font-weight: 600; }
+.fee-prov { display: inline-flex; gap: 4px; padding: 4px; border-radius: 14px; background: var(--raised); }
+.fee-prov button { position: relative; height: 36px; padding: 0 16px; border: 0; border-radius: 10px; background: none; color: var(--muted); font-size: 13px; font-weight: 600; transition: background .15s, color .15s; }
+.fee-prov button[aria-pressed="true"] { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 0 0 1px var(--line); }
+.fee-prov button .on-dot { display: inline-block; width: 6px; height: 6px; margin-left: 7px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+.fee-list { list-style: none; margin: 0; padding: 0; }
+.fee-item { display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.fee-item:last-child { border-bottom: 0; }
+.fee-item .fee-main { flex: 1; min-width: 0; }
+.fee-item .fee-label { display: block; font-size: 14px; }
+.fee-item .fee-help { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
+.fee-val { flex-shrink: 0; min-width: 96px; height: 40px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; background: var(--raised); color: var(--text); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; cursor: pointer; transition: border-color .15s, background .15s; }
+.fee-val:hover { border-color: var(--line-strong); }
+.fee-edit { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.fee-edit input { width: 96px; height: 40px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--card); color: var(--text); font: inherit; font-size: 15px; font-weight: 600; text-align: right; }
+.fee-edit input:focus { outline: none; }
+.fee-edit .unit { font-size: 12px; color: var(--muted); width: 30px; }
+.fee-edit button { height: 40px; padding: 0 12px; border-radius: 10px; border: 0; font-size: 13px; font-weight: 600; }
+.fee-edit .ok { background: var(--accent); color: var(--on-accent); }
+.fee-edit .no { background: var(--raised); color: var(--text); }
+.fee-item.saved .fee-val { border-color: var(--accent); }
+.fee-item { flex-wrap: wrap; }
+@media (max-width: 560px) { .fee-edit { width: 100%; justify-content: flex-end; } .fee-edit input { flex: 1; } }
+.fee-item .fee-err { display: block; font-size: 12px; color: var(--danger); margin-top: 2px; }
+.calc-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.calc-amount { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line-strong); }
+.calc-amount:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.calc-amount input { width: 120px; border: 0; background: none; color: var(--text); font: inherit; font-size: 17px; font-weight: 600; text-align: right; }
+.calc-amount input:focus { outline: none; }
+.calc-amount span { font-size: 12px; color: var(--muted); }
+.calc-rows { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.calc-cell { padding: 12px 14px; border-radius: 12px; background: var(--raised); }
+.calc-cell span { display: block; font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.calc-cell b { display: block; margin-top: 4px; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.calc-cell.main { background: var(--accent-soft); }
+.calc-cell.main b { color: var(--accent-ink); }
 .field select { width: 100%; height: 46px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--card); color: var(--text); padding: 0 12px; font: inherit; font-size: 15px; }
 .field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
@@ -58,9 +98,6 @@ const page = (screen: string, title: string, inner: string, actions = '') => `
 </div></section>`;
 const panel = (title: string, body: string, opts: { id?: string; actions?: string; flush?: boolean; foot?: string } = {}) =>
   `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2>${opts.actions ?? ''}</div><div class="${opts.flush ? 'panel-flush' : 'panel-body'}"${opts.id ? ` id="${opts.id}"` : ''}>${body}</div>${opts.foot ? `<div class="panel-foot">${opts.foot}</div>` : ''}</section>`;
-/** One fee setting: amounts in FCFA, rates typed in % (stored in basis points). */
-const feeField = (key: string, label: string, unit: 'fcfa' | 'pct', hint = '') =>
-  `<div class="field"><label for="fee_${key}">${label} (${unit === 'pct' ? '%' : 'FCFA'})</label><input id="fee_${key}" data-fee="${key}" data-unit="${unit}" inputmode="decimal" autocomplete="off">${hint ? `<p class="hint">${hint}</p>` : ''}</div>`;
 const stat = (id: string, label: string, hintId: string, accent = false) =>
   `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value${accent ? ' accent' : ''}" id="${id}">—</div><div class="stat-hint" id="${hintId}"></div></div>`;
 
@@ -212,29 +249,30 @@ ${page('providers', 'Fournisseurs mobile money', `
 `)}
 
 ${page('fees', 'Frais et minimums', `
-  <form id="feesForm" novalidate>
-  <div class="grid-2">
-    ${panel('Dépôts et paiements mobile money', `
-      ${feeField('deposit_min', 'Montant minimum', 'fcfa', 'Plus petit dépôt ou plus petit paiement accepté.')}
-      ${feeField('deposit_lightpay_fee_min', 'Frais LightPay minimum', 'fcfa')}
-      ${feeField('deposit_lightpay_fee_bps', 'Frais LightPay', 'pct', 'Le plus grand des deux s’applique.')}
-      ${feeField('deposit_operator_fee_bps', 'SasPay : frais opérateur estimés', 'pct', 'Affichés avant le paiement. Le montant exact vient de SasPay.')}
-      <div class="rows mt" id="feesDepEx"></div>`)}
-    ${panel('Retraits', `
-      ${feeField('withdrawal_min', 'Montant minimum', 'fcfa', 'Plus petit retrait accepté.')}
-      ${feeField('withdrawal_lightpay_fee_min', 'Frais LightPay minimum', 'fcfa')}
-      ${feeField('withdrawal_lightpay_fee_bps', 'Frais LightPay', 'pct', 'Le plus grand des deux s’applique.')}
-      ${feeField('withdrawal_operator_fee_min', 'SasPay : frais opérateur minimum', 'fcfa')}
-      ${feeField('withdrawal_operator_fee_bps', 'SasPay : frais opérateur', 'pct', 'Ce que SasPay prend sur chaque envoi.')}
-      <div class="rows mt" id="feesWdEx"></div>`)}
-    ${panel('pawaPay', `
-      ${feeField('pawapay_deposit_fee_bps', 'Frais opérateur sur dépôts et paiements', 'pct', 'Demandés au payeur en plus : ils couvrent la commission que pawaPay prend sur notre solde pawaPay.')}
-      ${feeField('pawapay_payout_fee_bps', 'Frais opérateur sur retraits', 'pct', 'Débités du wallet avec le retrait, pour couvrir la commission pawaPay.')}`)}
+  <div class="fee-top">
+    <div>
+      <p class="fee-top-label">Fournisseur</p>
+      <div class="fee-prov" role="group" aria-label="Fournisseur" id="feeProv">
+        <button type="button" data-prov="pawapay" aria-pressed="true">pawaPay</button>
+        <button type="button" data-prov="saspay" aria-pressed="false">SasPay</button>
+      </div>
+    </div>
+    <p class="fee-top-hint" id="feeActive"></p>
   </div>
-  <div class="msg" id="feesSaveMsg" role="status" aria-live="polite"></div>
-  <button class="btn mt" type="submit" id="feesGo">${iconSvg('check')}Enregistrer</button>
-  <p class="hint">Appliqué tout de suite, à cet environnement seulement. Chaque changement est inscrit au journal admin.</p>
-  </form>
+  <div class="grid-2">
+    ${panel('Dépôts et paiements', '<ul class="fee-list" id="feeDep"></ul>')}
+    ${panel('Retraits', '<ul class="fee-list" id="feeWd"></ul>')}
+  </div>
+  ${panel('Calculateur', `
+    <div class="calc-top">
+      <div class="fee-prov" role="group" aria-label="Opération" id="calcKind">
+        <button type="button" data-kind="deposit" aria-pressed="true">Dépôt</button>
+        <button type="button" data-kind="withdrawal" aria-pressed="false">Retrait</button>
+      </div>
+      <label class="calc-amount"><input id="calcAmount" inputmode="numeric" autocomplete="off" value="1000" aria-label="Montant"><span>FCFA</span></label>
+    </div>
+    <div class="calc-rows" id="calcRows"></div>`)}
+  <p class="hint">Cliquez une valeur pour la modifier : appliquée tout de suite, à cet environnement seulement, et inscrite au journal admin.</p>
 `)}
 
 ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration', '<div id="auditTable"></div>', { flush: true }))}
@@ -663,53 +701,127 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   });
 
   // ---------------------------------------------------------------- fees and minimums
-  const feeInputs = () => Array.prototype.slice.call(document.querySelectorAll('[data-fee]'));
+  // Read as values; a click on one turns it into a field (Enter saves, Échap cancels). Operator
+  // fees are per provider: the one serving this environment is preselected. The calculator uses
+  // the same formulas as the server (fees.ts).
+  const FEE_KEYS = {
+    deposit: [
+      ['deposit_min', 'Montant minimum', 'Plus petit dépôt ou paiement accepté', 'fcfa'],
+      ['deposit_lightpay_fee_bps', 'Frais LightPay', 'Votre commission, ajoutée au montant', 'pct'],
+      ['deposit_lightpay_fee_min', 'Frais LightPay minimum', 'Le plus grand des deux s’applique', 'fcfa'],
+    ],
+    withdrawal: [
+      ['withdrawal_min', 'Montant minimum', 'Plus petit retrait accepté', 'fcfa'],
+      ['withdrawal_lightpay_fee_bps', 'Frais LightPay', 'Votre commission, débitée avec le retrait', 'pct'],
+      ['withdrawal_lightpay_fee_min', 'Frais LightPay minimum', 'Le plus grand des deux s’applique', 'fcfa'],
+    ],
+  };
+  const OPERATOR_KEYS = {
+    pawapay: {
+      deposit: [['pawapay_deposit_fee_bps', 'Frais opérateur pawaPay', 'Demandés au payeur : couvrent la commission pawaPay', 'pct']],
+      withdrawal: [['pawapay_payout_fee_bps', 'Frais opérateur pawaPay', 'Débités du wallet : couvrent la commission pawaPay', 'pct']],
+    },
+    saspay: {
+      deposit: [['deposit_operator_fee_bps', 'Frais opérateur SasPay (estimés)', 'Affichés avant le paiement, SasPay donne le montant exact', 'pct']],
+      withdrawal: [
+        ['withdrawal_operator_fee_bps', 'Frais opérateur SasPay', 'Ce que SasPay prend sur chaque envoi', 'pct'],
+        ['withdrawal_operator_fee_min', 'Frais opérateur SasPay minimum', 'Le plus grand des deux s’applique', 'fcfa'],
+      ],
+    },
+  };
+  let feeSet = null, feeProv = 'pawapay', calcKind = 'deposit', feeActive = null;
   const pctText = (bps) => String(bps / 100).replace('.', ',');
-  function feeValue(input) {
-    const raw = input.value.trim().replace(/\\s/g, '').replace(',', '.');
-    if (!raw || !/^\\d+(\\.\\d+)?$/.test(raw)) return NaN;
-    const n = Number(raw);
-    if (input.dataset.unit === 'pct') { const bps = Math.round(n * 100); return Math.abs(bps - n * 100) < 1e-6 ? bps : NaN; }
-    return Number.isInteger(n) ? n : NaN;
+  const shown = (v, unit) => (unit === 'pct' ? pctText(v) + ' %' : money(v));
+  function parseFee(raw, unit) {
+    const t = String(raw).trim().replace(/\\s/g, '').replace(',', '.').replace(/%|fcfa/gi, '');
+    if (!/^\\d+(\\.\\d+)?$/.test(t)) return NaN;
+    const n = Number(t);
+    if (unit === 'pct') { const bps = Math.round(n * 100); return Math.abs(bps - n * 100) < 1e-6 && bps <= 5000 ? bps : NaN; }
+    return Number.isInteger(n) && n <= 1000000 ? n : NaN;
   }
-  function readFees() {
-    const out = {}; let bad = null;
-    feeInputs().forEach((i) => { const v = feeValue(i); if (isNaN(v) && !bad) bad = i; out[i.dataset.fee] = v; });
-    return { settings: out, bad: bad };
+  function feeItem(def) {
+    const key = def[0], unit = def[3];
+    const li = el('li', { class: 'fee-item' });
+    const view = () => {
+      const btn = el('button', { class: 'fee-val', type: 'button', text: shown(feeSet[key], unit), 'aria-label': def[1] + ' : ' + shown(feeSet[key], unit) + '. Modifier' });
+      btn.addEventListener('click', edit);
+      li.replaceChildren(el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: def[1] }), el('span', { class: 'fee-help', text: def[2] })]), btn);
+    };
+    const edit = () => {
+      const input = el('input', { inputmode: 'decimal', autocomplete: 'off', value: unit === 'pct' ? pctText(feeSet[key]) : String(feeSet[key]), 'aria-label': def[1] });
+      const err = el('span', { class: 'fee-err', role: 'alert' });
+      const save = async () => {
+        const v = parseFee(input.value, unit);
+        if (isNaN(v)) { err.textContent = unit === 'pct' ? 'Pourcentage de 0 à 50, 2 décimales au plus.' : 'Montant entier en FCFA.'; input.focus(); return; }
+        if ((key === 'deposit_min' || key === 'withdrawal_min') && v < 1) { err.textContent = 'Au moins 1 FCFA.'; return; }
+        if (v === feeSet[key]) return view();
+        ok.disabled = true;
+        await guarded(async () => {
+          const next = Object.assign({}, feeSet); next[key] = v;
+          feeSet = (await LP.api('PUT', '/v1/admin-console/fees', next)).settings;
+          view(); li.classList.add('saved'); setTimeout(() => li.classList.remove('saved'), 1600);
+          renderCalc();
+        }, 'feesMsg');
+        ok.disabled = false;
+      };
+      const ok = el('button', { class: 'ok', type: 'button', text: 'OK', on: { click: save } });
+      const no = el('button', { class: 'no', type: 'button', text: 'Annuler', on: { click: view } });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') view(); });
+      li.replaceChildren(el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: def[1] }), err]),
+        el('span', { class: 'fee-edit' }, [input, el('span', { class: 'unit', text: unit === 'pct' ? '%' : 'FCFA' }), no, ok]));
+      input.focus(); input.select();
+    };
+    view();
+    return li;
   }
-  const byRate = (amount, bps) => Math.ceil(amount * bps / 10000);
-  function feesPreview() {
-    const r = readFees();
-    if (r.bad) { $('feesDepEx').replaceChildren(); $('feesWdEx').replaceChildren(); return; }
-    const s = r.settings;
-    const dep = Math.max(s.deposit_min, 1000);
-    const dLp = Math.max(s.deposit_lightpay_fee_min, byRate(dep, s.deposit_lightpay_fee_bps));
-    const dOp = byRate(dep + dLp, s.deposit_operator_fee_bps);
-    rows($('feesDepEx'), [['Exemple : dépôt de', money(dep)], ['Frais LightPay', money(dLp)], ['Frais opérateur (estimés)', money(dOp)], ['Le client paie', money(dep + dLp + dOp), true]]);
-    const wd = Math.max(s.withdrawal_min, 1000);
-    const wLp = Math.max(s.withdrawal_lightpay_fee_min, byRate(wd, s.withdrawal_lightpay_fee_bps));
-    const wOp = Math.max(s.withdrawal_operator_fee_min, byRate(wd, s.withdrawal_operator_fee_bps));
-    rows($('feesWdEx'), [['Exemple : retrait de', money(wd)], ['Frais LightPay', money(wLp)], ['Frais opérateur', money(wOp)], ['Débité du wallet', money(wd + wLp + wOp), true]]);
+  function renderFees() {
+    document.querySelectorAll('[data-prov]').forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.prov === feeProv));
+      b.replaceChildren(PROVIDER[b.dataset.prov.toUpperCase()] || b.dataset.prov);
+      if (feeActive && (feeActive.collection === b.dataset.prov || feeActive.payout === b.dataset.prov)) b.append(el('span', { class: 'on-dot', title: 'Actif' }));
+    });
+    $('feeDep').replaceChildren.apply($('feeDep'), FEE_KEYS.deposit.concat(OPERATOR_KEYS[feeProv].deposit).map(feeItem));
+    $('feeWd').replaceChildren.apply($('feeWd'), FEE_KEYS.withdrawal.concat(OPERATOR_KEYS[feeProv].withdrawal).map(feeItem));
+    renderCalc();
   }
-  function fillFees(s) { feeInputs().forEach((i) => { const v = s[i.dataset.fee]; i.value = i.dataset.unit === 'pct' ? pctText(v) : String(v); }); feesPreview(); }
-  feeInputs().forEach((i) => i.addEventListener('input', () => { say('feesSaveMsg', ''); feesPreview(); }));
+  // Same formulas as the server (src/payments/fees.ts).
+  const ceilBps = (a, bps) => Math.ceil(a * bps / 10000);
+  function renderCalc() {
+    if (!feeSet) return;
+    const s = feeSet, a = Number(String($('calcAmount').value).replace(/\\D/g, '')) || 0;
+    document.querySelectorAll('[data-kind]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === calcKind)));
+    let cells;
+    if (calcKind === 'deposit') {
+      const lp = Math.max(s.deposit_lightpay_fee_min, ceilBps(a, s.deposit_lightpay_fee_bps));
+      const op = ceilBps(a + lp, feeProv === 'pawapay' ? s.pawapay_deposit_fee_bps : s.deposit_operator_fee_bps);
+      cells = [['Le client paie', money(a + lp + op), true], ['Arrive sur le wallet', money(a)], ['LightPay gagne', money(lp)], ['Opérateur' + (feeProv === 'saspay' ? ' (estimé)' : ''), money(op)]];
+      if (a && a < s.deposit_min) cells.push(['Refusé', 'Sous le minimum (' + money(s.deposit_min) + ')']);
+    } else {
+      const lp = Math.max(s.withdrawal_lightpay_fee_min, ceilBps(a, s.withdrawal_lightpay_fee_bps));
+      const op = feeProv === 'pawapay' ? ceilBps(a, s.pawapay_payout_fee_bps) : Math.max(s.withdrawal_operator_fee_min, ceilBps(a, s.withdrawal_operator_fee_bps));
+      cells = [['Débité du wallet', money(a + lp + op), true], ['Reçu sur le téléphone', money(a)], ['LightPay gagne', money(lp)], ['Opérateur', money(op)]];
+      if (a && a < s.withdrawal_min) cells.push(['Refusé', 'Sous le minimum (' + money(s.withdrawal_min) + ')']);
+    }
+    $('calcRows').replaceChildren.apply($('calcRows'), cells.map((c) => el('div', { class: 'calc-cell' + (c[2] ? ' main' : '') }, [el('span', { text: c[0] }), el('b', { text: c[1] })])));
+  }
+  document.querySelectorAll('[data-prov]').forEach((b) => b.addEventListener('click', () => { feeProv = b.dataset.prov; renderFees(); }));
+  document.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => { calcKind = b.dataset.kind; renderCalc(); }));
+  $('calcAmount').addEventListener('input', renderCalc);
   async function enterFees() {
     crumbs('Réglages', 'Frais et minimums');
-    await load('fees', async () => { fillFees((await LP.api('GET', '/v1/admin-console/fees')).settings); say('feesSaveMsg', ''); });
+    if (!feeSet) { skeleton($('feeDep'), 4, 'li'); skeleton($('feeWd'), 4, 'li'); }
+    await load('fees', async () => {
+      const [f, p] = await Promise.all([LP.api('GET', '/v1/admin-console/fees'), LP.api('GET', '/v1/admin-console/providers').catch(() => null)]);
+      feeSet = f.settings;
+      feeActive = p ? p.current : null;
+      // The provider serving new deposits is shown first.
+      if (feeActive && (feeActive.collection === 'saspay' || feeActive.collection === 'pawapay')) feeProv = feeActive.collection;
+      $('feeActive').replaceChildren.apply($('feeActive'), feeActive
+        ? ['Actif ici : encaissements par ', el('b', { text: provName(feeActive.collection) }), ', envois par ', el('b', { text: provName(feeActive.payout) }), '.']
+        : []);
+      renderFees();
+    });
   }
-  $('feesForm').addEventListener('submit', async (e) => {
-    e.preventDefault(); say('feesSaveMsg', '');
-    const r = readFees();
-    if (r.bad) { r.bad.focus(); return say('feesSaveMsg', 'Valeur invalide : ' + r.bad.labels[0].textContent + '. Nombre entier en FCFA, pourcentage avec 2 décimales au plus.', 'err'); }
-    if (r.settings.deposit_min < 1 || r.settings.withdrawal_min < 1) return say('feesSaveMsg', 'Les minimums doivent être d’au moins 1 FCFA.', 'err');
-    $('feesGo').disabled = true;
-    await guarded(async () => {
-      const saved = await LP.api('PUT', '/v1/admin-console/fees', r.settings);
-      fillFees(saved.settings);
-      say('feesSaveMsg', 'Enregistré : appliqué dès maintenant.', 'ok');
-    }, 'feesSaveMsg');
-    $('feesGo').disabled = false;
-  });
 
   // ---------------------------------------------------------------- admin log
   async function enterAudit() {
