@@ -5,7 +5,8 @@ import { CONSOLE_CSS } from './console.js';
 /**
  * /admin — the owner's console (LightPay sign-in listed in ADMIN_UIDS). Revenue first, then the
  * provider reserves, users, apps, every movement, the main wallet and the admin log.
- * Hash routes: #/home · #/reserves · #/users[/<wallet>] · #/apps[/<id>] · #/developers[/<uid>] · #/moves[/<tx>] · #/main · #/fees · #/providers · #/audit
+ * Hash routes: #/home · #/reserves · #/users → #/users/<wallet> · #/apps → #/apps/<id> · #/developers → #/developers/<uid> ·
+ *   #/moves → #/moves/<tx> · #/main · #/fees · #/providers · #/audit   (an item is its own screen, with a back link)
  * ?env=sandbox for the test ledger. No withdrawal from here, on purpose.
  */
 
@@ -90,12 +91,23 @@ const navItem = (route: string, key: string, icon: string, label: string) =>
 const envBadge = '<span class="badge" data-env-badge hidden>Test</span>';
 const seg = (name: string, items: [string, string][]) =>
   `<div class="seg-sm" role="group" data-seg="${name}">${items.map(([v, l], i) => `<button type="button" data-value="${v}" aria-pressed="${i === 0}">${l}</button>`).join('')}</div>`;
-const page = (screen: string, title: string, inner: string, actions = '') => `
-<section class="screen" data-screen="${screen}" hidden><div class="page">
-  <div class="page-head"><h1 class="page-title">${title}</h1>${envBadge}${actions ? `<div class="page-actions">${actions}</div>` : ''}</div>
-  <div class="msg" id="${screen}Msg" role="status" aria-live="polite"></div>
-  ${inner}
-</div></section>`;
+/**
+ * Every screen is a scaffold: a pinned head (back link on an item, title, actions, toolbar with the
+ * list's filters) that never scrolls, and one scrolling area. A list row opens its item as its own
+ * screen (opts.back), never as a panel beside the list.
+ */
+const page = (screen: string, title: string, inner: string, actions = '', opts: { toolbar?: string; back?: { href: string; label: string } } = {}) => `
+<section class="screen scaffold" data-screen="${screen}" hidden>
+  <header class="page-top"><div class="page-top-in${opts.toolbar ? ' has-toolbar' : ''}">
+    ${opts.back ? `<a class="page-back" href="${opts.back.href}" data-back>${iconSvg('arrow-left')}${opts.back.label}</a>` : ''}
+    <div class="page-head"><h1 class="page-title" id="${screen}Title">${title}</h1>${envBadge}${actions ? `<div class="page-actions">${actions}</div>` : ''}</div>
+    ${opts.toolbar ? `<div class="page-toolbar">${opts.toolbar}</div>` : ''}
+  </div></header>
+  <div class="page-scroll"><div class="page">
+    <div class="msg" id="${screen}Msg" role="status" aria-live="polite"></div>
+    ${inner}
+  </div></div>
+</section>`;
 const panel = (title: string, body: string, opts: { id?: string; actions?: string; flush?: boolean; foot?: string } = {}) =>
   `<section class="panel"><div class="panel-head"><h2 class="panel-title">${title}</h2>${opts.actions ?? ''}</div><div class="${opts.flush ? 'panel-flush' : 'panel-body'}"${opts.id ? ` id="${opts.id}"` : ''}>${body}</div>${opts.foot ? `<div class="panel-foot">${opts.foot}</div>` : ''}</section>`;
 const stat = (id: string, label: string, hintId: string, accent = false) =>
@@ -171,36 +183,30 @@ ${page('reserves', 'Réserves providers', `
 `)}
 
 ${page('users', 'Utilisateurs', `
-  <div class="grid-2">
-    ${panel('Comptes LightPay', '<div id="usersTable"></div>', { flush: true, actions: '<input class="search" id="usersSearch" type="search" placeholder="Nom ou e-mail" aria-label="Rechercher un utilisateur">', foot: '<button class="link" type="button" id="usersMore" hidden>Afficher plus</button>' })}
-    <div class="sticky" id="userDetail"></div>
-  </div>
-`)}
+  <div class="list-card" id="usersTable"></div>
+  <button class="btn btn-secondary btn-sm list-more" type="button" id="usersMore" hidden>Afficher plus</button>
+`, '', { toolbar: '<input class="search" id="usersSearch" type="search" placeholder="Rechercher par nom ou e-mail" aria-label="Rechercher un utilisateur">' })}
+
+${page('user', 'Compte', '<div class="stack" id="userDetail"></div>', '', { back: { href: '#/users', label: 'Utilisateurs' } })}
 
 ${page('apps', 'Applications', `
-  <div class="grid-2">
-    ${panel('Toutes les apps', '<div id="appsTable"></div>', { flush: true })}
-    <div class="sticky" id="appDetail"></div>
-  </div>
+  <div class="list-card" id="appsTable"></div>
 `)}
+
+${page('app', 'Application', '<div class="stack" id="appDetail"></div>', '', { back: { href: '#/apps', label: 'Applications' } })}
 
 ${page('developers', 'Demandes mode avancé', `
-  <div class="grid-2">
-    ${panel('Demandes', '<div id="devTable"></div>', { flush: true, actions: seg('devStatus', [['PENDING', 'À traiter'], ['APPROVED', 'Validées'], ['REJECTED', 'Refusées'], ['', 'Toutes']]) })}
-    <div class="sticky" id="devDetail"></div>
-  </div>
-`)}
+  <div class="list-card" id="devTable"></div>
+`, '', { toolbar: seg('devStatus', [['PENDING', 'À traiter'], ['APPROVED', 'Validées'], ['REJECTED', 'Refusées'], ['', 'Toutes']]) })}
+
+${page('developer', 'Demande', '<div class="stack" id="devDetail"></div>', '', { back: { href: '#/developers', label: 'Demandes mode avancé' } })}
 
 ${page('moves', 'Mouvements', `
-  <div class="grid-2">
-    ${panel('Toutes les transactions', '<div id="movesTable"></div>', {
-      flush: true,
-      actions: seg('moveType', [['', 'Tout'], ['deposits', 'Encaissements'], ['payments', 'Paiements'], ['transfers', 'Transferts'], ['payouts', 'Retraits']]),
-      foot: '<button class="link" type="button" id="movesMore" hidden>Afficher plus</button>',
-    })}
-    <div class="sticky" id="moveDetail"></div>
-  </div>
-`)}
+  <div class="list-card" id="movesTable"></div>
+  <button class="btn btn-secondary btn-sm list-more" type="button" id="movesMore" hidden>Afficher plus</button>
+`, '', { toolbar: seg('moveType', [['', 'Tout'], ['deposits', 'Encaissements'], ['payments', 'Paiements'], ['transfers', 'Transferts'], ['payouts', 'Retraits']]) })}
+
+${page('move', 'Mouvement', '<div class="stack" id="moveDetail"></div>', '', { back: { href: '#/moves', label: 'Mouvements' } })}
 
 ${page('main', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>', `
   ${panel('<span data-real>Votre argent</span><span data-test hidden>Réserve du faucet</span>', `<div class="well">${stat('mainBalance', 'Disponible', 'mainHint', true)}</div>
@@ -275,7 +281,7 @@ ${page('fees', 'Frais et minimums', `
   <p class="hint">Cliquez une valeur pour la modifier : appliquée tout de suite, à cet environnement seulement, et inscrite au journal admin.</p>
 `)}
 
-${page('audit', 'Journal admin', panel('Actions faites depuis l’administration', '<div id="auditTable"></div>', { flush: true }))}
+${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>')}
 
   </div>
 </div>
@@ -466,49 +472,56 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     renderUsers();
   }
   function renderUsers() {
-    const c = nav.current(); const sel = c && c.name === 'users' ? c.param : null;
     table($('usersTable'), [{ label: 'Compte' }, { label: 'Apps', cls: 'num' }, { label: 'Solde', cls: 'num' }],
-      users.map((u) => ({ href: '#/users/' + u.id, selected: u.id === sel, cells: [cell(u.name || u.email || 'Sans nom', u.email || ''), num(u.apps), money(Number(u.available_balance) + Number(u.locked_balance))] })),
+      users.map((u) => ({ href: '#/users/' + u.id, cells: [cell(u.name || u.email || 'Sans nom', u.email || ''), num(u.apps), money(Number(u.available_balance) + Number(u.locked_balance))] })),
       usersQuery ? 'Aucun compte ne correspond.' : 'Aucun utilisateur pour le moment.');
   }
-  async function enterUsers(id) {
-    crumbs('Utilisateurs', id ? 'Détail' : '');
-    $('usersTable').closest('.panel').hidden = Boolean(id) && NARROW.matches;
-    await load('users', async () => {
-      if (!users.length || !id) await loadUsers(false); else renderUsers();
-      if (!id) { $('userDetail').replaceChildren(); return; }
+  async function enterUsers() {
+    crumbs('Réseau', 'Utilisateurs');
+    if (!users.length) skeleton($('usersTable'), 8, 'div');
+    await load('users', () => loadUsers(false));
+  }
+  async function enterUser(id) {
+    crumbs('Utilisateurs', 'Compte');
+    $('userTitle').textContent = 'Compte';
+    $('userDetail').replaceChildren(); skeleton($('userDetail'), 5, 'div');
+    await load('user', async () => {
       const d = await LP.api('GET', '/v1/admin-console/users/' + encodeURIComponent(id));
       const u = d.user;
+      $('userTitle').textContent = u.name || u.email || 'Compte';
       const box = el('div', {});
       rows(box, [['E-mail', u.email || '—'], ['Disponible', money(u.available_balance)], ['Bloqué', money(u.locked_balance)], ['Statut', u.status === 'ACTIVE' ? 'actif' : 'fermé'], ['Créé le', fmtDate(u.created_at)]]);
       box.classList.add('rows');
       const appsHost = items(d.apps.map((a) => ({ href: '#/apps/' + a.app_id, title: a.app_name, sub: 'depuis le ' + fmtDate(a.created_at), end: a.status === 'ACTIVE' ? 'connectée' : 'retirée' })), 'Aucune app connectée.');
       const movesHost = items(d.moves.map((m) => ({ href: '#/moves/' + m.transaction_id, title: m.description || TYPE[m.type] || m.type, sub: fmtDateTime(m.created_at), end: signed(m.direction, m.amount) })), 'Aucun mouvement.');
-      $('userDetail').replaceChildren(detailPanel(u.name || u.email || 'Compte', [box]), flushPanel('Apps connectées', appsHost), flushPanel('Derniers mouvements', movesHost));
+      $('userDetail').replaceChildren(detailPanel('Compte', [box]), flushPanel('Apps connectées', appsHost), flushPanel('Derniers mouvements', movesHost));
     });
   }
 
   // ---------------------------------------------------------------- apps
   let apps = [];
   function renderApps() {
-    const c = nav.current(); const sel = c && c.name === 'apps' ? c.param : null;
     table($('appsTable'), [{ label: 'App' }, { label: 'Utilisateurs', cls: 'num' }, { label: 'Paiements 30 j', cls: 'num' }],
-      apps.map((a) => ({ href: '#/apps/' + a.id, selected: a.id === sel, cells: [cell(a.name, a.id + (a.owner_email ? ' · ' + a.owner_email : a.owner_uid ? '' : ' · sans propriétaire') + (a.is_active ? '' : ' · désactivée')), num(a.users), money(a.volume_30d)] })),
+      apps.map((a) => ({ href: '#/apps/' + a.id, cells: [cell(a.name, a.id + (a.owner_email ? ' · ' + a.owner_email : a.owner_uid ? '' : ' · sans propriétaire') + (a.is_active ? '' : ' · désactivée')), num(a.users), money(a.volume_30d)] })),
       'Aucune application.');
   }
-  async function enterApps(id) {
-    crumbs('Applications', id || '');
-    $('appsTable').closest('.panel').hidden = Boolean(id) && NARROW.matches;
-    await load('apps', async () => {
-      if (!apps.length || !id) apps = (await LP.api('GET', '/v1/admin-console/apps')).apps;
-      renderApps();
-      if (!id) { $('appDetail').replaceChildren(); return; }
+  async function enterApps() {
+    crumbs('Réseau', 'Applications');
+    if (!apps.length) skeleton($('appsTable'), 6, 'div');
+    await load('apps', async () => { apps = (await LP.api('GET', '/v1/admin-console/apps')).apps; renderApps(); });
+  }
+  async function enterApp(id) {
+    crumbs('Applications', id);
+    $('appTitle').textContent = 'Application';
+    $('appDetail').replaceChildren(); skeleton($('appDetail'), 5, 'div');
+    await load('app', async () => {
       const d = await LP.api('GET', '/v1/admin-console/apps/' + encodeURIComponent(id));
+      $('appTitle').textContent = d.app.name;
       const box = el('div', { class: 'rows' });
       rows(box, [['Identifiant', d.app.id], ['Propriétaire', d.app.owner_email || (d.app.owner_uid ? 'compte LightPay' : 'non rattachée')], ['Utilisateurs connectés', num(d.app.users)], ['Transactions', num(d.app.transactions)], ['Paiements 30 j', money(d.app.volume_30d)], ['Créée le', fmtDate(d.app.created_at)]]);
       const usersHost = items(d.users.map((u) => ({ href: '#/users/' + u.wallet_id, title: u.name || u.email || 'Sans nom', sub: [u.email, (u.scopes || []).join(', '), u.status === 'ACTIVE' ? '' : 'retirée'].filter(Boolean).join(' · '), end: money(Number(u.available_balance) + Number(u.locked_balance)) })), 'Aucun utilisateur connecté.');
       const walletsHost = items(d.wallets.map((w) => ({ title: w.account_id, sub: w.account_type + ' · ' + w.currency, end: money(Number(w.available_balance) + Number(w.locked_balance)) })), 'Aucun wallet propre.');
-      $('appDetail').replaceChildren(detailPanel(d.app.name, [box]), flushPanel('Utilisateurs rattachés', usersHost), flushPanel('Wallets de l’app', walletsHost));
+      $('appDetail').replaceChildren(detailPanel('Application', [box]), flushPanel('Utilisateurs rattachés', usersHost), flushPanel('Wallets de l’app', walletsHost));
     });
   }
 
@@ -516,39 +529,44 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   const DEV_STATUS = { PENDING: ['warn', 'à traiter'], APPROVED: ['ok', 'validée'], REJECTED: ['err', 'refusée'] };
   let devRequests = [];
   function renderDevRequests() {
-    const c = nav.current(); const sel = c && c.name === 'developers' ? c.param : null;
     table($('devTable'), [{ label: 'Demande' }, { label: 'Le' }, { label: 'État' }], devRequests.map((d) => ({
-      href: '#/developers/' + encodeURIComponent(d.uid), selected: d.uid === sel,
+      href: '#/developers/' + encodeURIComponent(d.uid),
       cells: [cell(d.project, [d.username ? '@' + d.username : '', d.email || ''].filter(Boolean).join(' · ')), fmtDate(d.created_at), el('span', { class: 'pill ' + (DEV_STATUS[d.status] || ['', ''])[0], text: (DEV_STATUS[d.status] || ['', d.status])[1] })],
     })), 'Aucune demande.');
   }
-  async function enterDevelopers(uid) {
+  const loadDevRequests = async () => { devRequests = (await LP.api('GET', '/v1/admin-console/developers' + (segValue('devStatus') ? '?status=' + segValue('devStatus') : ''))).requests; };
+  async function enterDevelopers() {
     crumbs('Réseau', 'Demandes mode avancé');
-    $('devTable').closest('.panel').hidden = Boolean(uid) && NARROW.matches;
-    await load('developers', async () => {
-      if (!devRequests.length || !uid) devRequests = (await LP.api('GET', '/v1/admin-console/developers' + (segValue('devStatus') ? '?status=' + segValue('devStatus') : ''))).requests;
-      renderDevRequests();
-      const d = uid && devRequests.find((x) => x.uid === uid);
-      if (!d) { $('devDetail').replaceChildren(); return; }
+    if (!devRequests.length) skeleton($('devTable'), 5, 'div');
+    await load('developers', async () => { await loadDevRequests(); renderDevRequests(); });
+  }
+  async function enterDeveloper(uid) {
+    crumbs('Demandes mode avancé', 'Demande');
+    $('developerTitle').textContent = 'Demande';
+    $('devDetail').replaceChildren(); skeleton($('devDetail'), 5, 'div');
+    await load('developer', async () => {
+      if (!devRequests.some((x) => x.uid === uid)) {
+        devRequests = (await LP.api('GET', '/v1/admin-console/developers')).requests;
+      }
+      const d = devRequests.find((x) => x.uid === uid);
+      if (!d) { $('devDetail').replaceChildren(el('p', { class: 'empty', text: 'Demande introuvable.' })); return; }
+      $('developerTitle').textContent = d.project;
       const box = el('div', { class: 'rows' });
-      rows(box, [['Projet', d.project], ['Compte', [d.username ? '@' + d.username : '', d.email || ''].filter(Boolean).join(' · ') || d.uid], ['Site', d.website || '—'], ['Demandée le', fmtDateTime(d.created_at)]].concat(d.decided_at ? [['Décidée le', fmtDateTime(d.decided_at) + (d.decided_by ? ' · ' + d.decided_by : '')]] : []).concat(d.note ? [['Motif du refus', d.note]] : []));
-      const use = el('p', { class: 'small mt', text: d.use_case });
+      rows(box, [['Projet', d.project], ['Compte', [d.username ? '@' + d.username : '', d.email || ''].filter(Boolean).join(' · ') || d.uid], ['Site', d.website || '—'], ['Demandée le', fmtDateTime(d.created_at)], ['État', (DEV_STATUS[d.status] || ['', d.status])[1]]].concat(d.decided_at ? [['Décidée le', fmtDateTime(d.decided_at) + (d.decided_by ? ' · ' + d.decided_by : '')]] : []).concat(d.note ? [['Motif du refus', d.note]] : []));
+      const use = el('p', { class: 'small', text: d.use_case });
       const note = el('textarea', { class: 'field-area mt', id: 'devNote', placeholder: 'Motif du refus (la personne le verra)', maxlength: '300' });
       const msg = el('div', { class: 'msg', id: 'devDecideMsg', role: 'status', 'aria-live': 'polite' });
       const decide = (approve) => guarded(async () => {
         await LP.api('POST', '/v1/admin-console/developers/' + encodeURIComponent(d.uid), { approve: approve, note: approve ? undefined : $('devNote').value });
         devRequests = [];
-        await enterDevelopers(d.uid);
-        say('developersMsg', approve ? 'Mode avancé validé pour ' + d.project + '.' : 'Demande refusée.', 'ok');
+        say('developerMsg', approve ? 'Mode avancé validé pour ' + d.project + '.' : 'Demande refusée.', 'ok');
+        await enterDeveloper(d.uid);
       }, 'devDecideMsg');
-      const actions = d.status === 'APPROVED' ? [] : [
-        note,
-        el('div', { class: 'btn-row mt' }, [
-          el('button', { class: 'btn btn-secondary', type: 'button', text: 'Refuser', on: { click: () => decide(false) } }),
-          el('button', { class: 'btn', type: 'button', text: 'Valider', on: { click: () => decide(true) } }),
-        ]),
-      ];
-      $('devDetail').replaceChildren(detailPanel(d.project, [box, el('h3', { class: 'small mt-lg', text: 'Ce qu’il va faire avec LightPay' }), use].concat(actions).concat([msg])));
+      const decision = d.status === 'APPROVED' ? [] : [detailPanel('Décision', [note, el('div', { class: 'btn-row mt' }, [
+        el('button', { class: 'btn btn-secondary', type: 'button', text: 'Refuser', on: { click: () => decide(false) } }),
+        el('button', { class: 'btn', type: 'button', text: 'Valider', on: { click: () => decide(true) } }),
+      ]), msg])];
+      $('devDetail').replaceChildren.apply($('devDetail'), [detailPanel('Demande', [box]), detailPanel('Ce qu’il va faire avec LightPay', [use])].concat(decision));
     });
   }
 
@@ -565,24 +583,50 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
     renderMoves();
   }
   function renderMoves() {
-    const c = nav.current(); const sel = c && c.name === 'moves' ? c.param : null;
     table($('movesTable'), [{ label: 'Opération' }, { label: 'App' }, { label: 'Montant', cls: 'num' }, { label: 'État' }],
-      moves.map((t) => ({ href: '#/moves/' + t.id, selected: t.id === sel, cells: [cell(TYPE[t.type] || t.type, fmtDateTime(t.created_at) + (t.reference ? ' · ' + t.reference : '')), t.app_id, money(t.amount), pill(t.status)] })),
+      moves.map((t) => ({ href: '#/moves/' + t.id, cells: [cell(TYPE[t.type] || t.type, fmtDateTime(t.created_at) + (t.reference ? ' · ' + t.reference : '')), t.app_id, money(t.amount), pill(t.status)] })),
       'Aucun mouvement.');
   }
-  async function enterMoves(id) {
-    crumbs('Mouvements', id ? 'Détail' : '');
-    $('movesTable').closest('.panel').hidden = Boolean(id) && NARROW.matches;
-    await load('moves', async () => {
-      if (!moves.length || !id || movesType !== segValue('moveType')) await loadMoves(false); else renderMoves();
-      if (!id) { $('moveDetail').replaceChildren(); return; }
+  async function enterMoves() {
+    crumbs('Trésorerie', 'Mouvements');
+    if (!moves.length || movesType !== segValue('moveType')) skeleton($('movesTable'), 8, 'div');
+    await load('moves', () => loadMoves(false));
+  }
+  // The phone's side of an operation, beside the ledger: what was paid or sent, and who took what.
+  function breakdownRows(b) {
+    if (!b) return null;
+    const via = (PROVIDER[String(b.provider).toUpperCase()] || b.provider) + ' · ' + (b.network === 'AIRTEL_COG' ? 'Airtel Money' : 'MTN MoMo');
+    if (b.kind === 'collection') return [
+      ['Payé par le téléphone', b.paid ? money(b.paid) : 'en attente de l’opérateur'],
+      ['Frais opérateur', b.operator_fee ? money(b.operator_fee) : '—'],
+      ['Frais LightPay', money(b.lightpay_fee)],
+      ['Arrivé sur le wallet', money(b.received), true],
+      ['Via', via],
+    ];
+    return [
+      ['Débité du wallet', money(b.debited)],
+      ['Frais LightPay', money(b.lightpay_fee)],
+      ['Frais opérateur', money(b.operator_fee)],
+      ['Reçu sur le téléphone', money(b.sent), true],
+      ['Via', via],
+    ];
+  }
+  async function enterMove(id) {
+    crumbs('Mouvements', 'Détail');
+    $('moveTitle').textContent = 'Mouvement';
+    $('moveDetail').replaceChildren(); skeleton($('moveDetail'), 6, 'div');
+    await load('move', async () => {
       const d = await LP.api('GET', '/v1/admin-console/transactions/' + encodeURIComponent(id));
       const t = d.transaction;
+      $('moveTitle').textContent = (TYPE[t.type] || t.type) + ' · ' + money(t.amount);
       const box = el('div', { class: 'rows' });
-      rows(box, [['Montant', money(t.amount)], ['Frais', money(t.fee_amount)], ['App', t.app_id], ['Référence', t.reference || '—'], ['Date', fmtDateTime(t.created_at)]]
-        .concat(t.metadata && t.metadata.provider ? [['Provider', t.metadata.provider + (t.metadata.network ? ' · ' + t.metadata.network : '')]] : []));
+      rows(box, [['Montant', money(t.amount)], ['App', t.app_id], ['Référence', t.reference || '—'], ['Date', fmtDateTime(t.created_at)]]);
+      const parts = [detailPanel('Opération', [pill(t.status), box, el('p', { class: 'mono mt', text: t.id })])];
+      const b = breakdownRows(d.breakdown);
+      if (b) { const host = el('div', { class: 'rows' }); rows(host, b); parts.push(detailPanel(d.breakdown.kind === 'collection' ? 'Ce que le client a payé' : 'Ce qui est parti', [host])); }
       const entriesHost = items(d.entries.map((e) => ({ href: e.account_type === 'USER' ? '#/users/' + e.wallet_id : null, title: e.label, sub: e.description || '', end: signed(e.direction, e.amount) })), 'Aucune écriture.');
-      $('moveDetail').replaceChildren(detailPanel(TYPE[t.type] || t.type, [pill(t.status), box, el('p', { class: 'mono mt', text: t.id })]), flushPanel('Écritures (partie double)', entriesHost));
+      parts.push(flushPanel('Écritures (partie double)', entriesHost));
+      $('moveDetail').replaceChildren.apply($('moveDetail'), parts);
     });
   }
 
@@ -838,22 +882,30 @@ ${page('audit', 'Journal admin', panel('Actions faites depuis l’administration
   const withNav = (key, fn) => (param) => { highlight(key); syncEnvLinks(); return fn(param); };
   const screens = {
     home: { enter: withNav('home', enterHome) },
-    reserves: { parent: 'home', enter: withNav('reserves', enterReserves) },
-    users: { parent: 'home', enter: withNav('users', enterUsers) },
-    apps: { parent: 'home', enter: withNav('apps', enterApps) },
-    developers: { parent: 'home', enter: withNav('developers', (uid) => { if (!uid) devRequests = []; return enterDevelopers(uid); }) },
-    moves: { parent: 'home', enter: withNav('moves', enterMoves) },
-    main: { parent: 'home', enter: withNav('main', enterMain) },
-    fees: { parent: 'home', enter: withNav('fees', enterFees) },
-    providers: { parent: 'home', enter: withNav('providers', enterProviders) },
-    audit: { parent: 'home', enter: withNav('audit', enterAudit) },
+    reserves: { enter: withNav('reserves', enterReserves) },
+    users: { enter: withNav('users', enterUsers) },
+    user: { parent: 'users', enter: withNav('users', enterUser) },
+    apps: { enter: withNav('apps', enterApps) },
+    app: { parent: 'apps', enter: withNav('apps', enterApp) },
+    developers: { enter: withNav('developers', enterDevelopers) },
+    developer: { parent: 'developers', enter: withNav('developers', enterDeveloper) },
+    moves: { enter: withNav('moves', enterMoves) },
+    move: { parent: 'moves', enter: withNav('moves', enterMove) },
+    main: { enter: withNav('main', enterMain) },
+    fees: { enter: withNav('fees', enterFees) },
+    providers: { enter: withNav('providers', enterProviders) },
+    audit: { enter: withNav('audit', enterAudit) },
     denied: { enter: () => {} },
   };
   const nav = createNav({
     root: 'home',
+    // #/users/<id> opens the item screen "user" (and so on): a list and its item never share a screen.
     resolve: (route) => {
+      const ITEM = { users: 'user', apps: 'app', developers: 'developer', moves: 'move' };
       const i = route.indexOf('/');
-      return i > 0 ? [route.slice(0, i), route.slice(i + 1)] : [route, null];
+      if (i < 0) return [route, null];
+      const list = route.slice(0, i);
+      return ITEM[list] ? [ITEM[list], route.slice(i + 1)] : [list, route.slice(i + 1)];
     },
     screens: screens,
   });

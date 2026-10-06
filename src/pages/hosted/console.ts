@@ -117,6 +117,39 @@ html.console-page .foot { display: none; }
 .show-narrow { display: none; }
 .console-tabbar { display: none; }
 
+/* ---------- scaffold (every screen): a pinned head (back, title, actions, toolbar) that never
+   scrolls, and one scrolling area under it. A list's filters and search live in the toolbar; a
+   row opens its item as its own screen (back arrow), never as a panel beside the list. ---------- */
+.console-body > .screen.scaffold { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.page-top { flex-shrink: 0; position: relative; z-index: 3; background: var(--bg); border-bottom: 1px solid var(--line); }
+.page-top-in { max-width: 1140px; margin: 0 auto; padding: 18px 28px 16px; }
+.page-top-in.has-toolbar { padding-bottom: 0; }
+.page-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 6px -2px; padding: 2px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; border-radius: 6px; }
+.page-back:hover { color: var(--text); }
+.page-back svg { width: 16px; height: 16px; }
+.scaffold .page-head { margin-bottom: 0; min-height: 40px; }
+.scaffold .page-title { font-size: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.page-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 0; }
+.page-toolbar .search { max-width: 360px; height: 40px; }
+.page-toolbar .seg-sm { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.page-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.page-scroll::-webkit-scrollbar { display: none; }
+.scaffold .page { padding-top: 22px; }
+/* a list card: rows only (its head row sticks to the top of the scrolling area) */
+.list-card { border: 1px solid var(--line); border-radius: 18px; background: var(--card); overflow: clip; }
+.list-card .tbl-wrap { overflow: visible; }
+.list-card .tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--card); box-shadow: 0 1px 0 var(--line); }
+.list-card .tbl tbody tr[data-href] td:last-child { position: relative; }
+.list-more { display: block; margin: 14px auto 0; }
+@media (max-width: 960px) {
+  .page-top-in { padding: 14px 16px 12px; }
+  .page-top-in.has-toolbar { padding-bottom: 0; }
+  .page-toolbar { padding: 12px 0; }
+  .page-toolbar .search { max-width: none; flex: 1 1 100%; }
+  .scaffold .page { padding: 16px 16px 40px; }
+  .scaffold .page-title { font-size: 19px; }
+}
+
 /* ---------- key figures ---------- */
 .well { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 20px 24px; padding: 18px 20px; border-radius: 14px; background: var(--raised); }
 .stat { min-width: 0; }

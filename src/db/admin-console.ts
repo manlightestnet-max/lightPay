@@ -398,7 +398,39 @@ export async function getTransaction(env: Environment, id: string) {
   return {
     transaction: tx,
     entries: entries.map(({ metadata, ...e }) => ({ ...e, label: walletLabel({ ...e, metadata }, env) })),
+    breakdown: await moneyBreakdown(env, tx),
   };
+}
+
+/**
+ * What the person paid or received around this transaction, outside the ledger too: the phone's
+ * side of a collection (amount + LightPay fee + operator fee) or of a payout.
+ */
+async function moneyBreakdown(env: Environment, tx: any) {
+  const m = tx.metadata || {};
+  if (m.attempt) {
+    const [a] = await query(
+      `SELECT provider, network, amount::text, lightpay_fee::text, provider_fee::text, charged_amount::text, status FROM collection_attempts WHERE id = $1`,
+      [m.attempt],
+      env
+    );
+    if (!a) return null;
+    const received = BigInt(a.amount) - BigInt(a.lightpay_fee ?? 0);
+    return {
+      kind: 'collection', provider: a.provider, network: a.network,
+      paid: a.charged_amount, operator_fee: a.provider_fee, lightpay_fee: a.lightpay_fee, received: received.toString(),
+    };
+  }
+  if (m.payout) {
+    const [p] = await query(
+      `SELECT provider, network, amount::text, operator_fee::text, lightpay_fee::text, total_debited::text, status FROM payouts WHERE id = $1`,
+      [m.payout],
+      env
+    );
+    if (!p) return null;
+    return { kind: 'payout', provider: p.provider, network: p.network, sent: p.amount, operator_fee: p.operator_fee, lightpay_fee: p.lightpay_fee, debited: p.total_debited };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- wallet main
