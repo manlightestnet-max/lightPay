@@ -109,8 +109,9 @@ server.addHook('onRequest', async (request, reply) => {
 // 3. En-têtes de sécurité HTTP standards
 server.addHook('onSend', async (request, reply) => {
   reply.header('X-Content-Type-Options', 'nosniff');
+  const isAuthProxy = request.url.startsWith('/__/auth/') || request.url.startsWith('/__/firebase/');
   // The payment dialog (lightpay.js) is framed only by the app's declared sites, set by its CSP.
-  if (!(request as any).framingAllowed) reply.header('X-Frame-Options', 'DENY');
+  if (!isAuthProxy && !(request as any).framingAllowed) reply.header('X-Frame-Options', 'DENY');
   reply.header('X-XSS-Protection', '1; mode=block');
 });
 
@@ -294,6 +295,7 @@ server.register(adminConsoleRoutes);
 // Relais transparent Firebase Auth (permet signInWithRedirect sur notre propre domaine)
 const FIREBASE_AUTH_DOMAIN = process.env.LIGHTPAY_FIREBASE_AUTH_DOMAIN || 'lightpay-a5f01.firebaseapp.com';
 const proxyFirebaseAuth = async (request: any, reply: any) => {
+  (request as any).framingAllowed = true;
   const targetUrl = `https://${FIREBASE_AUTH_DOMAIN}${request.raw.url}`;
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(request.headers)) {
@@ -304,6 +306,13 @@ const proxyFirebaseAuth = async (request: any, reply: any) => {
       headers[k] = v;
     }
   }
+  const host = (request.headers['x-forwarded-host'] as string) || (request.headers.host as string) || '';
+  if (host) {
+    headers['x-forwarded-host'] = host;
+    headers['x-fh-requested-host'] = host;
+  }
+  headers['x-forwarded-proto'] = 'https';
+
   const body = ['GET', 'HEAD'].includes(request.method) ? undefined : request.body;
   try {
     const res = await fetch(targetUrl, {
@@ -315,7 +324,7 @@ const proxyFirebaseAuth = async (request: any, reply: any) => {
     reply.status(res.status);
     for (const [hk, hv] of res.headers.entries()) {
       const lk = hk.toLowerCase();
-      if (lk !== 'content-encoding' && lk !== 'content-length') {
+      if (lk !== 'content-encoding' && lk !== 'content-length' && lk !== 'x-frame-options') {
         reply.header(hk, hv);
       }
     }

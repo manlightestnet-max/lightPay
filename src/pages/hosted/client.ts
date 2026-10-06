@@ -133,7 +133,27 @@ export const CLIENT = (env: string) => `
         url.searchParams.set('g', '1');
         history.replaceState(null, '', url.toString());
         const fb = await loadFirebase();
-        await fb.signInWithRedirect(fb.auth, fb.provider);
+        try {
+          await fb.signInWithRedirect(fb.auth, fb.provider);
+        } catch (err) {
+          if (fb.authDomain !== FIREBASE_DOMAIN) {
+            const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+            const { initializeAuth, inMemoryPersistence, browserPopupRedirectResolver, GoogleAuthProvider, signInWithRedirect } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+            const fbApp = getApps().find((a) => a.name === 'fb_direct') || initializeApp({ apiKey: FIREBASE_KEY, authDomain: FIREBASE_DOMAIN, projectId: FIREBASE_PROJECT }, 'fb_direct');
+            let fbAuth;
+            try {
+              fbAuth = initializeAuth(fbApp, { persistence: inMemoryPersistence, popupRedirectResolver: browserPopupRedirectResolver });
+            } catch (e) {
+              const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+              fbAuth = getAuth(fbApp);
+            }
+            const p = new GoogleAuthProvider();
+            p.setCustomParameters({ prompt: 'select_account' });
+            await signInWithRedirect(fbAuth, p);
+            return;
+          }
+          throw err;
+        }
       },
       finishRedirect: async () => {
         if (!new URLSearchParams(location.search).get('g')) return null;
@@ -141,9 +161,25 @@ export const CLIENT = (env: string) => `
         url.searchParams.delete('g');
         history.replaceState(null, '', url.toString());
         const fb = await loadFirebase();
-        const res = await fb.getRedirectResult(fb.auth).catch((err) => {
-          throw Object.assign(new Error(err && err.message ? err.message : 'Connexion impossible.'), { code: err && err.code });
-        });
+        let res = null;
+        try {
+          res = await fb.getRedirectResult(fb.auth);
+        } catch (err) { /* fallback checked below */ }
+        if (!res) {
+          try {
+            const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+            const { initializeAuth, inMemoryPersistence, browserPopupRedirectResolver, getRedirectResult } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+            const fbApp = getApps().find((a) => a.name === 'fb_direct') || initializeApp({ apiKey: FIREBASE_KEY, authDomain: FIREBASE_DOMAIN, projectId: FIREBASE_PROJECT }, 'fb_direct');
+            let fbAuth;
+            try {
+              fbAuth = initializeAuth(fbApp, { persistence: inMemoryPersistence, popupRedirectResolver: browserPopupRedirectResolver });
+            } catch (e) {
+              const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+              fbAuth = getAuth(fbApp);
+            }
+            res = await getRedirectResult(fbAuth).catch(() => null);
+          } catch (e) {}
+        }
         if (!res || !res.user) return null;
         const idToken = await res.user.getIdToken();
         const tokenRes = await res.user.getIdTokenResult().catch(() => null);
@@ -439,11 +475,10 @@ export const CLIENT = (env: string) => `
   let fbAuthModule = null;
   async function loadFirebase() {
     if (fbAuthModule) return fbAuthModule;
-    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+    const { initializeApp, getApps, getApp } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
     const {
       initializeAuth,
-      indexedDBLocalPersistence,
-      browserLocalPersistence,
+      inMemoryPersistence,
       browserPopupRedirectResolver,
       GoogleAuthProvider,
       signInWithRedirect,
@@ -451,18 +486,24 @@ export const CLIENT = (env: string) => `
       signOut,
     } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
     const authDomain = location.protocol === 'https:' ? location.host : FIREBASE_DOMAIN;
-    const app = initializeApp({
+    const app = getApps().length ? getApp() : initializeApp({
       apiKey: FIREBASE_KEY,
       authDomain: authDomain,
       projectId: FIREBASE_PROJECT,
     });
-    const auth = initializeAuth(app, {
-      persistence: [indexedDBLocalPersistence, browserLocalPersistence],
-      popupRedirectResolver: browserPopupRedirectResolver,
-    });
+    let auth;
+    try {
+      auth = initializeAuth(app, {
+        persistence: inMemoryPersistence,
+        popupRedirectResolver: browserPopupRedirectResolver,
+      });
+    } catch (e) {
+      const { getAuth } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+      auth = getAuth(app);
+    }
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
-    fbAuthModule = { auth, provider, signInWithRedirect, getRedirectResult, signOut };
+    fbAuthModule = { auth, provider, signInWithRedirect, getRedirectResult, signOut, authDomain };
     return fbAuthModule;
   }
 
