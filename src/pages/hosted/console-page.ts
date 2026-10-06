@@ -515,7 +515,7 @@ ${flow(
       cellMain(iconBox, actTitle(a), sub, a.status === 'FAILED' ? 'err' : ''),
       el('span', { class: 'muted-cell', text: fmtDateTime(a.created_at) }),
       el('span', { class: 'pill ' + st[0], text: st[1] }),
-      el('span', { class: 'strong ' + amountClass, text: (incoming ? '+' : '−') + LP.money(a.amount, a.currency) }),
+      el('span', { class: 'strong ' + amountClass, text: (incoming ? '+' : '−') + LP.money(walletAmount(a), a.currency) }),
     ];
   }
   const ACT_COLS = [{ label: 'Opération' }, { label: 'Date', cls: 'hide-sm' }, { label: 'Statut', cls: 'hide-md' }, { label: 'Montant', cls: 'num' }];
@@ -801,9 +801,7 @@ ${flow(
     if (!a) { $('actDetailBody').replaceChildren(el('p', { class: 'empty', text: 'Choisissez une opération pour voir son détail.' })); return; }
     const st = STATUS[a.status] || ['', a.status];
     const incoming = a.direction === 'IN';
-    const rows = [['Montant', LP.money(a.amount, a.currency)]];
-    if (a.fees && a.fees !== '0') rows.push(['Frais', LP.money(a.fees, a.currency)]);
-    if (a.total && a.total !== a.amount) rows.push([incoming ? 'Net reçu' : 'Total', LP.money(a.total, a.currency)]);
+    const rows = amountRows(a);
     if (a.kind === 'COMMISSION') {
       if (a.metadata && a.metadata.sale_amount) rows.push(['Sur la vente de', LP.money(a.metadata.sale_amount, a.currency)]);
       rows.push(['Retenue', 'Automatique, à la validation de la vente']);
@@ -821,7 +819,7 @@ ${flow(
     $('actDetailBody').replaceChildren(
       el('div', { class: 'detail-head' }, [
         el('span', { class: 'avatar' }, [icon(actIcon(a))]),
-        el('span', { class: 'cell-main' }, [el('span', { class: 'cell-title', text: actTitle(a) }), el('span', { class: 'amount', text: (incoming ? '+' : '−') + LP.money(a.amount, a.currency) })]),
+        el('span', { class: 'cell-main' }, [el('span', { class: 'cell-title', text: actTitle(a) }), el('span', { class: 'amount', text: (incoming ? '+' : '−') + LP.money(walletAmount(a), a.currency) })]),
       ]),
       el('div', { class: 'panel-body' }, [
         el('span', { class: 'pill ' + st[0], text: st[1] }),

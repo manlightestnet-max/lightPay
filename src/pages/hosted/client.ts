@@ -293,6 +293,20 @@ export const CLIENT = (env: string) => `
     }
     host.replaceChildren.apply(host, rows);
   }
+  // What an operation means for the wallet, in the same words on every page: money out counts its
+  // fees (what really left the wallet: a 100 withdrawal is -103), money in counts what arrived (a
+  // deposit paid 1 066 from the phone shows +1 000, never more than what reached the wallet).
+  const walletAmount = (a) => (a.direction !== 'IN' && a.total && Number(a.total) > Number(a.amount) ? a.total : a.amount);
+  function amountRows(a) {
+    const c = a.currency, fees = a.fees && a.fees !== '0' ? [['Frais', LP.money(a.fees, c)]] : [];
+    const more = a.total && a.total !== a.amount;
+    if (a.direction !== 'IN') {
+      if (!more) return [['Montant', LP.money(a.amount, c)]].concat(fees);
+      return [[a.kind === 'WITHDRAWAL' ? 'Reçu sur le téléphone' : 'Montant', LP.money(a.amount, c)]].concat(fees).concat([['Débité du wallet', LP.money(a.total, c)]]);
+    }
+    if (a.kind === 'DEPOSIT') return [['Arrivé sur le wallet', LP.money(a.amount, c)]].concat(fees).concat(more ? [['Payé depuis le téléphone', LP.money(a.total, c)]] : []);
+    return [['Montant', LP.money(a.amount, c)]].concat(fees).concat(more ? [['Net reçu', LP.money(a.total, c)]] : []);
+  }
   // Last step before money moves: a bottom sheet with what will happen. Resolves true once
   // (the confirm button locks at the first tap: a double or triple tap starts nothing twice).
   function confirmSheet(o) {

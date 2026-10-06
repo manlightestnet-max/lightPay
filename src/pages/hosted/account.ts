@@ -318,7 +318,7 @@ export const accountPage = (nonce: string, env: string) => {
     const incoming = a.direction === 'IN';
     return txRow({
       icon: a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock'),
-      amount: (incoming ? '+' : '−') + LP.money(a.amount, a.currency),
+      amount: (incoming ? '+' : '−') + LP.money(walletAmount(a), a.currency),
       desc: actTitle(a),
       end: END_LABEL[a.status] || (short ? shortDay(a.created_at) : timeLabel(a.created_at)),
       cls: !settledOk(a) || (a.status === 'REFUNDED' && incoming) ? 'void' : a.status === 'LOCKED' ? 'held' : a.status === 'PENDING' ? 'wait' : incoming ? 'in' : '',
@@ -643,8 +643,11 @@ export const accountPage = (nonce: string, env: string) => {
     if (n && n !== wdNet) { pickWdNet(n); loadWdQuote(); }
     wdCheck();
   });
+  const wdAvailText = () => { $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR'); };
   async function enterWithdraw() {
     focusAmount('wdAmount');
+    // Minimums and balance as they are now (the admin may have changed them since the page opened).
+    loadMe().then(() => { wdAvailText(); wdCheck(); }).catch(() => {});
     $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR');
     wdCheck();
     if (!$('wdList').children.length) { $('wdListHead').hidden = false; skeleton($('wdList'), 3, 'div'); }
@@ -653,7 +656,8 @@ export const accountPage = (nonce: string, env: string) => {
       $('wdListHead').hidden = !r.withdrawals.length;
       $('wdList').replaceChildren.apply($('wdList'), r.withdrawals.slice(0, 5).map((w) => {
         const st = WD_STATUS[w.status] || ['', w.status];
-        return txRow({ icon: w.status === 'FAILED' ? 'x' : 'withdraw', amount: LP.money(w.amount, w.currency), desc: 'Vers ' + w.to, end: w.status === 'SUCCEEDED' ? shortDay(w.created_at) : st[1], cls: w.status === 'FAILED' ? 'void' : w.status === 'PENDING' ? 'wait' : '' });
+        const more = w.total && Number(w.total) > Number(w.amount);
+        return txRow({ icon: w.status === 'FAILED' ? 'x' : 'withdraw', amount: '−' + LP.money(more ? w.total : w.amount, w.currency), desc: 'Vers ' + w.to + (more ? ' · ' + LP.money(w.amount, w.currency) + ' reçus' : ''), end: w.status === 'SUCCEEDED' ? shortDay(w.created_at) : st[1], cls: w.status === 'FAILED' ? 'void' : w.status === 'PENDING' ? 'wait' : '' });
       }));
     } catch (e) { $('wdList').replaceChildren(); $('wdListHead').hidden = true; /* history is optional */ }
   }
@@ -767,14 +771,12 @@ export const accountPage = (nonce: string, env: string) => {
       $('itemIcon').replaceChildren(icon(a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock')));
       $('itemKind').textContent = actTitle(a);
       $('itemAmount').className = 'amount-xl' + (failed ? ' void' : incoming ? ' in' : '');
-      $('itemAmount').textContent = (incoming ? '+' : '−') + LP.money(a.amount, a.currency);
+      $('itemAmount').textContent = (incoming ? '+' : '−') + LP.money(walletAmount(a), a.currency);
       $('itemStatus').className = 'status ' + st[0];
       $('itemStatus').textContent = st[1];
       $('itemReasonBox').hidden = !a.reason;
       $('itemReason').textContent = a.reason || '';
-      const rows = [['Montant', LP.money(a.amount, a.currency)]];
-      if (a.fees && a.fees !== '0') rows.push(['Frais', LP.money(a.fees, a.currency)]);
-      if (a.total && a.total !== a.amount) rows.push([incoming ? 'Net reçu' : 'Total', LP.money(a.total, a.currency)]);
+      const rows = amountRows(a);
       if (a.kind === 'COMMISSION') {
         if (a.metadata && a.metadata.sale_amount) rows.push(['Sur la vente de', LP.money(a.metadata.sale_amount, a.currency)]);
         rows.push(['Retenue', 'Automatique, à la validation de la vente']);
@@ -949,7 +951,7 @@ export const accountPage = (nonce: string, env: string) => {
     },
     screens: {
       home: { enter: enterHome },
-      deposit: { parent: 'home', enter: () => { say('depMsg', ''); renderDepFees(); focusAmount('depAmount'); } },
+      deposit: { parent: 'home', enter: () => { say('depMsg', ''); renderDepFees(); focusAmount('depAmount'); loadMe().then(renderDepFees).catch(() => {}); } },
       'deposit-done': { parent: 'home', enter: enterDepositDone },
       send: { parent: 'home', enter: enterSend },
       'send-done': { parent: 'home', enter: enterSendDone },
