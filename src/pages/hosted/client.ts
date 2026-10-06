@@ -25,6 +25,7 @@ export const FIREBASE_AUTH_DOMAIN = () => process.env.LIGHTPAY_FIREBASE_AUTH_DOM
  *   listRow({ icon, iconClass, title, sub, end, endClass, href, onClick, chev }) -> <li>
  *   dayLabel(date) · timeLabel(date) · showOnly(section)
  *   skeleton(host, n?, tag?)       shimmer rows in an empty list while it loads
+ *   txRow({ icon, amount, desc, end, cls, href }) · shortDay(date) · amountParts(host, value, currency)
  *   createNav({ root, screens: { name: { parent, enter(param) } }, resolve(route) -> [name, param], onRootBack, onEnter(current) })
  *     -> { start(), go(route, replace?), back(), home(), current() }   (hash routes #/route; the
  *        browser back button and every [data-back] button use the same history)
@@ -292,6 +293,22 @@ export const CLIENT = (env: string) => `
       ]));
     }
     host.replaceChildren.apply(host, rows);
+  }
+  // Time for today, otherwise the day ("4 oct.").
+  const shortDay = (d) => { const x = new Date(d); return sameDay(x, new Date()) ? timeLabel(d) : x.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }); };
+  // Balance written as "12 450" + a smaller "FCFA".
+  function amountParts(host, value, currency) {
+    const t = LP.money(value, currency); const i = t.lastIndexOf(' ');
+    host.replaceChildren(t.slice(0, i), el('span', { class: 'cur', text: t.slice(i + 1) }));
+  }
+  // One operation: icon · amount over a short description · time or state.
+  function txRow(o) {
+    const inner = [
+      el('span', { class: 'tx-icon', 'aria-hidden': 'true' }, [icon(o.icon)]),
+      el('span', { class: 'tx-main' }, [el('span', { class: 'tx-amt', text: o.amount }), el('span', { class: 'tx-desc', text: o.desc })]),
+      el('span', { class: 'tx-end', text: o.end || '' }),
+    ];
+    return o.href ? el('a', { class: 'tx ' + (o.cls || ''), href: o.href }, inner) : el('div', { class: 'tx ' + (o.cls || '') }, inner);
   }
   // What an operation means for the wallet, in the same words on every page: money out counts its
   // fees (what really left the wallet: a 100 withdrawal is -103), money in counts what arrived (a

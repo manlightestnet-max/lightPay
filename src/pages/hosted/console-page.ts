@@ -1,15 +1,17 @@
 import { shell, skeletonRows, themeToggle } from './shell.js';
 import { iconSvg } from './icons.js';
 import { CONSOLE_CSS } from './console.js';
+import { FLOWS_SCRIPT, FlowFrame, flowScreens } from './flows.js';
 
 /**
  * /account/console — the LightPay console (advanced mode): only for people whose request the
  * LightPay admin approved; anyone else is sent back to /account. The person's money and the
- * apps they build (developer space). Scaffold: fixed sidebar and top bar; on list screens the
- * key figures stay pinned and only the list scrolls; a bottom bar on phones. Test <-> real
+ * apps they build (developer space). Scaffold: fixed sidebar; every screen has a pinned head
+ * (back link, title, actions, toolbar) and one scrolling area; a list row opens its item as its
+ * own screen; a bottom bar on phones. Test <-> real
  * switches in place (no reload). Hash routes:
- *   #/home · #/activity[/<id>] · #/deposit · #/send[/review|/done] · #/withdraw[/review|/done]
- *   #/apps[/<connection>] (apps allowed to use the account) · #/security
+ *   #/home · #/activity → #/activity/<id> · #/deposit[/done] · #/send[/done] · #/withdraw[/done] (flows.ts)
+ *   #/apps → #/apps/<connection> (apps allowed to use the account) · #/security
  *   #/dev · #/dev/new · #/dev/<app>[/keys|/webhooks|/payments|/settings] (apps the account owns)
  * ?env=sandbox for test money · ?return=<url> shows a way back to the calling app.
  */
@@ -31,12 +33,27 @@ const navItem = (route: string, key: string, icon: string, label: string, extra 
 
 const envBadge = '<span class="badge" data-env-badge hidden>Test</span>';
 
-/** A money flow (recharge, envoi, retrait) as a narrow page with one panel. */
-const flow = (screen: string, title: string, inner: string, actions = '') => `
-<section class="screen" data-screen="${screen}" hidden><div class="page narrow">
-  <div class="page-head"><h1 class="page-title">${title}</h1>${envBadge}</div>
-  <section class="panel"><div class="panel-body">${inner}</div>${actions ? `<div class="actions-bar">${actions}</div>` : ''}</section>
-</div></section>`;
+/**
+ * Every screen is a scaffold: a pinned head (back link on an item, title, actions, toolbar with a
+ * list's filters or an app's sections) that never scrolls, and one scrolling area under it. A list
+ * row opens its item as its own screen with a back link (never a panel beside the list).
+ */
+const page = (screen: string, title: string, inner: string, o: { actions?: string; toolbar?: string; back?: { href: string; label: string }; narrow?: boolean; titleId?: string } = {}) => `
+<section class="screen scaffold" data-screen="${screen}" hidden>
+  <header class="page-top"><div class="page-top-in${o.toolbar ? ' has-toolbar' : ''}">
+    ${o.back ? `<a class="page-back" href="${o.back.href}" data-back>${iconSvg('arrow-left')}${o.back.label}</a>` : ''}
+    <div class="page-head"><h1 class="page-title" id="${o.titleId ?? screen + 'Title'}">${title}</h1>${envBadge}${o.actions ? `<div class="page-actions">${o.actions}</div>` : ''}</div>
+    ${o.toolbar ? `<div class="page-toolbar">${o.toolbar}</div>` : ''}
+  </div></header>
+  <div class="page-scroll"><div class="page${o.narrow ? ' narrow' : ''}">${inner}</div></div>
+</section>`;
+
+/** The shared money screens (flows.ts) in the console: a narrow scaffold, the form in one panel. */
+const flowFrame: FlowFrame = (f) =>
+  page(f.screen, f.title, `<section class="panel flow-panel"><div class="panel-body">${f.content}</div><div class="actions-bar">${f.actions}</div></section>`, {
+    back: { href: '#/home', label: 'Vue d’ensemble' },
+    narrow: true,
+  });
 
 export const consolePage = (nonce: string, env: string) => {
   const body = `
@@ -72,14 +89,7 @@ export const consolePage = (nonce: string, env: string) => {
   </header>
   <div class="console-body">
 
-<section class="screen fill" data-screen="home" hidden><div class="page">
-  <div class="page-head"><h1 class="page-title" id="homeTitle">Vue d’ensemble</h1>
-    <div class="page-actions" id="homeActions">
-      <a class="btn btn-sm" href="#/deposit">${iconSvg('plus')}Dépôt</a>
-      <a class="btn btn-sm btn-secondary" href="#/send">${iconSvg('send')}Envoyer</a>
-      <a class="btn btn-sm btn-secondary" href="#/withdraw">${iconSvg('withdraw')}Retirer</a>
-    </div>
-  </div>
+${page('home', 'Vue d’ensemble', `
   <div class="note warn" id="homeClosed" hidden>${iconSvg('alert')}<p>Ce compte LightPay est fermé : il ne peut plus recevoir ni envoyer d’argent.</p></div>
   <div class="well">
     ${stat({ id: 'homeAvailable', label: 'Disponible', hint: 'Envoyable et retirable' })}
@@ -87,103 +97,34 @@ export const consolePage = (nonce: string, env: string) => {
     ${stat({ id: 'homeIn', label: 'Entrées · 30 j', hintId: 'homeInHint' })}
     ${stat({ id: 'homeOut', label: 'Sorties · 30 j', hintId: 'homeOutHint' })}
   </div>
-  <section class="panel grow"><div class="panel-head"><h2 class="panel-title">Activité récente</h2><a class="link" href="#/activity">Tout voir</a></div><div class="panel-flush scroll" id="homeActivity"><div class="sk-pad">${skeletonRows(6, 'div')}</div></div></section>
+  <div class="section-row"><h2 class="section-title">Activité récente</h2><a class="link" href="#/activity">Tout voir</a></div>
+  <div class="list-card" id="homeActivity"><div class="sk-pad">${skeletonRows(6, 'div')}</div></div>
   <div class="msg" id="homeMsg" role="status" aria-live="polite"></div>
-</div></section>
+`, { actions: `<span class="page-actions-in" id="homeActions">
+      <a class="btn btn-sm" href="#/deposit">${iconSvg('plus')}Dépôt</a>
+      <a class="btn btn-sm btn-secondary" href="#/send">${iconSvg('send')}Envoyer</a>
+      <a class="btn btn-sm btn-secondary" href="#/withdraw">${iconSvg('withdraw')}Retirer</a>
+    </span>` })}
 
-<section class="screen fill" data-screen="activity" hidden><div class="page">
-  <div class="page-head"><h1 class="page-title">Activité</h1>${envBadge}</div>
-  <div class="grid-2" id="actGrid">
-    <section class="panel"><div class="panel-head"><h2 class="panel-title">Opérations <span class="count" id="actCount"></span></h2>
-      <div class="seg-sm" role="group" aria-label="Filtrer" id="actFilter"><button type="button" data-f="all" aria-pressed="true">Tout</button><button type="button" data-f="in" aria-pressed="false">Entrées</button><button type="button" data-f="out" aria-pressed="false">Sorties</button><button type="button" data-f="failed" aria-pressed="false">Refusées</button></div></div>
-      <div class="panel-flush scroll" id="actList"><div class="sk-pad">${skeletonRows(8, 'div')}</div></div></section>
-    <section class="panel detail-panel" id="actDetail"><div class="panel-head"><h2 class="panel-title">Détail</h2><a class="link show-narrow" href="#/activity">Retour à la liste</a></div><div class="scroll" id="actDetailBody"><p class="empty">Choisissez une opération pour voir son détail.</p></div></section>
-  </div>
+${page('activity', 'Activité', `
+  <div class="list-card" id="actList"><div class="sk-pad">${skeletonRows(8, 'div')}</div></div>
   <div class="msg" id="actMsg" role="status" aria-live="polite"></div>
-</div></section>
+`, { toolbar: `<div class="seg-sm" role="group" aria-label="Filtrer" id="actFilter"><button type="button" data-f="all" aria-pressed="true">Tout</button><button type="button" data-f="in" aria-pressed="false">Entrées</button><button type="button" data-f="out" aria-pressed="false">Sorties</button><button type="button" data-f="failed" aria-pressed="false">Refusées</button></div><span class="count-pill" id="actCount"></span>` })}
 
-${flow(
-  'deposit',
-  'Dépôt',
-  `<label class="label mt" for="depAmount">Montant à déposer</label>
-    <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="depMin">FCFA</div></div>
-    <div class="field"><span class="label" id="depNetLabel">Payer avec</span>
-      <div class="seg" role="group" aria-labelledby="depNetLabel">
-        <button class="seg-opt" type="button" data-dep-net="MTN_MOMO_COG" aria-pressed="true"><span class="op-logo mtn" aria-hidden="true"></span>MTN MoMo</button>
-        <button class="seg-opt" type="button" data-dep-net="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true"></span>Airtel Money</button>
-      </div>
-    </div>
-    <div class="fees" id="depFees" hidden></div>
-    <div class="msg" id="depMsg" role="status" aria-live="polite"></div>
-    <div class="note">${iconSvg('info')}<p>Vous validerez le paiement sur votre téléphone. Le montant est crédité dès la confirmation de l’opérateur.</p></div>`,
-  '<button class="btn" type="button" id="depGo" disabled>Continuer vers le paiement</button>'
-)}
+${page('activity-item', 'Opération', `
+  <div class="stack" id="actDetailBody"></div>
+  <div class="msg" id="actItemMsg" role="status" aria-live="polite"></div>
+`, { back: { href: '#/activity', label: 'Activité' }, narrow: true })}
 
-${flow(
-  'send',
-  'Envoyer',
-  `<div class="field"><label for="sendTo">Destinataire</label><input id="sendTo" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="@pseudo ou e-mail"><p class="hint" id="sendWho"></p></div>
-    <label class="label mt-lg" for="sendAmount">Montant</label>
-    <div class="amount-wrap"><input class="amount-input" id="sendAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="sendAvail">FCFA</div></div>
-    <div class="field"><label for="sendNote">Message (facultatif)</label><input id="sendNote" maxlength="140" autocomplete="off" placeholder="Ex. : loyer de mars"></div>
-    <div class="msg" id="sendMsg" role="status" aria-live="polite"></div>
-    <div class="note">${iconSvg('bolt')}<p>Gratuit et instantané entre comptes LightPay.</p></div>`,
-  '<button class="btn" type="button" id="sendNext">Continuer</button>'
-)}
+${flowScreens(flowFrame)}
 
-${flow(
-  'send-review',
-  'Vérifier l’envoi',
-  `<p class="eyebrow mt">Vous envoyez</p><div class="amount-xl" id="sendReviewAmount"></div><div class="receipt" id="sendReviewRows"></div><div class="msg" id="sendReviewMsg" role="status" aria-live="polite"></div>`,
-  '<div class="btn-row"><button class="btn btn-secondary" type="button" data-back>Modifier</button><button class="btn" type="button" id="sendConfirm">Confirmer l’envoi</button></div>'
-)}
+${page('apps', 'Apps connectées', `
+  <div class="list-card" id="appsList"><div class="sk-pad">${skeletonRows(2, 'div')}</div></div>
+  <div class="msg" id="appsMsg" role="status" aria-live="polite"></div>
+`, { actions: '<span class="count-pill" id="appsCount"></span>' })}
 
-${flow(
-  'send-done',
-  'Envoi',
-  `<div class="state"><span class="state-icon ok">${iconSvg('check')}</span><h2>Argent envoyé</h2><p id="sendDoneText"></p></div>`,
-  '<button class="btn" type="button" data-home>Terminé</button>'
-)}
-
-${flow(
-  'withdraw',
-  'Retirer',
-  `<div class="field"><span class="label" id="wdNetLabel">Vers</span>
-      <div class="seg" role="group" aria-labelledby="wdNetLabel">
-        <button class="seg-opt" type="button" data-wd-net="MTN_MOMO_COG" aria-pressed="true"><span class="op-logo mtn" aria-hidden="true"></span>MTN MoMo</button>
-        <button class="seg-opt" type="button" data-wd-net="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true"></span>Airtel Money</button>
-      </div>
-    </div>
-    <div class="field"><label for="wdPhone">Numéro qui reçoit</label><div class="input-prefix"><span>+242</span><input id="wdPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
-    <label class="label mt-lg" for="wdAmount">Montant à recevoir</label>
-    <div class="amount-wrap"><input class="amount-input" id="wdAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="wdAvail">FCFA</div></div>
-    <div class="fees" id="wdFees" hidden></div>
-    <div class="msg" id="wdMsg" role="status" aria-live="polite"></div>
-    <div class="section-head" id="wdListHead" hidden><h2>Derniers retraits</h2></div>
-    <ul class="list" id="wdList"></ul>`,
-  '<button class="btn" type="button" id="wdNext" disabled>Continuer</button>'
-)}
-
-${flow(
-  'withdraw-review',
-  'Vérifier le retrait',
-  `<p class="eyebrow mt">Vous recevez</p><div class="amount-xl" id="wdReviewAmount"></div><div class="receipt" id="wdReviewRows"></div><div class="msg" id="wdReviewMsg" role="status" aria-live="polite"></div>`,
-  '<div class="btn-row"><button class="btn btn-secondary" type="button" data-back>Modifier</button><button class="btn" type="button" id="wdConfirm">Confirmer le retrait</button></div>'
-)}
-
-${flow(
-  'withdraw-done',
-  'Retrait',
-  `<div class="state"><span class="state-icon" id="wdDoneIcon"></span><h2 id="wdDoneTitle"></h2><p id="wdDoneText"></p></div>`,
-  '<button class="btn" type="button" data-home>Terminé</button>'
-)}
-
-<section class="screen fill" data-screen="apps" hidden><div class="page">
-  <div class="page-head"><h1 class="page-title">Apps connectées</h1></div>
-  <div class="grid-2" id="appsGrid">
-    <section class="panel"><div class="panel-head"><h2 class="panel-title">Autorisations <span class="count" id="appsCount"></span></h2></div><div class="panel-flush scroll" id="appsList"><div class="sk-pad">${skeletonRows(2, 'div')}</div></div></section>
-    <section class="panel detail-panel" id="appPanel"><div class="panel-head"><h2 class="panel-title">Accès de l’app</h2><a class="link show-narrow" href="#/apps">Retour à la liste</a></div><div id="appEmpty"><p class="empty">Choisissez une app pour voir et régler ses accès.</p></div>
-      <div id="appBody" class="scroll" hidden><div class="panel-body">
+${page('app', 'Accès de l’app', `
+  <section class="panel"><div class="panel-body">
         <div class="cell mt"><span class="avatar" id="appAvatar" aria-hidden="true"></span><span class="cell-main"><span class="cell-title" id="appName"></span><span class="cell-sub" id="appSince"></span></span></div>
         <div class="section-head"><h2>Ce que l’app peut faire</h2></div>
         <ul class="list" id="appScopes"></ul>
@@ -192,14 +133,10 @@ ${flow(
           <button class="btn btn-secondary mt" type="button" id="appLimitSave">Enregistrer la limite</button>
         </div>
         <div class="msg" id="appMsg" role="status" aria-live="polite"></div>
-      </div><div class="panel-actions"><button class="btn btn-danger" type="button" id="appRevoke">Retirer l’accès</button></div></div>
-    </section>
-  </div>
-  <div class="msg" id="appsMsg" role="status" aria-live="polite"></div>
-</div></section>
+  </div><div class="panel-actions"><button class="btn btn-danger" type="button" id="appRevoke">Retirer l’accès</button></div></section>
+`, { back: { href: '#/apps', label: 'Apps connectées' }, narrow: true })}
 
-<section class="screen" data-screen="security" hidden><div class="page narrow">
-  <div class="page-head"><h1 class="page-title">Sécurité et compte</h1></div>
+${page('security', 'Sécurité et compte', `
   <div class="stack">
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Nom d’utilisateur</h2></div><div class="panel-body">
       <p class="small muted">On vous envoie de l’argent avec ce nom, sans connaître votre e-mail.</p>
@@ -224,15 +161,12 @@ ${flow(
       <div class="msg" id="delMsg" role="status" aria-live="polite"></div>
     </section>
   </div>
-</div></section>
+`, { narrow: true })}
 
-<section class="screen" data-screen="dev" hidden><div class="page">
-  <div class="page-head"><h1 class="page-title">Développeurs</h1>${envBadge}
-    <div class="page-actions"><a class="btn btn-sm" href="#/dev/new">${iconSvg('plus')}Nouvelle app</a></div>
-    <p class="page-sub">Vos apps branchées sur LightPay : clés API, webhooks, paiements reçus. Les clés test utilisent l’environnement de test, les clés live l’argent réel.</p>
-  </div>
-  <div class="stack">
-    <section class="panel" id="devAppsPanel"><div class="panel-head"><h2 class="panel-title">Vos apps <span class="count" id="devCount"></span></h2></div><div class="panel-flush" id="devList"></div></section>
+${page('dev', 'Développeurs', `
+  <p class="page-sub">Vos apps branchées sur LightPay : clés API, webhooks, paiements reçus. Les clés test utilisent l’environnement de test, les clés live l’argent réel.</p>
+  <div class="list-card" id="devList"></div>
+  <div class="stack mt-lg">
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Rattacher une app existante ${tip('Pour une app créée avant l’espace développeurs : collez une de ses clés secrètes. Elle prouve que l’app est à vous ; elle n’est ni affichée ni conservée.')}</h2></div><div class="panel-body">
       <div class="field"><label for="claimKey">Clé secrète de l’app</label><input id="claimKey" type="password" autocomplete="off" placeholder="sec_live_… ou sec_test_…"></div>
       <button class="btn btn-secondary mt" type="button" id="claimGo">Rattacher à mon compte</button>
@@ -240,10 +174,9 @@ ${flow(
     </div></section>
   </div>
   <div class="msg" id="devMsg" role="status" aria-live="polite"></div>
-</div></section>
+`, { actions: `<span class="count-pill" id="devCount"></span><a class="btn btn-sm" href="#/dev/new">${iconSvg('plus')}Nouvelle app</a>` })}
 
-<section class="screen" data-screen="dev-new" hidden><div class="page narrow">
-  <div class="page-head"><h1 class="page-title">Nouvelle app</h1></div>
+${page('dev-new', 'Nouvelle app', `
   <section class="panel"><div class="panel-body">
     <div class="field"><label for="newAppName">Nom de l’app</label><input id="newAppName" maxlength="60" autocomplete="off" placeholder="Ma boutique"></div>
     <div class="field"><label for="newAppId">Identifiant</label><input id="newAppId" maxlength="50" autocomplete="off" placeholder="ma-boutique" class="mono"><p class="hint">Minuscules, chiffres, « - » ou « _ ». Il apparaît dans les paiements et ne change plus.</p></div>
@@ -251,11 +184,9 @@ ${flow(
     <div class="msg" id="newAppMsg" role="status" aria-live="polite"></div>
   </div><div class="actions-bar"><button class="btn" type="button" id="newAppGo">Créer l’app</button></div></section>
 </div></section>
+`, { back: { href: '#/dev', label: 'Développeurs' }, narrow: true })}
 
-<section class="screen" data-screen="dev-app" hidden><div class="page">
-  <div class="page-head"><h1 class="page-title" id="daTitle">App</h1><span class="pill mono" id="daId"></span>${envBadge}</div>
-  <nav class="tabs" id="daTabs" aria-label="Sections de l’app"></nav>
-
+${page('dev-app', 'App', `
   <div data-tab="overview" class="stack">
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Aperçu · 30 derniers jours</h2>${envBadge}</div>
       <div class="panel-body"><div class="well">
@@ -338,7 +269,7 @@ ${flow(
     </div></section>
   </div>
   <div class="msg" id="daMsg" role="status" aria-live="polite"></div>
-</div></section>
+`, { back: { href: '#/dev', label: 'Développeurs' }, titleId: 'daTitle', actions: '<span class="pill mono" id="daId"></span>', toolbar: '<nav class="tabs" id="daTabs" aria-label="Sections de l’app"></nav>' })}
 
   </div>
   <nav class="tabbar console-tabbar" aria-label="Navigation">
@@ -368,7 +299,6 @@ ${flow(
   const params = new URLSearchParams(location.search);
   const returnUrl = (function () { const r = params.get('return'); try { const u = new URL(r); return u.protocol === 'https:' || u.hostname === 'localhost' ? u.toString() : null; } catch (e) { return null; } })();
   const SCOPE_ICON = { 'balance:read': 'wallet', payee: 'receive', deposit: 'plus', charge: 'send' };
-  const WD_STATUS = { SUCCEEDED: ['ok', 'envoyé'], PENDING: ['warn', 'en cours'], FAILED: ['err', 'échoué · restitué'] };
   const NARROW = window.matchMedia('(max-width: 960px)');
   let me = null;
   const cur = () => (me ? me.wallet.currency : 'XAF');
@@ -544,12 +474,12 @@ ${flow(
     await guarded(async () => {
       await loadMe();
       const act = await LP.api('GET', '/v1/me/activity?limit=100');
-      table($('homeActivity'), [{ label: '' }, { label: '', cls: 'num' }], act.activity.slice(0, 30).map((a) => { const c = actCells(a); return { cells: [c[0], c[3]], href: '#/activity/' + encodeURIComponent(a.id) }; }), 'Aucune opération pour l’instant.', true);
+      table($('homeActivity'), [{ label: '' }, { label: '', cls: 'num' }], act.activity.slice(0, 10).map((a) => { const c = actCells(a); return { cells: [c[0], c[3]], href: '#/activity/' + encodeURIComponent(a.id) }; }), 'Aucune opération pour l’instant.', true);
       const since = Date.now() - 30 * 86400000;
       let inSum = 0, outSum = 0, inN = 0, outN = 0;
       act.activity.forEach((a) => {
         if (a.status !== 'SUCCEEDED' || new Date(a.created_at).getTime() < since) return;
-        if (a.direction === 'IN') { inSum += Number(a.total || a.amount); inN++; } else { outSum += Number(a.total || a.amount); outN++; }
+        if (a.direction === 'IN') { inSum += Number(a.amount); inN++; } else { outSum += Number(walletAmount(a)); outN++; }
       });
       $('homeIn').textContent = LP.money(inSum, cur());
       $('homeInHint').textContent = inN + (inN > 1 ? ' opérations' : ' opération');
@@ -559,246 +489,20 @@ ${flow(
   }
   document.querySelectorAll('[data-home]').forEach((b) => b.addEventListener('click', () => nav.go('home')));
 
-  // ---------------------------------------------------------------- deposit
-  let depNet = 'MTN_MOMO_COG', depQuotes = null;
-  document.querySelectorAll('[data-dep-net]').forEach((b) => b.addEventListener('click', () => {
-    depNet = b.dataset.depNet;
-    document.querySelectorAll('[data-dep-net]').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
-    renderDepFees();
-  }));
-  function renderDepFees() {
-    const q = depQuotes && depQuotes[depNet];
-    const amount = Number(amountDigits($('depAmount').value));
-    $('depGo').disabled = true;
-    if (!amount) { $('depFees').hidden = true; $('depMin').classList.remove('below'); say('depMsg', ''); return; }
-    // Below the minimum: no fees and no error, only the minimum highlighted (the button stays off).
-    const min = q ? Number(q.minimum) : lim('deposit_min');
-    $('depMin').classList.toggle('below', amount < min);
-    if (amount < min) { $('depFees').hidden = true; say('depMsg', ''); return; }
-    if (!q) return;
-    const approx = q.estimated ? '≈ ' : '';
-    feeRows($('depFees'), [
-      ['Dépôt', LP.money(q.amount, cur())],
-      ['Frais LightPay', LP.money(q.lightpay_fee, cur())],
-      ['Frais opérateur', approx + LP.money(q.operator_fee, cur())],
-      ['Total à payer', approx + LP.money(q.total, cur()), true],
-    ]);
-    $('depFees').hidden = false;
-    say('depMsg', '');
-    $('depGo').disabled = false;
-  }
-  const loadDepQuote = debounce(async () => {
-    const amount = amountDigits($('depAmount').value);
-    if (!amount) { depQuotes = null; renderDepFees(); return; }
-    try { depQuotes = (await LP.api('GET', '/v1/me/deposits/quote?amount=' + amount)).quotes; renderDepFees(); }
-    catch (e) { if (e.signIn) signIn(); else say('depMsg', e.message, 'err'); }
-  }, 300);
-  $('depAmount').addEventListener('input', () => { $('depGo').disabled = true; loadDepQuote(); });
-  $('depGo').addEventListener('click', () => guarded(async () => {
-    $('depGo').disabled = true;
-    try {
-      const r = await LP.api('POST', '/v1/me/deposits', { amount: amountDigits($('depAmount').value) }, LP.uuid());
-      location.assign(r.checkout_path);
-    } finally { $('depGo').disabled = false; }
-  }, 'depMsg'));
-
-  // ---------------------------------------------------------------- send
-  let sendState = null, sendResult = null;
-  function enterSend() {
-    crumbs('Mon argent', 'Envoyer');
-    $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur());
-    say('sendMsg', '');
-  }
-  let sendWho = null, sendWhoSeq = 0;
-  const lookupRecipient = debounce(async () => {
-    const to = $('sendTo').value.trim();
-    const seq = ++sendWhoSeq;
-    sendWho = null; $('sendWho').textContent = ''; $('sendWho').className = 'hint';
-    if (to.length < 3) return;
-    try {
-      const r = await LP.api('GET', '/v1/me/recipient?to=' + encodeURIComponent(to));
-      if (seq !== sendWhoSeq) return;
-      sendWho = r.recipient;
-      $('sendWho').textContent = '→ ' + [r.recipient.name, r.recipient.username ? '@' + r.recipient.username : ''].filter(Boolean).join(' · ');
-    } catch (e) {
-      if (seq !== sendWhoSeq) return;
-      if (e.signIn) return signIn();
-      $('sendWho').textContent = e.message; $('sendWho').className = 'hint err';
-    }
-  }, 350);
-  $('sendTo').addEventListener('input', lookupRecipient);
-  $('sendNext').addEventListener('click', () => {
-    const to = $('sendTo').value.trim();
-    const amount = Number(amountDigits($('sendAmount').value));
-    if (!sendWho) return say('sendMsg', 'Entrez le @pseudo ou l’e-mail d’un compte LightPay.', 'err');
-    if (!amount) return say('sendMsg', 'Entrez un montant.', 'err');
-    if (amount > available()) return say('sendMsg', 'Montant supérieur à votre solde disponible (' + LP.money(available(), cur()) + ').', 'err');
-    sendState = { to: to, who: sendWho, amount: String(amount), note: $('sendNote').value.trim(), key: LP.uuid() };
-    nav.go('send/review');
-  });
-  function enterSendReview() {
-    crumbs('Mon argent', 'Envoyer');
-    if (!sendState) return nav.go('send', true);
-    $('sendReviewAmount').textContent = LP.money(sendState.amount, cur());
-    const w = sendState.who || {};
-    const rows = [['À', [w.name, w.username ? '@' + w.username : ''].filter(Boolean).join(' · ') || sendState.to], ['Frais', 'Aucun']];
-    if (sendState.note) rows.push(['Message', sendState.note]);
-    rows.push(['Solde après envoi', LP.money(available() - Number(sendState.amount), cur()), true]);
-    feeRows($('sendReviewRows'), rows);
-    say('sendReviewMsg', '');
-  }
-  $('sendConfirm').addEventListener('click', () => guarded(async () => {
-    if (!sendState) return;
-    $('sendConfirm').disabled = true;
-    try {
-      const r = await LP.api('POST', '/v1/me/transfers', { to: sendState.to, amount: sendState.amount, note: sendState.note }, sendState.key);
-      sendResult = r.transfer;
-      sendState = null;
-      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = ''; $('sendWho').textContent = ''; sendWho = null;
-      await loadMe().catch(() => {});
-      nav.go('send/done', true);
-    } finally { $('sendConfirm').disabled = false; }
-  }, 'sendReviewMsg'));
-  function enterSendDone() {
-    crumbs('Mon argent', 'Envoyer');
-    if (!sendResult) return nav.go('home', true);
-    const t = sendResult.to || {};
-    $('sendDoneText').textContent = LP.money(sendResult.amount, cur()) + ' envoyés à ' + (t.name || (t.username ? '@' + t.username : t.email)) + '.';
-  }
-
-  // ---------------------------------------------------------------- withdraw
-  let wdNet = 'MTN_MOMO_COG', wdQuote = null, wdState = null, wdResult = null, wdSeq = 0;
-  document.querySelectorAll('[data-wd-net]').forEach((b) => b.addEventListener('click', () => {
-    wdNet = b.dataset.wdNet;
-    document.querySelectorAll('[data-wd-net]').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
-    loadWdQuote();
-  }));
-  function wdCheck() {
-    const phone = digits($('wdPhone').value).replace(/^242/, '');
-    const q = wdQuote;
-    $('wdNext').disabled = true;
-    const below = Boolean(q) && Number(q.amount) < Number(q.minimum);
-    $('wdAvail').classList.toggle('below', below);
-    if (!q) return;
-    if (below) { $('wdFees').hidden = true; return say('wdMsg', ''); }
-    if (Number(q.total) > available()) return say('wdMsg', 'Solde insuffisant : ce retrait coûte ' + LP.money(q.total, cur()) + ' frais compris (disponible ' + LP.money(available(), cur()) + ').', 'err');
-    if (!/^0[4-6]\\d{7}$/.test(phone)) return say('wdMsg', 'Entrez le numéro à 9 chiffres qui reçoit l’argent.', phone ? 'err' : undefined);
-    say('wdMsg', '');
-    $('wdNext').disabled = false;
-  }
-  function renderWdFees() {
-    const q = wdQuote;
-    if (!q) { $('wdFees').hidden = true; return; }
-    feeRows($('wdFees'), [
-      ['Vous recevez', LP.money(q.amount, q.currency)],
-      ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
-      ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
-      ['Total débité de votre wallet', LP.money(q.total, q.currency), true],
-    ]);
-    $('wdFees').hidden = false;
-  }
-  const loadWdQuote = debounce(async () => {
-    const amount = amountDigits($('wdAmount').value);
-    const seq = ++wdSeq;
-    if (!amount) { wdQuote = null; renderWdFees(); wdCheck(); say('wdMsg', ''); return; }
-    try {
-      const r = await LP.api('GET', '/v1/me/withdrawals/quote?amount=' + amount + '&network=' + wdNet);
-      if (seq !== wdSeq) return;
-      wdQuote = r.quote; renderWdFees(); wdCheck();
-    } catch (e) { if (e.signIn) signIn(); else say('wdMsg', e.message, 'err'); }
-  }, 300);
-  $('wdAmount').addEventListener('input', () => { $('wdNext').disabled = true; loadWdQuote(); });
-  $('wdPhone').addEventListener('input', wdCheck);
-  async function enterWithdraw() {
-    crumbs('Mon argent', 'Retirer');
-    $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR');
-    wdCheck();
-    try {
-      const r = await LP.api('GET', '/v1/me/withdrawals');
-      $('wdListHead').hidden = !r.withdrawals.length;
-      $('wdList').replaceChildren.apply($('wdList'), r.withdrawals.slice(0, 5).map((w) => {
-        const st = WD_STATUS[w.status] || ['', w.status];
-        return listRow({ icon: 'withdraw', title: LP.money(w.amount, w.currency) + ' vers ' + w.to, sub: dayLabel(w.created_at) + ' · ' + timeLabel(w.created_at), end: el('span', { class: 'pill ' + st[0], text: st[1] }) });
-      }));
-    } catch (e) { /* history is optional */ }
-  }
-  $('wdNext').addEventListener('click', () => {
-    if (!wdQuote) return;
-    wdState = { quote: wdQuote, network: wdNet, msisdn: digits($('wdPhone').value).replace(/^242/, ''), key: LP.uuid() };
-    nav.go('withdraw/review');
-  });
-  function enterWithdrawReview() {
-    crumbs('Mon argent', 'Retirer');
-    if (!wdState) return nav.go('withdraw', true);
-    const q = wdState.quote;
-    $('wdReviewAmount').textContent = LP.money(q.amount, q.currency);
-    feeRows($('wdReviewRows'), [
-      ['Vers', (wdState.network === 'MTN_MOMO_COG' ? 'MTN MoMo' : 'Airtel Money') + ' · +242 ' + fmtPhone(wdState.msisdn)],
-      ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
-      ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
-      ['Total débité', LP.money(q.total, q.currency)],
-      ['Solde après retrait', LP.money(available() - Number(q.total), q.currency), true],
-    ]);
-    say('wdReviewMsg', '');
-  }
-  $('wdConfirm').addEventListener('click', () => guarded(async () => {
-    if (!wdState) return;
-    $('wdConfirm').disabled = true;
-    try {
-      const r = await LP.api('POST', '/v1/me/withdrawals', { amount: wdState.quote.amount, msisdn: wdState.msisdn, network: wdState.network }, wdState.key);
-      wdResult = r.withdrawal;
-      wdState = null; wdQuote = null;
-      $('wdAmount').value = ''; renderWdFees();
-      await loadMe().catch(() => {});
-      nav.go('withdraw/done', true);
-    } finally { $('wdConfirm').disabled = false; }
-  }, 'wdReviewMsg'));
-  function enterWithdrawDone() {
-    crumbs('Mon argent', 'Retirer');
-    if (!wdResult) return nav.go('home', true);
-    const w = wdResult;
-    const icons = { SUCCEEDED: ['ok', 'check', 'Retrait envoyé'], PENDING: ['wait', 'clock', 'Retrait en cours'], FAILED: ['err', 'x', 'Retrait échoué'] };
-    const v = icons[w.status] || icons.PENDING;
-    $('wdDoneIcon').className = 'state-icon ' + v[0];
-    $('wdDoneIcon').replaceChildren(icon(v[1]));
-    $('wdDoneTitle').textContent = v[2];
-    $('wdDoneText').textContent = w.status === 'FAILED'
-      ? 'L’opérateur a refusé l’envoi. Les ' + LP.money(w.total, w.currency) + ' ont été restitués sur votre wallet.'
-      : LP.money(w.amount, w.currency) + ' vers ' + w.to + (w.status === 'PENDING' ? ' : l’opérateur traite l’envoi, vous recevrez un SMS.' : '. Vous allez recevoir un SMS de votre opérateur.');
-    if (w.status === 'PENDING') followWithdrawal(w.id);
-  }
-  // A pending withdrawal is re-read while its screen stays open: the operator usually confirms
-  // within seconds, and the server settles it from the webhook or its own check.
-  let wdFollow = null;
-  function followWithdrawal(id, tries = 0) {
-    clearTimeout(wdFollow);
-    if (tries >= 60) return;
-    wdFollow = setTimeout(async () => {
-      const c = nav.current();
-      if (!c || c.name !== 'withdraw-done' || !wdResult || wdResult.id !== id) return;
-      try {
-        const r = await LP.api('GET', '/v1/me/withdrawals');
-        const w = (r.withdrawals || []).find((x) => x.id === id);
-        if (w && w.status !== 'PENDING') { wdResult = w; await loadMe().catch(() => {}); return enterWithdrawDone(); }
-      } catch (e) { /* next try */ }
-      followWithdrawal(id, tries + 1);
-    }, 3000);
-  }
-
+${FLOWS_SCRIPT}
   // ---------------------------------------------------------------- activity: list + detail
   let activity = [], actFilter = 'all';
   document.querySelectorAll('#actFilter button').forEach((b) => b.addEventListener('click', () => {
     actFilter = b.dataset.f;
     document.querySelectorAll('#actFilter button').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
-    renderActivity(nav.current() && nav.current().param);
+    renderActivity();
   }));
-  function renderActivity(selectedId) {
+  function renderActivity() {
     const rows = activity.filter((a) => actFilter === 'all' || (actFilter === 'failed' ? a.status === 'FAILED' : actFilter === 'in' ? a.direction === 'IN' : a.direction === 'OUT'));
     $('actCount').textContent = String(rows.length);
-    table($('actList'), ACT_COLS, rows.map((a) => ({ cells: actCells(a), href: '#/activity/' + encodeURIComponent(a.id), selected: a.id === selectedId })), actFilter === 'all' ? 'Aucune opération pour l’instant.' : 'Aucune opération dans ce filtre.');
+    table($('actList'), ACT_COLS, rows.map((a) => ({ cells: actCells(a), href: '#/activity/' + encodeURIComponent(a.id) })), actFilter === 'all' ? 'Aucune opération pour l’instant.' : 'Aucune opération dans ce filtre.');
   }
   function renderActDetail(a) {
-    if (!a) { $('actDetailBody').replaceChildren(el('p', { class: 'empty', text: 'Choisissez une opération pour voir son détail.' })); return; }
     const st = STATUS[a.status] || ['', a.status];
     const incoming = a.direction === 'IN';
     const rows = amountRows(a);
@@ -816,7 +520,8 @@ ${flow(
     rows.push(['N° d’opération', a.id, true]);
     const receipt = el('div', { class: 'receipt' });
     feeRows(receipt, rows);
-    $('actDetailBody').replaceChildren(
+    $('activity-itemTitle').textContent = actTitle(a);
+    $('actDetailBody').replaceChildren(el('section', { class: 'panel' }, [
       el('div', { class: 'detail-head' }, [
         el('span', { class: 'avatar' }, [icon(actIcon(a))]),
         el('span', { class: 'cell-main' }, [el('span', { class: 'cell-title', text: actTitle(a) }), el('span', { class: 'amount', text: (incoming ? '+' : '−') + LP.money(walletAmount(a), a.currency) })]),
@@ -825,20 +530,28 @@ ${flow(
         el('span', { class: 'pill ' + st[0], text: st[1] }),
         a.reason ? el('div', { class: 'note warn' }, [icon('alert'), el('p', { text: a.reason })]) : null,
         receipt,
-      ])
-    );
+      ]),
+    ]));
   }
-  async function enterActivity(id) {
+  async function enterActivity() {
     crumbs('Mon argent', 'Activité');
+    if (!activity.length) skeleton($('actList'), 8, 'div');
     await guarded(async () => {
-      if (!activity.length || !id) activity = (await LP.api('GET', '/v1/me/activity?limit=200')).activity;
-      renderActivity(id);
-      if (id) {
-        const a = activity.find((x) => x.id === id) || (await LP.api('GET', '/v1/me/activity/' + encodeURIComponent(id))).activity;
-        renderActDetail(a);
-      } else renderActDetail(null);
-      $('actGrid').classList.toggle('has-detail', Boolean(id));
+      activity = (await LP.api('GET', '/v1/me/activity?limit=200')).activity;
+      renderActivity();
     }, 'actMsg');
+  }
+  // Another operation shows the shimmer first, never the previous one; a late answer is dropped.
+  let actSeq = 0;
+  async function enterActivityItem(id) {
+    crumbs('Activité', 'Opération');
+    const seq = ++actSeq;
+    $('activity-itemTitle').textContent = 'Opération';
+    $('actDetailBody').replaceChildren(); skeleton($('actDetailBody'), 6, 'div');
+    await guarded(async () => {
+      const a = activity.find((x) => x.id === id) || (await LP.api('GET', '/v1/me/activity/' + encodeURIComponent(id))).activity;
+      if (seq === actSeq) renderActDetail(a);
+    }, 'actItemMsg');
   }
 
   // ---------------------------------------------------------------- connected apps: list + detail
@@ -849,11 +562,10 @@ ${flow(
     scopeLabels = r.scope_labels || {};
     $('navConnCount').hidden = !connections.length; $('navConnCount').textContent = String(connections.length);
   }
-  function renderConnections(selectedId) {
+  function renderConnections() {
     $('appsCount').textContent = String(connections.length);
     table($('appsList'), [{ label: 'App' }, { label: 'Permissions', cls: 'hide-sm' }, { label: 'Depuis', cls: 'hide-md' }], connections.map((c) => ({
       href: '#/apps/' + encodeURIComponent(c.id),
-      selected: c.id === selectedId,
       cells: [
         cellMain(el('span', { class: 'avatar', text: initials(c.app_name) }), c.app_name, c.scopes.map((s) => scopeLabels[s] || s).join(' · ')),
         el('span', { class: 'muted-cell', text: c.scopes.length + (c.scopes.length > 1 ? ' permissions' : ' permission') }),
@@ -862,30 +574,32 @@ ${flow(
     })), 'Aucune app n’a accès à votre compte.');
   }
   let appRevokeArmed = false;
-  async function enterApps(id) {
+  async function enterApps() {
     crumbs('Autorisations', 'Apps connectées');
+    await guarded(async () => { await loadConnections(); renderConnections(); }, 'appsMsg');
+  }
+  async function enterApp(id) {
+    crumbs('Apps connectées', 'Accès de l’app');
     appRevokeArmed = false; $('appRevoke').textContent = 'Retirer l’accès'; say('appMsg', '');
     await guarded(async () => {
-      if (!connections.length || !id) await loadConnections();
-      renderConnections(id);
-      const c = id && connections.find((x) => x.id === id);
-      $('appEmpty').hidden = Boolean(c); $('appBody').hidden = !c;
-      $('appsGrid').classList.toggle('has-detail', Boolean(c));
-      if (!c) return;
+      if (!connections.some((x) => x.id === id)) await loadConnections();
+      const c = connections.find((x) => x.id === id);
+      if (!c) return nav.go('apps', true);
+      $('appTitle').textContent = c.app_name;
       $('appAvatar').textContent = initials(c.app_name);
       $('appName').textContent = c.app_name;
       $('appSince').textContent = 'Autorisée le ' + fmtDate(c.created_at);
-      $('appScopes').replaceChildren.apply($('appScopes'), c.scopes.map((s) => listRow({
-        icon: SCOPE_ICON[s] || 'check',
-        title: scopeLabels[s] || s,
-        end: c.scopes.length > 1 ? el('button', { class: 'link', type: 'button', text: 'Retirer', 'aria-label': 'Retirer : ' + (scopeLabels[s] || s), on: { click: () => guarded(async () => {
-          await LP.api('PATCH', '/v1/me/connections/' + encodeURIComponent(c.id), { scopes: c.scopes.filter((x) => x !== s) });
-          await loadConnections(); enterApps(id); say('appMsg', 'Permission retirée.', 'ok');
+      $('appScopes').replaceChildren.apply($('appScopes'), c.scopes.map((sc) => listRow({
+        icon: SCOPE_ICON[sc] || 'check',
+        title: scopeLabels[sc] || sc,
+        end: c.scopes.length > 1 ? el('button', { class: 'link', type: 'button', text: 'Retirer', 'aria-label': 'Retirer : ' + (scopeLabels[sc] || sc), on: { click: () => guarded(async () => {
+          await LP.api('PATCH', '/v1/me/connections/' + encodeURIComponent(c.id), { scopes: c.scopes.filter((x) => x !== sc) });
+          await loadConnections(); enterApp(id); say('appMsg', 'Permission retirée.', 'ok');
         }, 'appMsg') } }) : null,
       })));
       $('appLimitBox').hidden = !c.scopes.includes('charge');
       $('appLimit').value = c.charge_limit || '';
-    }, 'appsMsg');
+    }, 'appMsg');
   }
   const currentConnection = () => nav.current() && connections.find((x) => x.id === nav.current().param);
   $('appLimitSave').addEventListener('click', () => guarded(async () => {
@@ -1190,13 +904,14 @@ ${flow(
   // ---------------------------------------------------------------- navigation
   const navKeyOf = (c) => c.name === 'dev-app' ? 'app:' + String(c.param || '').split('/')[0]
     : c.name === 'dev-new' ? 'dev'
-    : c.name.indexOf('send') === 0 ? 'send' : c.name.indexOf('withdraw') === 0 ? 'withdraw' : c.name;
+    : c.name === 'activity-item' ? 'activity' : c.name === 'app' ? 'apps'
+    : c.name.indexOf('send') === 0 ? 'send' : c.name.indexOf('withdraw') === 0 ? 'withdraw' : c.name.indexOf('deposit') === 0 ? 'deposit' : c.name;
   const withNav = (fn) => (param) => { const c = nav.current(); if (c) { highlight(navKeyOf(c)); syncTabs(c); } syncEnvLinks(); return fn(param); };
   const nav = createNav({
     root: 'home',
     resolve: (route) => {
-      if (route.indexOf('apps/') === 0) return ['apps', route.slice(5)];
-      if (route.indexOf('activity/') === 0) return ['activity', route.slice(9)];
+      if (route.indexOf('apps/') === 0) return ['app', route.slice(5)];
+      if (route.indexOf('activity/') === 0) return ['activity-item', route.slice(9)];
       if (route === 'dev/new') return ['dev-new', null];
       if (route.indexOf('dev/') === 0) return ['dev-app', route.slice(4)];
       return [route.replace('/', '-'), null];
@@ -1204,17 +919,18 @@ ${flow(
     onRootBack: () => { if (returnUrl) location.assign(returnUrl); },
     screens: {
       home: { enter: withNav(enterHome) },
-      activity: { parent: 'home', enter: withNav(enterActivity) },
-      deposit: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Dépôt'); say('depMsg', ''); renderDepFees(); }) },
-      send: { parent: 'home', enter: withNav(enterSend) },
-      'send-review': { parent: 'send', enter: withNav(enterSendReview) },
+      activity: { enter: withNav(enterActivity) },
+      'activity-item': { parent: 'activity', enter: withNav(enterActivityItem) },
+      deposit: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Dépôt'); say('depMsg', ''); renderDepFees(); focusAmount('depAmount'); loadMe().then(renderDepFees).catch(() => {}); }) },
+      'deposit-done': { parent: 'home', enter: withNav(enterDepositDone) },
+      send: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Envoyer'); enterSend(); }) },
       'send-done': { parent: 'home', enter: withNav(enterSendDone) },
-      withdraw: { parent: 'home', enter: withNav(enterWithdraw) },
-      'withdraw-review': { parent: 'withdraw', enter: withNav(enterWithdrawReview) },
+      withdraw: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Retirer'); return enterWithdraw(); }) },
       'withdraw-done': { parent: 'home', enter: withNav(enterWithdrawDone) },
-      apps: { parent: 'home', enter: withNav(enterApps) },
-      security: { parent: 'home', enter: withNav(enterSecurity) },
-      dev: { parent: 'home', enter: withNav(enterDev) },
+      apps: { enter: withNav(enterApps) },
+      app: { parent: 'apps', enter: withNav(enterApp) },
+      security: { enter: withNav(enterSecurity) },
+      dev: { enter: withNav(enterDev) },
       'dev-new': { parent: 'dev', enter: withNav(enterDevNew) },
       'dev-app': { parent: 'dev', enter: withNav(enterDevApp) },
     },
@@ -1248,7 +964,8 @@ ${flow(
     const c = nav.current();
     if (!c) return;
     if (c.name === 'home') return enterHome();
-    if (c.name === 'activity') return enterActivity(c.param);
+    if (c.name === 'activity') return enterActivity();
+    if (c.name === 'activity-item') return enterActivityItem(c.param);
     if (c.name === 'withdraw-done' && wdResult) {
       const r = await LP.api('GET', '/v1/me/withdrawals').catch(() => null);
       const w = r && (r.withdrawals || []).find((x) => x.id === wdResult.id);

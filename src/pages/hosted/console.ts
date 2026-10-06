@@ -150,6 +150,14 @@ html.console-page .foot { display: none; }
   .scaffold .page-title { font-size: 19px; }
 }
 
+.section-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 28px 0 10px; }
+.section-title { font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.count-pill { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.count-pill:empty { display: none; }
+.page-actions-in { display: flex; flex-wrap: wrap; gap: 8px; }
+.flow-panel .panel-body { padding-top: 20px; }
+.scaffold .tabs { margin: 0; }
+
 /* ---------- key figures ---------- */
 .well { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 20px 24px; padding: 18px 20px; border-radius: 14px; background: var(--raised); }
 .stat { min-width: 0; }
