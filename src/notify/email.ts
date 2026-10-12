@@ -32,7 +32,7 @@ export function renderEmail(m: { title: string; body: string; route?: string; sa
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:16px;border:1px solid #e4e4e7">
 <tr><td style="padding:28px 28px 8px;font-size:18px;font-weight:600;letter-spacing:-.01em">Light<span style="color:#047857">Pay</span>${m.sandbox ? ' <span style="font-size:11px;color:#d97706;font-weight:600">TEST</span>' : ''}</td></tr>
 <tr><td style="padding:12px 28px 0;font-size:20px;font-weight:600;line-height:1.3">${esc(m.title)}</td></tr>
-<tr><td style="padding:10px 28px 0;font-size:15px;line-height:1.55;color:#3f3f46">${esc(m.body)}</td></tr>
+<tr><td style="padding:10px 28px 0;font-size:15px;line-height:1.55;color:#3f3f46">${esc(m.body).split(String.fromCharCode(10)).join('<br>')}</td></tr>
 <tr><td style="padding:24px 28px 28px"><a href="${esc(link)}" style="display:inline-block;background:#047857;color:#ffffff;text-decoration:none;font-weight:600;font-size:13px;letter-spacing:.08em;text-transform:uppercase;padding:14px 22px;border-radius:12px">Ouvrir LightPay</a></td></tr>
 </table>
 <p style="max-width:480px;font-size:12px;line-height:1.5;color:#71717a;margin:16px auto 0">LightPay vous écrit à chaque opération sur votre compte et à chaque nouvelle connexion. Ne répondez pas à cet e-mail.</p>

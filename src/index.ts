@@ -25,6 +25,7 @@ import { lockedMessage, levelNow, refreshLockdown, withBypass } from './security
 import { dispatchDuePayouts } from './db/payouts.js';
 import { purgeOldAttempts } from './db/withdrawal-guard.js';
 import { refreshProviderSettings } from './payments/provider-settings.js';
+import { loadTemplates } from './notify/templates.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
 import { registerRateLimits } from './security/rate-limit.js';
 import crypto from 'crypto';
@@ -380,7 +381,9 @@ async function start() {
     await refreshFeeSettings();
     await refreshProviderSettings();
     await refreshControlSettings();
-    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); void refreshControlSettings(); }, 60_000).unref();
+    // Texts of the automatic messages, as the admin wrote them (Administration > Messages).
+    await loadTemplates();
+    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); void refreshControlSettings(); void loadTemplates(); }, 60_000).unref();
 
     await server.listen({
       port: config.port,

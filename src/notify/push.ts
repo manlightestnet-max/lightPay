@@ -87,7 +87,8 @@ export async function sendPush(token: string, n: { title: string; body: string; 
           data: n.data ?? {},
           android: {
             priority: 'HIGH',
-            notification: { channel_id: 'lightpay_events', tag: n.tag, default_sound: true },
+            // Silhouette du logo LightPay (drawable de l'app), teintée en vert LightPay.
+            notification: { channel_id: 'lightpay_events', icon: 'ic_stat_lightpay', color: '#10B981', tag: n.tag, default_sound: true },
           },
         },
       }),

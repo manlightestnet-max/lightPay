@@ -6,12 +6,32 @@ import { CONSOLE_CSS } from './console.js';
  * /admin — the owner's console (LightPay sign-in listed in ADMIN_UIDS). Revenue first, then the
  * provider reserves, users, apps, every movement, the main wallet and the admin log.
  * Hash routes: #/home · #/reserves · #/users → #/users/<wallet> · #/apps → #/apps/<id> · #/developers → #/developers/<uid> ·
- *   #/moves → #/moves/<tx> · #/main · #/fees · #/providers · #/audit · #/lockdown · #/controls · #/payouts → #/payouts/<id> · #/suspensions
+ *   #/moves → #/moves/<tx> · #/main · #/fees · #/providers · #/audit · #/lockdown · #/controls · #/payouts → #/payouts/<id> · #/suspensions · #/messages → #/messages/<event>
  *   (an item is its own screen, with a back link)
  * ?env=sandbox for the test ledger. No withdrawal from here, on purpose.
  */
 
 const ADMIN_CSS = `
+/* Messages: list of templates, editor with a live phone / e-mail preview. */
+.msg-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--raised); color: var(--muted); }
+.msg-pill.custom { background: var(--accent-soft); color: var(--accent-ink); }
+.msg-pill.off { background: var(--danger-soft); color: var(--danger); }
+.msg-switches { display: grid; gap: 4px; }
+.msg-switches .agree { margin-top: 6px; }
+.vars { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.var-chip { border: 1px solid var(--line-strong); background: transparent; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text); cursor: pointer; }
+.var-chip:hover { border-color: var(--accent); }
+.notif { display: flex; gap: 12px; padding: 14px; border-radius: 18px; background: var(--raised); }
+.notif .brand-mark { width: 22px; height: 22px; margin-top: 2px; }
+.notif-main { flex: 1; min-width: 0; }
+.notif-app { font-size: 12px; color: var(--muted); }
+.notif-title { font-size: 15px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.notif-body { font-size: 14px; color: var(--muted); margin-top: 2px; white-space: pre-line; overflow-wrap: anywhere; }
+.mail-prev { margin-top: 14px; padding: 14px; border-radius: 14px; border: 1px solid var(--line); }
+.mail-prev .mail-subject { font-size: 13px; color: var(--muted); }
+.mail-prev .mail-subject b { color: var(--text); font-weight: 600; }
+.mail-prev .mail-body { margin-top: 8px; font-size: 14px; white-space: pre-line; overflow-wrap: anywhere; }
+.prev-off { margin-top: 10px; font-size: 13px; color: var(--muted); }
 .bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 4px 0 0; }
 .bars span { flex: 1; min-width: 3px; border-radius: 3px 3px 0 0; background: var(--accent); opacity: .85; }
 .bars span.zero { background: var(--line); opacity: 1; height: 2px !important; }
@@ -144,6 +164,7 @@ export const adminPage = (nonce: string, env: string) => {
     <div class="nav-label">Réglages</div>
     ${navItem('fees', 'fees', 'settings', 'Frais et minimums')}
     ${navItem('providers', 'providers', 'swap', 'Fournisseurs')}
+    ${navItem('messages', 'messages', 'mail', 'Messages')}
     ${navItem('audit', 'audit', 'clock', 'Journal admin')}
   </nav>
   <div class="side-foot"><div class="me"><span class="avatar" id="meAvatar" aria-hidden="true"></span><span class="me-main"><span class="me-name" id="meName"></span><span class="me-mail">Administrateur</span></span><button class="icon-btn" type="button" id="signOutSide" aria-label="Se déconnecter" title="Se déconnecter">${iconSvg('logout')}</button></div></div>
@@ -315,6 +336,13 @@ ${page('controls', 'Délais et limites', `
   <p class="hint">Cliquez une valeur pour la modifier : appliquée tout de suite, à cet environnement seulement, et inscrite au journal admin. Pendant un délai, vous pouvez retenir ou annuler l’envoi depuis « Retraits et remboursements ».</p>
 `)}
 
+${page('messages', 'Messages automatiques', `
+  <p class="hint">Ce que LightPay envoie tout seul à chaque personne : notification sur le téléphone et, pour ce qui compte, e-mail. Cliquez un message pour réécrire son texte, couper son push ou son e-mail, ou le désactiver. Les mêmes textes servent au réel et au test.</p>
+  <div id="msgGroups"></div>
+`)}
+
+${page('message', 'Message', '<div id="msgDetail"></div>', '', { back: { href: '#/messages', label: 'Messages' } })}
+
 ${page('payouts', 'Retraits et remboursements', `
   <div id="payObserved"></div>
   <div class="list-card" id="payTable"></div>
@@ -368,6 +396,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   ACTION.FEES_UPDATE = 'Frais et minimums modifiés';
   ACTION.PROVIDERS_UPDATE = 'Fournisseur mobile money changé';
   ACTION.CONTROLS_UPDATE = 'Délais et limites modifiés';
+  ACTION.MESSAGE_UPDATE = 'Message modifié';
+  ACTION.MESSAGE_RESET = 'Message rétabli';
   ACTION.LOCKDOWN = 'Frein d’urgence';
   ACTION.PAYOUT_HOLD = 'Envoi retenu';
   ACTION.PAYOUT_RELEASE = 'Envoi libéré';
@@ -1127,6 +1157,125 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     await load('suspensions', loadSuspensions);
   }
 
+  // ---------------------------------------------------------------- automatic messages
+  // Every message is a template with {variables}; the preview fills them with example values.
+  let msgList = null;
+  const fillVars = (text, vars) => { let out = String(text || ''); (vars || []).forEach((v) => { out = out.split('{' + v.name + '}').join(v.sample); }); return out.trim(); };
+  const firstLine = (t) => String(t || '').split(String.fromCharCode(10))[0];
+  function msgPill(m) {
+    if (!m.current.enabled) return el('span', { class: 'msg-pill off', text: 'Désactivé' });
+    if (m.custom) return el('span', { class: 'msg-pill custom', text: 'Modifié' });
+    return el('span', { class: 'msg-pill', text: [m.current.push ? 'Push' : null, m.current.email ? 'E-mail' : null].filter(Boolean).join(' · ') || '—' });
+  }
+  async function loadMessages() { msgList = (await LP.api('GET', '/v1/admin-console/messages')).messages; }
+  async function enterMessages() {
+    crumbs('Réglages', 'Messages');
+    if (!msgList) skeleton($('msgGroups'), 6, 'div');
+    await load('messages', async () => {
+      await loadMessages();
+      const groups = [];
+      msgList.forEach((m) => { let g = groups.filter((x) => x.name === m.group)[0]; if (!g) { g = { name: m.group, list: [] }; groups.push(g); } g.list.push(m); });
+      $('msgGroups').replaceChildren.apply($('msgGroups'), groups.map((g) => flushPanel(g.name, items(g.list.map((m) => ({
+        title: m.label,
+        sub: fillVars(m.current.title, m.vars) + ' — ' + firstLine(fillVars(m.current.body, m.vars)),
+        end: msgPill(m),
+        href: '#/messages/' + encodeURIComponent(m.event),
+      })), 'Aucun message.'))));
+    });
+  }
+  async function enterMessage(event) {
+    crumbs('Messages', 'Message');
+    $('messageTitle').textContent = 'Message';
+    if (!msgList) { $('msgDetail').replaceChildren(); skeleton($('msgDetail'), 5, 'div'); }
+    await load('message', async () => {
+      if (!msgList) await loadMessages();
+      const m = msgList.filter((x) => x.event === event)[0];
+      if (!m) { location.hash = '#/messages'; return; }
+      $('messageTitle').textContent = m.label;
+      const cur = m.current;
+      const field = (label, input) => el('div', { class: 'field' }, [el('label', { text: label }), input]);
+      const title = el('input', { maxlength: '80', autocomplete: 'off', value: cur.title });
+      const body = el('textarea', { maxlength: '500', rows: '5' });
+      body.value = cur.body;
+      const subject = el('input', { maxlength: '120', autocomplete: 'off', value: cur.subject });
+      const check = (label, on) => { const c = el('input', { type: 'checkbox' }); c.checked = on; return { box: c, row: el('label', { class: 'agree' }, [c, el('span', { text: label })]) }; };
+      const enabled = check('Envoyer ce message', cur.enabled);
+      const push = check('Notification sur le téléphone', cur.push);
+      const email = check('E-mail', cur.email);
+      // Variables: a click inserts it where the cursor is (in the last field used).
+      let target = body;
+      [title, body, subject].forEach((f) => f.addEventListener('focus', () => { target = f; }));
+      const chips = m.vars.length
+        ? el('div', { class: 'vars' }, m.vars.map((v) => el('button', { class: 'var-chip', type: 'button', text: '{' + v.name + '}', title: v.help + ' — ex. ' + v.sample.trim(), on: { click: () => {
+            const a = target.selectionStart != null ? target.selectionStart : target.value.length, b = target.selectionEnd != null ? target.selectionEnd : a;
+            target.value = target.value.slice(0, a) + '{' + v.name + '}' + target.value.slice(b);
+            target.focus(); target.setSelectionRange(a + v.name.length + 2, a + v.name.length + 2); render();
+          } } })))
+        : el('p', { class: 'hint', text: 'Ce message n’a pas de variable.' });
+      const varHelp = el('ul', { class: 'items' }, m.vars.map((v) => el('li', {}, [cell('{' + v.name + '}', v.help), el('span', { class: 'end small muted', text: v.sample.trim() })])));
+      // Preview with example values.
+      const pTitle = el('div', { class: 'notif-title' }), pBody = el('div', { class: 'notif-body' });
+      const notif = el('div', { class: 'notif' }, [el('span', { class: 'brand-mark', 'aria-hidden': 'true' }), el('div', { class: 'notif-main' }, [el('div', { class: 'notif-app', text: 'LightPay · maintenant' }), pTitle, pBody])]);
+      const mSubject = el('div', { class: 'mail-subject' }), mBody = el('div', { class: 'mail-body' });
+      const mail = el('div', { class: 'mail-prev' }, [mSubject, mBody]);
+      const off = el('p', { class: 'prev-off' });
+      function render() {
+        pTitle.textContent = fillVars(title.value, m.vars);
+        pBody.textContent = fillVars(body.value, m.vars);
+        mSubject.replaceChildren('Objet : ', el('b', { text: fillVars(subject.value || title.value, m.vars) }));
+        mBody.textContent = fillVars(body.value, m.vars);
+        notif.hidden = !push.box.checked || !enabled.box.checked;
+        mail.hidden = !email.box.checked || !enabled.box.checked;
+        off.textContent = !enabled.box.checked ? 'Ce message est désactivé : il ne part plus.' : !push.box.checked && !email.box.checked ? 'Ni push ni e-mail : rien ne part.' : '';
+        off.hidden = !off.textContent;
+      }
+      [title, body, subject].forEach((f) => f.addEventListener('input', render));
+      [enabled, push, email].forEach((c) => c.box.addEventListener('change', render));
+      render();
+
+      const msg = el('div', { class: 'msg', id: 'msgEditMsg', role: 'status', 'aria-live': 'polite' });
+      const refresh = async () => { await loadMessages(); };
+      const save = el('button', { class: 'btn', type: 'button', text: 'Enregistrer', on: { click: () => guarded(async () => {
+        save.disabled = true;
+        try {
+          await LP.api('PUT', '/v1/admin-console/messages/' + encodeURIComponent(m.event), { title: title.value, body: body.value, subject: subject.value, push: push.box.checked, email: email.box.checked, enabled: enabled.box.checked });
+          await refresh(); say('msgEditMsg', 'Enregistré : les prochains messages partent avec ce texte.', 'ok');
+        } finally { save.disabled = false; }
+      }, 'msgEditMsg') } });
+      let armed = false;
+      const reset = el('button', { class: 'btn btn-secondary', type: 'button', text: 'Rétablir le texte d’origine', on: { click: () => {
+        if (!armed) { armed = true; reset.textContent = 'Confirmer : revenir au texte d’origine'; return; }
+        guarded(async () => {
+          await LP.api('DELETE', '/v1/admin-console/messages/' + encodeURIComponent(m.event));
+          await refresh(); await enterMessage(event); say('messageMsg', 'Texte d’origine rétabli.', 'ok');
+        }, 'msgEditMsg');
+      } } });
+      const test = el('button', { class: 'btn btn-secondary', type: 'button', text: 'Envoyer un test sur mon téléphone', on: { click: () => guarded(async () => {
+        test.disabled = true;
+        try {
+          const r = await LP.api('POST', '/v1/admin-console/messages/' + encodeURIComponent(m.event) + '/test');
+          say('msgEditMsg', (r.phones ? 'Test envoyé à ' + r.phones + (r.phones > 1 ? ' téléphones' : ' téléphone') : 'Aucun téléphone avec l’app connecté à votre compte : pas de push') + (r.email ? ' et à votre e-mail.' : '.') + ' (Le texte enregistré, pas celui en cours de saisie.)', 'ok');
+        } finally { test.disabled = false; }
+      }, 'msgEditMsg') } });
+      if (!m.custom) reset.hidden = true;
+
+      const form = detailPanel('Texte', [
+        el('div', { class: 'msg-switches' }, [enabled.row, push.row, email.row]),
+        field('Titre (notification)', title),
+        field('Texte', body),
+        field('Objet de l’e-mail', subject),
+        el('p', { class: 'hint', text: 'Variables : cliquez pour l’insérer. Une ligne vide coupe le texte en deux lignes sur le téléphone.' }),
+        chips,
+        el('div', { class: 'btn-row mt-lg' }, [save, test]),
+        el('div', { class: 'mt' }, [reset]),
+        msg,
+      ]);
+      const preview = detailPanel('Aperçu (valeurs d’exemple)', [notif, mail, off]);
+      const vars = m.vars.length ? flushPanel('Variables', varHelp) : null;
+      $('msgDetail').replaceChildren(el('div', { class: 'grid-2' }, [form, el('div', {}, [preview, vars].filter(Boolean))]));
+    });
+  }
+
   // ---------------------------------------------------------------- admin log
   async function enterAudit() {
     crumbs('Trésorerie', 'Journal admin');
@@ -1160,13 +1309,15 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     payouts: { enter: withNav('payouts', enterPayouts) },
     payout: { parent: 'payouts', enter: withNav('payouts', enterPayout) },
     suspensions: { enter: withNav('suspensions', enterSuspensions) },
+    messages: { enter: withNav('messages', enterMessages) },
+    message: { parent: 'messages', enter: withNav('messages', enterMessage) },
     denied: { enter: () => {} },
   };
   const nav = createNav({
     root: 'home',
     // #/users/<id> opens the item screen "user" (and so on): a list and its item never share a screen.
     resolve: (route) => {
-      const ITEM = { users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout' };
+      const ITEM = { users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
       const i = route.indexOf('/');
       if (i < 0) return [route, null];
       const list = route.slice(0, i);

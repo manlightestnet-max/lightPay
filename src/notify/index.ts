@@ -49,7 +49,7 @@ async function deliver(env: Environment, person: Person, eventKey: string, m: Me
   const title = sandbox ? `[Test] ${m.title}` : m.title;
 
   let push = 'none';
-  const devices = await query(`SELECT token FROM push_devices WHERE uid = $1 AND environment = $2`, [person.uid, env], ID_DB);
+  const devices = m.push === false ? [] : await query(`SELECT token FROM push_devices WHERE uid = $1 AND environment = $2`, [person.uid, env], ID_DB);
   for (const d of devices) {
     const r = await sendPush(d.token, { title, body: m.body, tag: data.id, data: { event: m.event, route: m.route ?? '/home', ...data } });
     if (r === 'invalid_token') await query(`DELETE FROM push_devices WHERE token = $1`, [d.token], ID_DB);
@@ -57,7 +57,7 @@ async function deliver(env: Environment, person: Person, eventKey: string, m: Me
   }
 
   let email = 'none';
-  if (m.email && person.email) email = await sendEmail(person.email, { title: m.title, body: m.body, route: m.route, sandbox });
+  if (m.email && person.email) email = await sendEmail(person.email, { title: m.subject ?? m.title, body: m.body, route: m.route, sandbox });
 
   await query(`UPDATE notification_log SET push_status = $2, email_status = $3 WHERE id = $1`, [logged.id, push, email], ID_DB);
 }
@@ -79,7 +79,8 @@ export function notifyActivity(env: Environment, row: ActivityRow & { wallet_id:
 }
 
 /** An account event (app authorized, username changed…), for a signed-in person. */
-export function notifyAccount(env: Environment, user: Pick<LightPayUser, 'uid' | 'email'>, m: Message, key: string) {
+export function notifyAccount(env: Environment, user: Pick<LightPayUser, 'uid' | 'email'>, m: Message | null, key: string) {
+  if (!m) return;
   later(() => deliver(env, { uid: user.uid, email: user.email }, `acc:${env}:${user.uid}:${m.event}:${key}`, m));
 }
 
@@ -122,7 +123,8 @@ export function noteSignIn(env: Environment, user: LightPayUser, userAgent: stri
     const [{ n }] = await query(`SELECT COUNT(*)::int AS n FROM sign_in_devices WHERE uid = $1 AND device_key <> $2`, [user.uid, deviceKey], ID_DB);
     if (!n) return;
     const when = new Date(user.authTime * 1000).toLocaleString('fr-FR', { timeZone: 'Africa/Brazzaville', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
-    await deliver(env, { uid: user.uid, email: user.email }, `signin:${user.uid}:${deviceKey}:${user.authTime}`, ACCOUNT.signIn(label, when, null));
+    const m = ACCOUNT.signIn(label, when);
+    if (m) await deliver(env, { uid: user.uid, email: user.email }, `signin:${user.uid}:${deviceKey}:${user.authTime}`, m);
   });
 }
 
@@ -146,4 +148,11 @@ export async function removeDevice(uid: string, token: string) {
 /** Account deleted: no phone keeps receiving anything. */
 export async function removeAllDevices(uid: string) {
   await query(`DELETE FROM push_devices WHERE uid = $1`, [uid], ID_DB);
+}
+
+/** Administration > Messages > « Envoyer un test » : le message, avec des valeurs d'exemple, au téléphone et à l'e-mail de l'admin. */
+export async function sendTest(env: Environment, admin: { uid: string; email: string | null }, m: Message) {
+  const [{ n }] = await query(`SELECT COUNT(*)::int AS n FROM push_devices WHERE uid = $1 AND environment = $2`, [admin.uid, env], ID_DB);
+  await deliver(env, { uid: admin.uid, email: admin.email }, `test:${admin.uid}:${m.event}:${Date.now()}`, { ...m, event: `test.${m.event}` }, { id: 'test' });
+  return { phones: n as number, email: Boolean(m.email && admin.email) };
 }

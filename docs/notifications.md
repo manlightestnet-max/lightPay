@@ -18,36 +18,55 @@ ses téléphones où l’app LightPay est connectée (même app fermée ; un app
 entrée. `{qui}` : la contrepartie (nom de l’app, de la personne, ou « MTN MoMo · +242 06 ••• •• 81 »).
 `{réf}` : « · réf. CMD-12 » si l’opération a une référence.
 
+## 0. Modifier les messages (administration)
+
+Administration > Réglages > **Messages** : chaque message ci-dessous est un modèle. Pour chacun :
+titre, texte (deux lignes séparées par un retour à la ligne), objet de l’e-mail, push oui/non,
+e-mail oui/non, message actif ou coupé. Aperçu en direct avec des valeurs d’exemple, bouton
+« Envoyer un test sur mon téléphone », bouton « Rétablir le texte d’origine ». Chaque changement
+est inscrit au journal admin et s’applique tout de suite (réel et test). Les textes ci-dessous
+sont les originaux (`src/notify/templates.ts`).
+
+Variables : `{montant_signe}` (+1 000 FCFA / −1 000 FCFA), `{montant}`, `{montant_recu}` (arrivé
+sur le téléphone), `{qui}`, `{ref}` (« · réf. CMD-12 » ou rien), `{message}` (« « loyer » » ou
+rien), `{raison}` ; compte : `{appareil}`, `{date}`, `{app}`, `{permissions}`, `{nom}`, `{heure}`.
+Seules les variables d’un message sont acceptées (une faute de frappe est refusée).
+
 ## 1. Opérations d’argent
+
+Forme choisie : **le montant signé en titre**, puis **ce qui s’est passé**, puis **le détail**
+(deux lignes ; la notification dépliée montre tout). Jamais le solde (lisible sur l’écran
+verrouillé). Icône : silhouette du logo LightPay, teintée en vert. Objet de l’e-mail :
+« {ce qui s’est passé} · {montant} ».
 
 | Type | Quand | Titre | Texte | E-mail |
 |---|---|---|---|---|
-| Dépôt | réussi | Dépôt reçu | {montant} ajoutés à votre wallet depuis {qui}. | oui |
+| Dépôt | réussi | +{montant} | Dépôt reçu avec succès / Depuis {qui}. Le montant a été ajouté à votre solde. | oui |
 | Dépôt | refusé / expiré / annulé | Dépôt non effectué | {raison} (sinon : L’opérateur n’a pas confirmé le paiement. Aucun argent n’a été pris.) | non |
-| Envoi reçu | réussi | Argent reçu | {qui} vous a envoyé {montant}. « message » | oui |
-| Versement LightPay | réussi | Versement de LightPay | LightPay vous a versé {montant}. « message » | oui |
-| Envoi fait | réussi | Argent envoyé | {montant} envoyés à {qui}. | oui |
+| Envoi reçu | réussi | +{montant} | Argent reçu avec succès / De {qui} « message ». Le montant a été ajouté à votre solde. | oui |
+| Versement LightPay | réussi | +{montant} | Versement de LightPay reçu / Message : « … ». Le montant a été ajouté à votre solde. | oui |
+| Envoi fait | réussi | −{montant} | Argent envoyé avec succès / À {qui} « message ». | oui |
 | Envoi fait | refusé | Envoi non effectué | {raison} | non |
-| Retrait | demandé | Retrait demandé | {montant} débités de votre wallet pour un retrait vers {qui}. | oui |
-| Retrait | envoyé | Retrait envoyé | {montant reçu} envoyés vers {qui}. Vous allez recevoir un SMS de votre opérateur. | oui |
-| Retrait | échoué après envoi | Retrait échoué | {raison} Les {montant} ont été restitués sur votre wallet. | oui |
+| Retrait | demandé | −{montant débité} | Retrait en préparation / {montant reçu} vers {qui}. Le montant a été débité de votre solde, frais compris. | oui |
+| Retrait | envoyé | −{montant débité} | Retrait envoyé avec succès / {montant reçu} envoyés vers {qui}. Vous allez recevoir un SMS de votre opérateur. | oui |
+| Retrait | échoué après envoi | +{montant} | Retrait échoué / {raison} Le montant a été restitué sur votre solde. | oui |
 | Retrait | refusé tout de suite | Retrait refusé | {raison} | non |
-| Retrait | annulé par LightPay | Retrait annulé | {raison} Les {montant} ont été restitués sur votre wallet. | oui |
-| Paiement (achat) | effectué | Paiement effectué | {montant} payés à {qui}{réf}. | oui |
+| Retrait | annulé par LightPay | +{montant} | Retrait annulé / {raison} Le montant a été restitué sur votre solde. | oui |
+| Paiement (achat) | effectué | −{montant} | Paiement effectué avec succès / À {qui}{réf}. | oui |
 | Paiement (achat) | refusé | Paiement non effectué | {raison} | non |
-| Paiement (achat) | remboursé | Paiement remboursé | {qui} vous a remboursé {montant}{réf}. | oui |
-| Débit par une app | effectué | Débit par {qui} | {qui} a débité {montant} de votre wallet{réf}. | oui |
+| Paiement (achat) | remboursé | +{montant} | Paiement remboursé / Par {qui}{réf}. Le montant a été ajouté à votre solde. | oui |
+| Débit par une app | effectué | −{montant} | Débit par {qui} / {qui} a débité votre wallet{réf}. | oui |
 | Débit par une app | refusé | Débit refusé | {qui} : {raison} | non |
-| Débit par une app | remboursé | Débit remboursé | {qui} vous a remboursé {montant}. | oui |
-| Vente | nouvelle (bloquée) | Nouvelle vente | {montant} sur {qui}{réf}, bloqués jusqu’à la livraison. | oui |
-| Vente | litige | Litige ouvert | {montant}{réf} : fonds gelés jusqu’à la décision. | oui |
-| Vente | validée | Vente validée | {montant} de {qui}{réf} sont disponibles dans votre wallet. | oui |
+| Débit par une app | remboursé | +{montant} | Débit remboursé / Par {qui}. Le montant a été ajouté à votre solde. | oui |
+| Vente | nouvelle (bloquée) | +{montant} | Nouvelle vente sur {qui} / Réf. CMD-12. Le montant est bloqué jusqu’à la livraison. | oui |
+| Vente | litige | {montant} | Litige ouvert / Réf. CMD-12. Fonds gelés jusqu’à la décision. | oui |
+| Vente | validée | +{montant} | Vente validée avec succès / Sur {qui}{réf}. Le montant a été ajouté à votre solde disponible. | oui |
 | Vente | annulée | Vente annulée | Commande annulée : le montant a été rendu à l’acheteur.{réf} | oui |
-| Commission | prélevée | Commission prélevée | {qui} a retenu {montant} sur votre vente{réf}. | non |
-| Remboursement reçu | réussi | Remboursement reçu | {qui} vous a remboursé {montant}{réf}. | oui |
-| Remboursement envoyé | demandé | Remboursement en cours | {montant} débités pour un remboursement vers {qui}. | oui |
-| Remboursement envoyé | envoyé | Remboursement envoyé | {montant} remboursés vers {qui}. | oui |
-| Remboursement envoyé | échoué / annulé | Remboursement non effectué | {raison} Les {montant} ont été restitués sur votre wallet. | oui |
+| Commission | prélevée | −{montant} | Commission prélevée / Par {qui} sur votre vente{réf}. | non |
+| Remboursement reçu | réussi | +{montant} | Remboursement reçu avec succès / De {qui}{réf}. Le montant a été ajouté à votre solde. | oui |
+| Remboursement envoyé | demandé | −{montant débité} | Remboursement en préparation / {montant} vers {qui}. Le montant a été débité de votre solde, frais compris. | oui |
+| Remboursement envoyé | envoyé | −{montant débité} | Remboursement envoyé avec succès / {montant} remboursés vers {qui}. | oui |
+| Remboursement envoyé | échoué / annulé | +{montant} | Remboursement non effectué / {raison} Le montant a été restitué sur votre solde. | oui |
 
 Un appui sur ces notifications ouvre le détail de l’opération (`/activity/<id>` dans l’app,
 `/account#/activity/<id>` sur le web).

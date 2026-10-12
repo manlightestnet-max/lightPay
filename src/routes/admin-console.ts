@@ -34,6 +34,9 @@ import { liftSuspension, listSuspensions, suspendAccount } from '../db/withdrawa
 import { LockdownError, readLockdown, saveLockdown } from '../db/lockdown-store.js';
 import { findRecipient } from '../db/identity.js';
 import { LEVELS, withBypass } from '../security/lockdown.js';
+import { TemplateError, listTemplates, resetTemplate, sampleVars, saveTemplate, validateTemplate } from '../notify/templates.js';
+import { fromTemplate } from '../notify/catalog.js';
+import { sendTest } from '../notify/index.js';
 
 /**
  * Owner's admin console.
@@ -54,6 +57,10 @@ import { LEVELS, withBypass } from '../security/lockdown.js';
  *   PUT  /v1/admin-console/providers            { collection, payout }   recent sign-in; applied at once, logged
  *   GET  /v1/admin-console/controls             payout delays and withdrawal limits (+ defaults, ranges)
  *   PUT  /v1/admin-console/controls             { …all settings }   recent sign-in; applied at once, logged
+ *   GET  /v1/admin-console/messages             automatic messages: originals, current texts, variables
+ *   PUT  /v1/admin-console/messages/:event      { title, body, subject, push, email, enabled }   recent sign-in; logged
+ *   DELETE /v1/admin-console/messages/:event    back to the original text (logged)
+ *   POST /v1/admin-console/messages/:event/test the message with sample values, to the admin's own phone and e-mail
  *   GET  /v1/admin-console/lockdown             the emergency brake: level, reason, since, by, forced by the environment
  *   PUT  /v1/admin-console/lockdown             { level, reason }   recent sign-in; works even when everything else is stopped
  *   GET  /v1/admin-console/payouts[?filter=]    withdrawals and refunds: upcoming (waiting or held) · held · all
@@ -286,6 +293,44 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         const changed = Object.fromEntries(Object.keys(after).filter((k) => (before as any)[k] !== (after as any)[k]).map((k) => [k, { from: (before as any)[k], to: (after as any)[k] }]));
         if (Object.keys(changed).length) await auditAction(env, admin, 'CONTROLS_UPDATE', null, null, { changed });
         return { status: 'success', settings: after };
+      });
+
+      // ---------------------------------------------------------- automatic messages (push + e-mail)
+      api.get('/messages', async () => ({ status: 'success', messages: listTemplates() }));
+      api.put('/messages/:event', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const event = String((request.params as any).event);
+        let next;
+        try {
+          next = validateTemplate(event, request.body);
+        } catch (e) {
+          if (e instanceof TemplateError) return reply.status(400).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
+        const admin = adminOf(request);
+        const { before, after } = await saveTemplate(event, next, admin.email || admin.uid);
+        await auditAction(envOf(request), admin, 'MESSAGE_UPDATE', event, null, { from: before, to: after });
+        return { status: 'success', message: after };
+      });
+      api.delete('/messages/:event', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const event = String((request.params as any).event);
+        try {
+          const admin = adminOf(request);
+          const { before, after } = await resetTemplate(event, admin.email || admin.uid);
+          await auditAction(envOf(request), admin, 'MESSAGE_RESET', event, null, { from: before, to: after });
+          return { status: 'success', message: after };
+        } catch (e) {
+          if (e instanceof TemplateError) return reply.status(400).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
+      });
+      api.post('/messages/:event/test', async (request, reply) => {
+        const event = String((request.params as any).event);
+        const m = fromTemplate(event, sampleVars(event), '/home');
+        if (!m) return reply.status(400).send({ status: 'error', error: 'MESSAGE_OFF', message: 'Ce message est désactivé, ou sans push ni e-mail : rien à envoyer.' });
+        const r = await sendTest(envOf(request), adminOf(request), m);
+        return { status: 'success', ...r };
       });
 
       // ---------------------------------------------------------- emergency brake (runs even when everything else is stopped)

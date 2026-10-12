@@ -10,6 +10,7 @@
  * Tout est en français, court, sans nom de fournisseur (SasPay, pawaPay n'apparaissent jamais).
  * docs/notifications.md liste chaque cas ; garder les deux en accord.
  */
+import { renderTemplate } from './templates.js';
 
 export interface ActivityRow {
   id: string;
@@ -31,8 +32,15 @@ export interface ActivityRow {
 /** Un message : titre et texte (push), e-mail en plus si `email`. `route` : l'écran que l'app ouvre. */
 export interface Message {
   event: string;
+  /** Titre de la notification (le montant signé quand de l'argent bouge). */
   title: string;
+  /** Texte : ce qui s'est passé, puis le détail (lignes séparées par 
+). */
   body: string;
+  /** Objet de l'e-mail (le titre si absent). */
+  subject?: string;
+  /** Notification push (l'admin peut la couper par message). */
+  push?: boolean;
   email: boolean;
   route?: string;
 }
@@ -94,70 +102,75 @@ const reasonOr = (a: ActivityRow, fallback: string) => (a.reason && a.reason.tri
 
 /**
  * La notification d'une opération qui change d'état (`previous` : son état d'avant, null si nouvelle).
- * Null quand rien ne mérite d'être dit (ex. un dépôt qui démarre : la personne est devant l'écran).
+ * Null quand rien ne mérite d'être dit (ex. un dépôt qui démarre : la personne est devant l'écran)
+ * ou quand l'admin a coupé ce message. Les textes sont des modèles (templates.ts), modifiables
+ * depuis l'administration > Messages ; ici on choisit l'événement et ses valeurs.
  */
 export function activityMessage(a: ActivityRow, previous: string | null): Message | null {
-  const m = money(walletAmount(a), a.currency);
+  const total = money(walletAmount(a), a.currency);
   const w = who(a);
-  const route = `/activity/${encodeURIComponent(a.id)}`;
-  const msg = (event: string, title: string, body: string, email = true): Message => ({ event, title, body, email, route });
   const isNew = previous === null;
   const now = a.status;
+  const vars = (fallbackWho: string, fallbackReason = '', sign: '+' | '−' | '' = '') => ({
+    montant: total,
+    montant_signe: `${sign}${total}`,
+    montant_recu: money(a.amount, a.currency),
+    qui: w || fallbackWho,
+    ref: ref(a),
+    message: note(a),
+    raison: reasonOr(a, fallbackReason),
+  });
+  const ev = (event: string, v: Record<string, string>) => fromTemplate(event, v, `/activity/${encodeURIComponent(a.id)}`);
 
   switch (a.kind) {
     case 'DEPOSIT':
-      if (now === 'SUCCEEDED') return msg('deposit.succeeded', 'Dépôt reçu', `${m} ajoutés à votre wallet${w ? ` depuis ${w}` : ''}.`);
+      if (now === 'SUCCEEDED') return ev('deposit.succeeded', vars('votre mobile money', '', '+'));
       if (now === 'FAILED' || now === 'EXPIRED' || now === 'CANCELLED')
-        return msg('deposit.failed', 'Dépôt non effectué', reasonOr(a, 'L’opérateur n’a pas confirmé le paiement. Aucun argent n’a été pris.'), false);
+        return ev('deposit.failed', vars('votre mobile money', 'L’opérateur n’a pas confirmé le paiement. Aucun argent n’a été pris.'));
       return null;
 
     case 'TRANSFER':
-      if (a.direction === 'IN' && now === 'SUCCEEDED')
-        return fromLightPay(a)
-          ? msg('transfer.received', 'Versement de LightPay', `LightPay vous a versé ${m}.${note(a)}`)
-          : msg('transfer.received', 'Argent reçu', `${w || 'Un compte LightPay'} vous a envoyé ${m}.${note(a)}`);
-      if (a.direction !== 'IN' && now === 'SUCCEEDED') return msg('transfer.sent', 'Argent envoyé', `${m} envoyés à ${w || 'un compte LightPay'}.`);
-      if (a.direction !== 'IN' && now === 'FAILED') return msg('transfer.failed', 'Envoi non effectué', reasonOr(a, 'L’envoi a été refusé.'), false);
+      if (a.direction === 'IN' && now === 'SUCCEEDED') return ev(fromLightPay(a) ? 'transfer.lightpay' : 'transfer.received', vars('un compte LightPay', '', '+'));
+      if (a.direction !== 'IN' && now === 'SUCCEEDED') return ev('transfer.sent', vars('un compte LightPay', '', '−'));
+      if (a.direction !== 'IN' && now === 'FAILED') return ev('transfer.failed', vars('un compte LightPay', 'L’envoi a été refusé.'));
       return null;
 
     case 'WITHDRAWAL':
-      if (now === 'PENDING' && isNew) return msg('withdrawal.requested', 'Retrait demandé', `${m} débités de votre wallet pour un retrait ${w ? `vers ${w}` : ''}.`.replace(' .', '.'));
-      if (now === 'SUCCEEDED') return msg('withdrawal.sent', 'Retrait envoyé', `${money(a.amount, a.currency)} envoyés ${w ? `vers ${w}` : 'sur votre mobile money'}. Vous allez recevoir un SMS de votre opérateur.`);
-      if (now === 'FAILED' && !isNew)
-        return msg('withdrawal.failed', 'Retrait échoué', `${reasonOr(a, 'L’opérateur a refusé l’envoi.')} Les ${m} ont été restitués sur votre wallet.`);
-      if (now === 'FAILED' && isNew) return msg('withdrawal.refused', 'Retrait refusé', reasonOr(a, 'Le retrait n’a pas pu être fait.'), false);
-      if (now === 'CANCELLED') return msg('withdrawal.cancelled', 'Retrait annulé', `${reasonOr(a, 'Envoi annulé par LightPay après vérification.')} Les ${m} ont été restitués sur votre wallet.`);
+      if (now === 'PENDING' && isNew) return ev('withdrawal.requested', vars('votre mobile money', '', '−'));
+      if (now === 'SUCCEEDED') return ev('withdrawal.sent', vars('votre mobile money', '', '−'));
+      if (now === 'FAILED' && !isNew) return ev('withdrawal.failed', vars('votre mobile money', 'L’opérateur a refusé l’envoi.', '+'));
+      if (now === 'FAILED' && isNew) return ev('withdrawal.refused', vars('votre mobile money', 'Le retrait n’a pas pu être fait.'));
+      if (now === 'CANCELLED') return ev('withdrawal.cancelled', vars('votre mobile money', 'Envoi annulé par LightPay après vérification.', '+'));
       return null;
 
     case 'PAYMENT':
-      if (now === 'SUCCEEDED' || (now === 'LOCKED' && isNew)) return msg('payment.succeeded', 'Paiement effectué', `${m} payés à ${w || 'un marchand'}${ref(a)}.`);
-      if (now === 'FAILED') return msg('payment.failed', 'Paiement non effectué', reasonOr(a, 'Le paiement a été refusé.'), false);
-      if (now === 'REFUNDED') return msg('payment.refunded', 'Paiement remboursé', `${w || 'Le marchand'} vous a remboursé ${money(a.amount, a.currency)}${ref(a)}.`);
+      if (now === 'SUCCEEDED' || (now === 'LOCKED' && isNew)) return ev('payment.succeeded', vars('un marchand', '', '−'));
+      if (now === 'FAILED') return ev('payment.failed', vars('un marchand', 'Le paiement a été refusé.'));
+      if (now === 'REFUNDED') return ev('payment.refunded', { ...vars('le marchand', '', '+'), montant_signe: `+${money(a.amount, a.currency)}` });
       return null;
 
     case 'CHARGE':
-      if (now === 'SUCCEEDED' || (now === 'LOCKED' && isNew)) return msg('charge.succeeded', `Débit par ${w || 'une app'}`, `${w || 'Une app connectée'} a débité ${m} de votre wallet${ref(a)}.`);
-      if (now === 'FAILED') return msg('charge.failed', 'Débit refusé', `${w || 'Une app connectée'} : ${reasonOr(a, 'débit refusé.')}`, false);
-      if (now === 'REFUNDED') return msg('charge.refunded', 'Débit remboursé', `${w || 'L’app'} vous a remboursé ${money(a.amount, a.currency)}.`);
+      if (now === 'SUCCEEDED' || (now === 'LOCKED' && isNew)) return ev('charge.succeeded', vars('une app connectée', '', '−'));
+      if (now === 'FAILED') return ev('charge.failed', vars('une app connectée', 'débit refusé.'));
+      if (now === 'REFUNDED') return ev('charge.refunded', { ...vars('l’app', '', '+'), montant_signe: `+${money(a.amount, a.currency)}` });
       return null;
 
     case 'SALE':
-      if (now === 'LOCKED' && isNew) return msg('sale.received', 'Nouvelle vente', `${m} sur ${w || 'une app connectée'}${ref(a)}, bloqués jusqu’à la livraison.`);
-      if (now === 'LOCKED' && a.reason_code === 'DISPUTED') return msg('sale.disputed', 'Litige ouvert', `${m}${ref(a)} : fonds gelés jusqu’à la décision.`);
-      if (now === 'SUCCEEDED') return msg('sale.released', 'Vente validée', `${m} de ${w || 'votre vente'}${ref(a)} sont disponibles dans votre wallet.`);
-      if (now === 'REFUNDED') return msg('sale.refunded', 'Vente annulée', `${reasonOr(a, 'Commande annulée : le montant a été rendu à l’acheteur.')}${ref(a)}`);
+      if (now === 'LOCKED' && isNew) return ev('sale.received', vars('une app connectée', '', '+'));
+      if (now === 'LOCKED' && a.reason_code === 'DISPUTED') return ev('sale.disputed', vars('une app connectée'));
+      if (now === 'SUCCEEDED') return ev('sale.released', vars('une app connectée', '', '+'));
+      if (now === 'REFUNDED') return ev('sale.refunded', vars('une app connectée', 'Commande annulée : le montant a été rendu à l’acheteur.'));
       return null;
 
     case 'COMMISSION':
-      if (now === 'SUCCEEDED') return msg('commission.taken', 'Commission prélevée', `${w || 'L’app'} a retenu ${m} sur votre vente${ref(a)}.`, false);
+      if (now === 'SUCCEEDED') return ev('commission.taken', vars('l’app', '', '−'));
       return null;
 
     case 'REFUND':
-      if (a.direction === 'IN' && now === 'SUCCEEDED') return msg('refund.received', 'Remboursement reçu', `${w || 'Un marchand'} vous a remboursé ${m}${ref(a)}.`);
-      if (a.direction !== 'IN' && now === 'PENDING' && isNew) return msg('refund.requested', 'Remboursement en cours', `${m} débités pour un remboursement ${w ? `vers ${w}` : ''}.`.replace(' .', '.'));
-      if (a.direction !== 'IN' && now === 'SUCCEEDED') return msg('refund.sent', 'Remboursement envoyé', `${money(a.amount, a.currency)} remboursés${w ? ` vers ${w}` : ''}.`);
-      if (a.direction !== 'IN' && (now === 'FAILED' || now === 'CANCELLED'))
-        return msg('refund.failed', 'Remboursement non effectué', `${reasonOr(a, 'L’opérateur a refusé l’envoi.')} Les ${m} ont été restitués sur votre wallet.`);
+      if (a.direction === 'IN' && now === 'SUCCEEDED') return ev('refund.received', vars('un marchand', '', '+'));
+      if (a.direction !== 'IN' && now === 'PENDING' && isNew) return ev('refund.requested', vars('l’acheteur', '', '−'));
+      if (a.direction !== 'IN' && now === 'SUCCEEDED') return ev('refund.sent', vars('l’acheteur', '', '−'));
+      if (a.direction !== 'IN' && (now === 'FAILED' || now === 'CANCELLED')) return ev('refund.failed', vars('l’acheteur', 'L’opérateur a refusé l’envoi.', '+'));
       return null;
 
     default:
@@ -165,49 +178,18 @@ export function activityMessage(a: ActivityRow, previous: string | null): Messag
   }
 }
 
+/** Un modèle rempli (null si l'admin l'a coupé). */
+export function fromTemplate(event: string, vars: Record<string, string>, route?: string): Message | null {
+  const r = renderTemplate(event, vars);
+  return r ? { event, title: r.title, body: r.body, subject: r.subject, push: r.push, email: r.email, route } : null;
+}
+
 /** Événements du compte (hors opérations d'argent). */
 export const ACCOUNT = {
-  signIn: (device: string, when: string, place: string | null): Message => ({
-    event: 'account.sign_in',
-    title: 'Nouvelle connexion',
-    body: `Connexion à votre compte LightPay depuis ${device}, le ${when}${place ? ` (${place})` : ''}. Si ce n’est pas vous, sécurisez votre compte Google (changez son mot de passe) : c’est lui qui ouvre LightPay.`,
-    email: true,
-    route: '/account',
-  }),
-  appAuthorized: (app: string, scopes: string[]): Message => ({
-    event: 'account.app_authorized',
-    title: 'App autorisée',
-    body: `${app} peut maintenant utiliser votre compte LightPay${scopes.length ? ` : ${scopes.join(', ')}` : ''}. Vous pouvez retirer cet accès à tout moment depuis Compte > Apps connectées.`,
-    email: true,
-    route: '/account/apps',
-  }),
-  appRevoked: (app: string): Message => ({
-    event: 'account.app_revoked',
-    title: 'Accès retiré',
-    body: `${app} n’a plus accès à votre compte LightPay.`,
-    email: true,
-    route: '/account/apps',
-  }),
-  usernameChanged: (username: string): Message => ({
-    event: 'account.username',
-    title: 'Nom d’utilisateur modifié',
-    body: `On vous envoie maintenant de l’argent avec @${username}.`,
-    email: true,
-    route: '/account',
-  }),
-  accountClosed: (): Message => ({
-    event: 'account.closed',
-    title: 'Compte supprimé',
-    body: 'Votre compte LightPay a été fermé. Les apps connectées ont perdu leur accès ; l’historique comptable est conservé.',
-    email: true,
-  }),
-  withdrawalsSuspended: (until: string, auto: boolean): Message => ({
-    event: 'account.withdrawals_suspended',
-    title: 'Retraits et envois suspendus',
-    body: auto
-      ? `Trop de tentatives de retrait : par sécurité, les retraits et les envois de votre compte sont suspendus jusqu’à ${until}.`
-      : `Les retraits et les envois de votre compte sont suspendus jusqu’à ${until}. Contactez le support LightPay.`,
-    email: true,
-    route: '/home',
-  }),
+  signIn: (device: string, when: string) => fromTemplate('account.sign_in', { appareil: device, date: when }, '/account'),
+  appAuthorized: (app: string, scopes: string[]) => fromTemplate('account.app_authorized', { app, permissions: scopes.join(', ') || 'utiliser votre compte' }, '/account/apps'),
+  appRevoked: (app: string) => fromTemplate('account.app_revoked', { app }, '/account/apps'),
+  usernameChanged: (username: string) => fromTemplate('account.username', { nom: username }, '/account'),
+  withdrawalsSuspended: (until: string, auto: boolean) => fromTemplate(auto ? 'account.withdrawals_suspended' : 'account.withdrawals_suspended_manual', { heure: until }, '/home'),
+  accountClosed: () => fromTemplate('account.closed', {}),
 };
