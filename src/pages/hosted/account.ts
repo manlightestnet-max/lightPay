@@ -528,7 +528,7 @@ ${FLOWS_SCRIPT}
     });
     $('pinBox').replaceChildren(el('div', { class: 'pin-step' }, [
       el('span', { class: 'pin-lock', 'aria-hidden': 'true' }, [icon('lock')]),
-      el('p', { class: 'eyebrow', text: 'Code actuel' }),
+      el('h2', { class: 'pin-title', text: 'Code actuel' }),
       el('p', { class: 'pin-lead', text: 'Entrez votre code actuel pour en choisir un nouveau.' }),
       pad.el, msg,
     ]));

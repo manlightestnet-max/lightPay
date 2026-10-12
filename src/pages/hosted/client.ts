@@ -380,7 +380,7 @@ export const CLIENT = (env: string) => `
         sheet.replaceChildren(
           el('div', { class: 'pin-step' }, [
             el('span', { class: 'pin-lock', 'aria-hidden': 'true' }, [icon('lock')]),
-            el('p', { class: 'eyebrow', text: 'Code LightPay' }),
+            el('h2', { class: 'pin-title', text: 'Code LightPay' }),
             el('p', { class: 'pin-lead', text: 'Entrez votre code à 6 chiffres pour confirmer' + (o.amount ? ' ' + o.amount : '') + '.' }),
             pad.el, msg, forgot,
             el('div', { class: 'btn-row mt-lg' }, [el('button', { class: 'btn btn-secondary', type: 'button', text: 'Annuler', on: { click: () => finish(false) } })]),
@@ -462,13 +462,14 @@ export const CLIENT = (env: string) => `
           }
         },
       });
-      box.replaceChildren(
+      // No empty child: replaceChildren would print « null ».
+      box.replaceChildren.apply(box, [
         el('span', { class: 'pin-lock', 'aria-hidden': 'true' }, [icon('lock')]),
-        el('p', { class: 'eyebrow', text: title }),
+        el('h2', { class: 'pin-title', text: title }),
         el('p', { class: 'pin-lead', text: lead }),
         pad.el, msg,
         o.onCancel ? el('div', { class: 'btn-row mt-lg' }, [el('button', { class: 'btn btn-secondary', type: 'button', text: 'Annuler', on: { click: () => o.onCancel() } })]) : null,
-      );
+      ].filter(Boolean));
       if (shake) pad.reset(true); else pad.focus();
     }
     step(o.title || 'Choisissez votre code LightPay', o.lead || 'Six chiffres, demandés pour chaque envoi, retrait ou paiement avec votre wallet.');

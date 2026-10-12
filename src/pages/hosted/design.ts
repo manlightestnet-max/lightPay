@@ -353,6 +353,7 @@ a.tx:active { background: var(--raised); }
 .pin-step .btn-row { align-self: stretch; }
 .pin-lock { width: 52px; height: 52px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent-ink); margin-bottom: 12px; box-shadow: 0 10px 26px -14px var(--accent); }
 .pin-lock svg { width: 22px; height: 22px; }
+.pin-title { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -.01em; color: var(--text); }
 .pin-lead { margin-top: 6px; font-size: 14px; color: var(--muted); line-height: 1.45; max-width: 300px; }
 .pin { position: relative; display: block; margin-top: 22px; cursor: text; }
 .pin-boxes { display: flex; gap: 10px; justify-content: center; }
