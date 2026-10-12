@@ -5,6 +5,7 @@ import type { LightPayUser } from '../security/user-token.js';
 import { ACCOUNT, ActivityRow, Message, activityMessage } from './catalog.js';
 import { sendEmail } from './email.js';
 import { sendPush } from './push.js';
+import { absoluteUrl, withAvatars } from '../db/avatars.js';
 
 /**
  * Automatic messages, like a SaaS: every money operation that changes state, every new
@@ -51,7 +52,7 @@ async function deliver(env: Environment, person: Person, eventKey: string, m: Me
   let push = 'none';
   const devices = m.push === false ? [] : await query(`SELECT token FROM push_devices WHERE uid = $1 AND environment = $2`, [person.uid, env], ID_DB);
   for (const d of devices) {
-    const r = await sendPush(d.token, { title, body: m.body, tag: data.id, data: { event: m.event, route: m.route ?? '/home', ...data } });
+    const r = await sendPush(d.token, { title, body: m.body, tag: data.id, image: m.image, data: { event: m.event, route: m.route ?? '/home', ...data } });
     if (r === 'invalid_token') await query(`DELETE FROM push_devices WHERE token = $1`, [d.token], ID_DB);
     if (r === 'sent' || push === 'none' || push === 'skipped') push = r;
   }
@@ -74,7 +75,10 @@ export function notifyActivity(env: Environment, row: ActivityRow & { wallet_id:
   later(async () => {
     const person = await personOfWallet(env, row.wallet_id);
     if (!person) return;
-    await deliver(env, person, `act:${env}:${row.id}:${row.status}${disputed ? ':DISPUTED' : ''}`, m, { id: row.id });
+    // The other person's photo or the app's logo, as a thumbnail beside the text.
+    const [face] = await withAvatars(env, [row as ActivityRow & { id: string; kind: string }]);
+    const image = face?.avatar_url ? absoluteUrl(face.avatar_url) : undefined;
+    await deliver(env, person, `act:${env}:${row.id}:${row.status}${disputed ? ':DISPUTED' : ''}`, { ...m, image }, { id: row.id });
   });
 }
 

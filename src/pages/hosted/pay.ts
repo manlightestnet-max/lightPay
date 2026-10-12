@@ -4,7 +4,8 @@ import { iconSvg } from './icons.js';
 /** Payment screen: merchant and amount on top, the ways to pay as cards side by side, one summary, one button. */
 const PAY_CSS = `
 .pay-hero { text-align: center; padding: 18px 0 6px; }
-.pay-merchant { font-size: 13px; color: var(--muted); }
+.pay-logo { width: 56px; height: 56px; margin: 0 auto 10px; font-size: 19px; background: var(--accent-soft); color: var(--accent-ink); box-shadow: 0 10px 28px -14px var(--accent); }
+.pay-merchant { font-size: 14px; color: var(--muted); }
 .pay-merchant b { font-weight: 600; color: var(--text); }
 .pay-hero .amount-xl { font-size: 42px; margin-top: 8px; }
 .pay-desc { margin: 8px auto 0; max-width: 300px; font-size: 12px; color: var(--muted); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -60,6 +61,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   ${topbar({ title: 'Paiement', back: true, env })}
   <div class="content">
     <div class="pay-hero">
+      <span class="avatar pay-logo" id="merchantLogo" aria-hidden="true" hidden></span>
       <p class="pay-merchant" id="merchant"></p>
       <div class="amount-xl" id="amount"></div>
       <p class="pay-desc" id="desc" hidden></p>
@@ -270,6 +272,12 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     session = s;
     const c = s.currency;
     $('merchant').replaceChildren(el('b', { text: s.kind === 'DEPOSIT' ? 'Dépôt LightPay' : s.merchant }), s.kind === 'DEPOSIT' ? ' · votre wallet' : s.payee ? ' · vendeur ' + s.payee : '');
+    // The merchant's logo (Developer console > Logo) above its name, initials without one.
+    if (s.kind !== 'DEPOSIT') {
+      const logo = face(s.merchant_logo, s.merchant, 'pay-logo');
+      logo.id = 'merchantLogo';
+      $('merchantLogo').replaceWith(logo);
+    }
     const amt = LP.money(s.amount, c); const cut = amt.lastIndexOf(' ');
     $('amount').replaceChildren(amt.slice(0, cut), el('span', { class: 'cur', text: amt.slice(cut + 1) }));
     const d = s.kind === 'DEPOSIT' ? '' : [s.description, s.reference].filter(Boolean).join(' · ');

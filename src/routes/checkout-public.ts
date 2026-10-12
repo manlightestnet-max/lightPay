@@ -6,6 +6,7 @@ import { EscrowError } from '../db/escrow.js';
 import { requireUser } from './me.js';
 import { accountPage, connectPage, consolePage, hostedCsp, lightpaySdk, payPage } from '../pages/hosted.js';
 import { embedOriginFor } from '../db/developer.js';
+import { appLogo } from '../db/avatars.js';
 
 /** Per-IP brake on payment requests (each one rings a phone). */
 const hits = new Map<string, number[]>();
@@ -28,11 +29,23 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9_-]{16,40}$/;
  *   GET  /lightpay.js                                 script that opens the payment dialog
  *   GET  /v1/checkout/public/authorize                validate an app authorization request
  *   POST /v1/checkout/public/sessions/:id/wallet      pay with a LightPay wallet (signed in)
+ *   GET  /v1/checkout/public/apps/:id/logo            an app's logo (public, cached)
  *   GET  /v1/checkout/public/sessions/:id             what the page shows (polled)
  *   POST /v1/checkout/public/sessions/:id/mobile-money   { msisdn, network }
  *   GET  /v1/checkout/public/sessions/:id/payer          signed in: has a LightPay wallet? (never opens one)
  */
 export async function checkoutPublicRoutes(fastify: FastifyInstance) {
+  // An app's logo (Developer console > Logo). The address carries its version: cached for good.
+  fastify.get('/v1/checkout/public/apps/:id/logo', async (request, reply) => {
+    const logo = await appLogo(String((request.params as any).id)).catch(() => null);
+    if (!logo) return reply.status(404).send({ error: 'NOT_FOUND' });
+    reply.header('Content-Type', logo.type);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    reply.header('Cache-Control', (request.query as any)?.v ? 'public, max-age=31536000, immutable' : 'public, max-age=300');
+    return reply.send(logo.bytes);
+  });
+
   fastify.get('/v1/checkout/public/sessions/:id', async (request, reply) => {
     const { id } = request.params as any;
     if (!SESSION_ID.test(id)) return reply.status(404).send({ error: 'Session not found' });

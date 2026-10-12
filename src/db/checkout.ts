@@ -7,6 +7,7 @@ import { MOBILE_NETWORKS, MobileNetwork, NETWORK_NAMES, RailOperation, RailResul
 import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayFeeWallet } from './fee-wallet.js';
 import { appName, failureOf, logActivity, logDirectSale, reasonFor, updateActivity } from './activity.js';
+import { appLogoUrl } from './avatars.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
 import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundBreakdown } from '../payments/fees.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
@@ -224,6 +225,7 @@ export async function publicView(id: string) {
     reference: session.reference,
     description: session.description,
     merchant: app?.name ?? session.app_id,
+    merchant_logo: await appLogoUrl(environment, session.app_id),
     payee: payeeName,
     escrow: session.escrow,
     methods: session.methods,

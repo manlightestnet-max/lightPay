@@ -251,6 +251,17 @@ ${page('dev-app', 'App', `
   </div>
 
   <div data-tab="settings" class="stack" hidden>
+    <section class="panel"><div class="panel-head"><h2 class="panel-title">Logo ${tip('Montré à vos clients : page de paiement, autorisation, relevés et notifications. Image carrée de préférence ; elle est recadrée et réduite à 256 px avant l’envoi.')}</h2></div><div class="panel-body">
+      <div class="logo-edit">
+        <span class="avatar avatar-lg" id="daLogo" aria-hidden="true"></span>
+        <div class="logo-edit-main">
+          <p class="small muted">PNG, JPEG ou WebP. Sans logo, vos clients voient les initiales de l’app.</p>
+          <div class="btn-row"><label class="btn btn-secondary btn-sm" for="daLogoFile">Choisir une image</label><button class="btn btn-ghost btn-sm" type="button" id="daLogoRemove" hidden>Retirer</button></div>
+        </div>
+      </div>
+      <input type="file" id="daLogoFile" accept="image/png,image/jpeg,image/webp" hidden>
+      <div class="msg" id="daLogoMsg" role="status" aria-live="polite"></div>
+    </div></section>
     <section class="panel"><div class="panel-head"><h2 class="panel-title">Informations</h2></div><div class="panel-body">
       <div class="field"><label for="daName">Nom affiché aux clients</label><input id="daName" maxlength="60" autocomplete="off"></div>
       <button class="btn btn-secondary mt" type="button" id="daNameSave">Enregistrer le nom</button>
@@ -438,7 +449,9 @@ ${page('dev-app', 'App', `
   function actCells(a) {
     const st = STATUS[a.status] || ['', a.status];
     const incoming = a.direction === 'IN';
-    const iconBox = el('span', { class: 'row-icon' + (incoming && a.status === 'SUCCEEDED' ? ' in' : '') }, [icon(actIcon(a))]);
+    // Who it was with: the person (photo or initials) for a transfer, the app's logo when it has one.
+    const who = a.kind === 'TRANSFER' && a.status !== 'FAILED' && a.counterparty ? face(a.avatar_url, a.counterparty, 'avatar-row') : a.avatar_url ? face(a.avatar_url, a.counterparty, 'avatar-row') : null;
+    const iconBox = who || el('span', { class: 'row-icon' + (incoming && a.status === 'SUCCEEDED' ? ' in' : '') }, [icon(actIcon(a))]);
     const sub = a.status === 'FAILED' ? (a.kind === 'WITHDRAWAL' ? 'Refusé · montant restitué' : 'Refusé') : a.counterparty && a.kind !== 'TRANSFER' ? a.counterparty : '';
     const amountClass = !settledOk(a) || (a.status === 'REFUNDED' && incoming) ? 'void' : a.status === 'LOCKED' ? 'held' : incoming && a.status === 'SUCCEEDED' ? 'in' : '';
     return [
@@ -843,6 +856,7 @@ ${FLOWS_SCRIPT}
         table($('daPayList'), SESSION_COLS, s.sessions.map((x) => ({ cells: sessionCells(x) })), 'Aucun paiement dans cet environnement pour l’instant.');
       } else if (tab === 'settings') {
         $('daName').value = devApp.name;
+        showDevLogo();
         $('daRedirects').value = (devApp.redirect_uris || []).join('\\n');
         $('daEmbeds').value = (devApp.embed_origins || []).join('\\n');
         $('daEmbedSnippet').textContent = [
@@ -877,6 +891,53 @@ ${FLOWS_SCRIPT}
     say('daHookMsg', 'Événement « ping » envoyé. Il apparaît dans les livraisons dans quelques secondes.', 'ok');
     setTimeout(() => { if (nav.current() && nav.current().name === 'dev-app') enterDevApp(devApp.id + '/webhooks'); }, 2500);
   }, 'daHookMsg'));
+  // ---------------------------------------------------------------- app logo
+  function showDevLogo() {
+    if (!devApp) return;
+    $('daLogo').replaceWith(Object.assign(face(devApp.logo_url, devApp.name, 'avatar-lg'), { id: 'daLogo' }));
+    $('daLogoRemove').hidden = !devApp.logo_url;
+  }
+  // The image, cropped to a square and reduced to 256 px in the browser (WebP, else JPEG), as a data URL.
+  function squareLogo(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Image illisible.'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Image illisible.'));
+        img.onload = () => {
+          const side = Math.min(img.naturalWidth, img.naturalHeight);
+          const c = document.createElement('canvas');
+          c.width = c.height = 256;
+          c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 256, 256);
+          let url = c.toDataURL('image/webp', 0.9);
+          if (url.indexOf('data:image/webp') !== 0 || url.length > 190000) url = c.toDataURL('image/jpeg', 0.88);
+          resolve(url);
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  $('daLogoFile').addEventListener('change', () => guarded(async () => {
+    const file = $('daLogoFile').files && $('daLogoFile').files[0];
+    $('daLogoFile').value = '';
+    if (!file || !devApp) return;
+    if (file.size > 15 * 1024 * 1024) { say('daLogoMsg', 'Image trop lourde (15 Mo au maximum avant réduction).', 'err'); return; }
+    say('daLogoMsg', 'Envoi…');
+    const r = await LP.api('PUT', '/v1/me/developer/apps/' + encodeURIComponent(devApp.id) + '/logo', { image: await squareLogo(file) });
+    devApp = Object.assign({}, devApp, { logo_url: r.logo_url });
+    showDevLogo();
+    say('daLogoMsg', 'Logo enregistré : vos clients le voient dès maintenant.', 'ok');
+  }, 'daLogoMsg'));
+  $('daLogoRemove').addEventListener('click', () => guarded(async () => {
+    if (!devApp) return;
+    await LP.api('DELETE', '/v1/me/developer/apps/' + encodeURIComponent(devApp.id) + '/logo');
+    devApp = Object.assign({}, devApp, { logo_url: null });
+    showDevLogo();
+    say('daLogoMsg', 'Logo retiré : les initiales de l’app s’affichent.', 'ok');
+  }, 'daLogoMsg'));
+
   $('daNameSave').addEventListener('click', () => guarded(async () => {
     if (!devApp) return;
     const r = await LP.api('PATCH', '/v1/me/developer/apps/' + encodeURIComponent(devApp.id), { name: $('daName').value.trim() });

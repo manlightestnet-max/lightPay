@@ -18,6 +18,7 @@ import {
 } from '../db/developer.js';
 import { Environment } from '../types/index.js';
 import { isDeveloper } from '../db/identity.js';
+import { LogoError, removeAppLogo, setAppLogo } from '../db/avatars.js';
 
 const envOf = (request: FastifyRequest): Environment => (request.headers['x-environment'] === 'sandbox' ? 'sandbox' : 'production');
 
@@ -41,6 +42,8 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   POST   /v1/me/developer/apps/claim                attach an existing app { secret_key }     (recent sign-in)
  *   GET    /v1/me/developer/apps/:id                  app
  *   PATCH  /v1/me/developer/apps/:id                  { name?, webhook_url?, redirect_uris?, embed_origins? } (recent sign-in except name)
+ *   PUT    /v1/me/developer/apps/:id/logo             { image: base64 PNG/JPEG/WebP ≤ 150 KB } the app's logo
+ *   DELETE /v1/me/developer/apps/:id/logo             back to initials
  *   POST   /v1/me/developer/apps/:id/rotate-keys      new keys shown once                       (recent sign-in)
  *   GET    /v1/me/developer/apps/:id/overview         balances + last 30 days (X-Environment)
  *   GET    /v1/me/developer/apps/:id/sessions         checkout sessions (X-Environment)
@@ -101,6 +104,29 @@ export async function developerRoutes(fastify: FastifyInstance) {
     if ((body.webhook_url !== undefined || body.redirect_uris !== undefined || body.embed_origins !== undefined) && !recent(request, reply)) return;
     try {
       return { app: await updateApp(request.lightpayUser!.uid, (request.params as any).id, body) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // Logo: a small square image (the console resizes it), shown to the app's customers.
+  fastify.put('/apps/:id/logo', { bodyLimit: 400 * 1024 }, async (request, reply) => {
+    try {
+      const id = (request.params as any).id;
+      await ownedApp(request.lightpayUser!.uid, id);
+      const logo_url = await setAppLogo(id, ((request.body ?? {}) as any).image);
+      return { status: 'success', logo_url };
+    } catch (err) {
+      if (err instanceof LogoError) return reply.status(err.status).send({ error: err.code, message: err.message });
+      return fail(reply, err);
+    }
+  });
+  fastify.delete('/apps/:id/logo', async (request, reply) => {
+    try {
+      const id = (request.params as any).id;
+      await ownedApp(request.lightpayUser!.uid, id);
+      await removeAppLogo(id);
+      return { status: 'success', logo_url: null };
     } catch (err) {
       return fail(reply, err);
     }

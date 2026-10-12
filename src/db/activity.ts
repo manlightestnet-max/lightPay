@@ -4,6 +4,7 @@ import { Environment } from '../types/index.js';
 import { notifyWallets } from '../realtime.js';
 import { notifyActivity } from '../notify/index.js';
 import { describeActivity } from '../notify/catalog.js';
+import { withAvatars } from './avatars.js';
 
 /**
  * Wallet activity journal — what the person sees in their history: every operation that
@@ -204,7 +205,8 @@ export async function listActivity(environment: Environment, walletId: string, l
     [walletId, Math.min(Math.max(limit, 1), 200)],
     environment
   );
-  return rows.map(withDescription);
+  // avatar_url: the other person's photo, or the app's logo (avatars.ts).
+  return withAvatars(environment, rows.map(withDescription));
 }
 
 export async function getActivity(environment: Environment, walletId: string, id: string) {
@@ -214,5 +216,6 @@ export async function getActivity(environment: Environment, walletId: string, id
     [walletId, id],
     environment
   );
-  return withDescription(row);
+  if (!row) return row;
+  return (await withAvatars(environment, [withDescription(row)]))[0];
 }

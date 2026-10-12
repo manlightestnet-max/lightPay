@@ -6,6 +6,7 @@ import { Environment } from '../types/index.js';
 import { LightPayUser } from '../security/user-token.js';
 import { isReservedAppId } from '../security/app-identity.js';
 import { appName, failureOf, logActivity, logDirectSale } from './activity.js';
+import { appLogoUrl } from './avatars.js';
 
 /**
  * LIGHTPAY CONNECT — an app acts on a person's wallet only through a connection that
@@ -83,11 +84,14 @@ export async function userWallet(environment: Environment, user: LightPayUser, c
     environment
   );
   if (existing) {
-    const stale = (user.email && existing.metadata?.email !== user.email) || (user.name && existing.metadata?.name !== user.name);
+    const stale =
+      (user.email && existing.metadata?.email !== user.email) ||
+      (user.name && existing.metadata?.name !== user.name) ||
+      (user.picture && existing.metadata?.picture !== user.picture);
     if (!stale) return existing;
     const [updated] = await query(
       `UPDATE wallets SET metadata = metadata || $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
-      [existing.id, JSON.stringify({ email: user.email ?? existing.metadata?.email, name: user.name ?? existing.metadata?.name })],
+      [existing.id, JSON.stringify({ email: user.email ?? existing.metadata?.email, name: user.name ?? existing.metadata?.name, picture: user.picture ?? existing.metadata?.picture ?? null })],
       environment
     );
     return updated;
@@ -99,7 +103,7 @@ export async function userWallet(environment: Environment, user: LightPayUser, c
        ON CONFLICT (app_id, account_id, currency, environment)
        DO UPDATE SET metadata = wallets.metadata || EXCLUDED.metadata, updated_at = NOW()
        RETURNING *`,
-      [`user:${user.uid}`, currency, environment, JSON.stringify({ email: user.email, name: user.name })],
+      [`user:${user.uid}`, currency, environment, JSON.stringify({ email: user.email, name: user.name, picture: user.picture ?? null })],
       environment
     )
   )[0];
@@ -181,7 +185,7 @@ export async function validateAuthorizeRequest(environment: Environment, input: 
   if (!/^[A-Za-z0-9_-]{43}$/.test(input.codeChallenge)) throw new ConnectError('code_challenge must be a S256 PKCE challenge', 'INVALID_PKCE');
   const scopes = parseScopes(input.scopes);
   return {
-    app: { id: app.id, name: app.name },
+    app: { id: app.id, name: app.name, logo_url: await appLogoUrl(environment, app.id) },
     scopes: scopes.map((s) => ({ scope: s, label: SCOPE_LABELS[s] })),
     terms: consentTerms(app.name, scopes),
   };

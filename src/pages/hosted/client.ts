@@ -19,7 +19,7 @@ export const FIREBASE_AUTH_DOMAIN = () => process.env.LIGHTPAY_FIREBASE_AUTH_DOM
  *   LP.money(value, currency) · LP.uuid() · LP.deleteIdentity()
  * UI kit
  *   $(id) · el(tag, props?, children?) (props: class, text, on:{event:fn}, any attribute)
- *   icon(name, cls?) · initials(text) · digits(value) · debounce(fn, ms)
+ *   icon(name, cls?) · initials(text) · face(url, name, cls?) · digits(value) · debounce(fn, ms)
  *   say(target, text, kind?)       kind: 'err' | 'ok' | undefined (aria-live line)
  *   feeRows(container, rows)       rows: [[label, value, isTotal?]]
  *   listRow({ icon, iconClass, title, sub, end, endClass, href, onClick, chev }) -> <li>
@@ -234,6 +234,18 @@ export const CLIENT = (env: string) => `
     return n;
   }
   const initials = (s) => String(s || '?').replace(/@.*/, '').split(/[\\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
+  // A face: the person's photo or the app's logo when there is one, initials otherwise (and when
+  // the image does not load).
+  function face(url, name, cls) {
+    const s = el('span', { class: 'avatar' + (cls ? ' ' + cls : ''), 'aria-hidden': 'true', text: initials(name) });
+    if (url) {
+      const img = el('img', { src: url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', decoding: 'async' });
+      img.addEventListener('load', () => s.classList.add('has-img'));
+      img.addEventListener('error', () => { img.remove(); s.classList.remove('has-img'); });
+      s.appendChild(img);
+    }
+    return s;
+  }
   const digits = (v) => String(v || '').replace(/\\D/g, '');
   // Amounts are whole FCFA (no centimes): spaces are fine (1 000), anything else makes the amount
   // invalid — "100,50" must never become 10050.
@@ -304,7 +316,7 @@ export const CLIENT = (env: string) => `
   // One operation: icon · amount over a short description · time or state.
   function txRow(o) {
     const inner = [
-      el('span', { class: 'tx-icon', 'aria-hidden': 'true' }, [icon(o.icon)]),
+      el('span', { class: 'tx-icon' + (o.face ? ' has-face' : ''), 'aria-hidden': 'true' }, [o.face || icon(o.icon)]),
       el('span', { class: 'tx-main' }, [el('span', { class: 'tx-amt', text: o.amount }), el('span', { class: 'tx-desc', text: o.desc })]),
       el('span', { class: 'tx-end', text: o.end || '' }),
     ];

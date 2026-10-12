@@ -10,6 +10,7 @@ import { onWalletChange } from '../realtime.js';
 import { developerAccess, findRecipient, getUsername, requestDeveloperAccess, setUsername } from '../db/identity.js';
 import { noteSignIn, notifyAccount, registerDevice, removeAllDevices, removeDevice } from '../notify/index.js';
 import { ACCOUNT } from '../notify/catalog.js';
+import { appLogos, setPhotoVisible } from '../db/avatars.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -93,7 +94,12 @@ export async function meRoutes(fastify: FastifyInstance) {
     const wallet = await userWallet(envOf(request), user);
     return {
       status: 'success',
-      user: { uid: user.uid, email: user.email, name: user.name, email_verified: user.emailVerified },
+      user: {
+        uid: user.uid, email: user.email, name: user.name, email_verified: user.emailVerified,
+        // The Google photo, and whether the people this person pays or is paid by may see it.
+        picture: wallet.metadata?.picture ?? user.picture ?? null,
+        show_photo: wallet.metadata?.hide_photo !== true,
+      },
       wallet: {
         currency: wallet.currency,
         available_balance: String(wallet.available_balance),
@@ -126,11 +132,18 @@ export async function meRoutes(fastify: FastifyInstance) {
     return { status: 'success', activity: item };
   });
 
-  fastify.get('/connections', async (request) => ({
-    status: 'success',
-    scope_labels: SCOPE_LABELS,
-    connections: await listUserConnections(envOf(request), request.lightpayUser!),
-  }));
+  fastify.get('/connections', async (request) => {
+    const connections = await listUserConnections(envOf(request), request.lightpayUser!);
+    const logos = await appLogos(envOf(request), connections.map((c: any) => c.app_id));
+    return { status: 'success', scope_labels: SCOPE_LABELS, connections: connections.map((c: any) => ({ ...c, logo_url: logos.get(c.app_id) ?? null })) };
+  });
+
+  // « Afficher ma photo » (Compte) : the Google photo seen by the people this person pays or is paid by.
+  fastify.put('/photo', async (request) => {
+    const visible = ((request.body ?? {}) as any).visible !== false;
+    await setPhotoVisible(request.lightpayUser!.uid, visible);
+    return { status: 'success', show_photo: visible };
+  });
 
   fastify.patch('/connections/:id', async (request, reply) => {
     try {
@@ -219,7 +232,7 @@ export async function meRoutes(fastify: FastifyInstance) {
     try {
       const r = await findRecipient(envOf(request), (request.query as any)?.to);
       if (r.uid === request.lightpayUser!.uid) return reply.status(400).send({ error: 'SAME_WALLET', message: 'C’est votre propre compte.' });
-      return { status: 'success', recipient: { name: r.name, username: r.username } };
+      return { status: 'success', recipient: { name: r.name, username: r.username, picture: r.picture } };
     } catch (err) {
       return fail(reply, err);
     }

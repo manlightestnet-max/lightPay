@@ -67,7 +67,7 @@ export const connectPage = (nonce: string, env: string) => {
     const email = LP.email();
     $('meAvatar').textContent = initials(email);
     $('meEmail').textContent = email;
-    $('appAvatar').textContent = initials(valid.app.name);
+    $('appAvatar').replaceWith(Object.assign(face(valid.app.logo_url, valid.app.name, 'avatar-lg'), { id: 'appAvatar' }));
     $('appName').textContent = valid.app.name;
     $('scopes').replaceChildren.apply($('scopes'), valid.scopes.map((s) => listRow({ icon: SCOPE_ICON[s.scope] || 'check', iconClass: 'in', title: s.label })));
     $('limitBox').hidden = !valid.scopes.some((s) => s.scope === 'charge');

@@ -41,6 +41,8 @@ export interface Message {
   subject?: string;
   /** Notification push (l'admin peut la couper par message). */
   push?: boolean;
+  /** Vignette (https) : photo de la personne ou logo de l'app. */
+  image?: string;
   email: boolean;
   route?: string;
 }

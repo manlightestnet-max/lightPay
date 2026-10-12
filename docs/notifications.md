@@ -120,3 +120,9 @@ Chaque ligne de `/v1/me/activity` porte `description` : ce qui s’est passé, j
 Le téléphone s’inscrit lui-même : `POST /v1/me/devices { token, platform, label }` après la
 connexion, `DELETE /v1/me/devices { token }` à la déconnexion ou quand les notifications sont
 coupées dans Compte.
+
+## Visages (photo et logo)
+
+- Chaque ligne d'activité porte `avatar_url` : la photo Google de l'autre personne pour un envoi (sauf si elle l'a masquée : Compte > « Afficher ma photo »), ou le logo de l'app pour un paiement, une vente, une commission ou un remboursement. Calculé à la lecture (`src/db/avatars.ts`) : les anciennes lignes en profitent aussi.
+- Le logo d'une app se règle dans la console développeur (app > Paramètres > Logo) : image recadrée en carré et réduite à 256 px dans le navigateur, PNG / JPEG / WebP, 150 Ko au plus. Servi publiquement à `/v1/checkout/public/apps/:id/logo?v=…` (mis en cache).
+- La notification push reçoit la même image en vignette (`android.notification.image`, adresse absolue sur `CHECKOUT_BASE_URL`).

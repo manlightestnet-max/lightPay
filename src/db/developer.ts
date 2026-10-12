@@ -9,6 +9,7 @@ import { LedgerEngine } from './ledger.js';
 import { userWallet } from './connect.js';
 import { logActivity } from './activity.js';
 import { LightPayUser } from '../security/user-token.js';
+import { logoPath } from './avatars.js';
 
 /**
  * Developer space: the apps a LightPay account owns. Everything is scoped to the owner
@@ -29,7 +30,7 @@ export class DeveloperError extends Error {
 const MAX_APPS_PER_OWNER = 10;
 
 const APP_COLUMNS = `id, name, webhook_url, redirect_uris, embed_origins, is_active, max_amount_per_tx::text, daily_volume_limit::text,
-  live_key_hint, test_key_hint, keys_rotated_at, contact_email, created_at, updated_at`;
+  live_key_hint, test_key_hint, keys_rotated_at, contact_email, created_at, updated_at, logo_version::text`;
 
 export interface AppView {
   id: string;
@@ -44,6 +45,8 @@ export interface AppView {
   live_key_hint: string | null;
   test_key_hint: string | null;
   keys_rotated_at: string | null;
+  /** Logo address (avatars.ts), null without logo. */
+  logo_url: string | null;
   created_at: string;
 }
 
@@ -59,6 +62,7 @@ const view = (r: any): AppView => ({
   live_key_hint: r.live_key_hint ?? null,
   test_key_hint: r.test_key_hint ?? null,
   keys_rotated_at: r.keys_rotated_at ?? null,
+  logo_url: r.logo_version ? logoPath(r.id, r.logo_version) : null,
   created_at: r.created_at,
 });
 

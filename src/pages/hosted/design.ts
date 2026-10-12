@@ -172,15 +172,18 @@ svg.i { width: 20px; height: 20px; flex-shrink: 0; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 28px 0 4px; }
 .section-head h2 { font-size: 11px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
 .day-label, .group-label { font-size: 12px; font-weight: 500; color: var(--muted); padding: 16px 0 4px; margin: 0; }
-.tx { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 10px 0; color: inherit; text-decoration: none; border-radius: 8px; }
-.tx-icon { color: var(--muted); display: inline-flex; }
-.tx-icon svg { width: 19px; height: 19px; }
+.tx { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 9px 0; color: inherit; text-decoration: none; border-radius: 8px; }
+/* Each line has a round tile: an icon, or the face of who it was with (photo, app logo, initials). */
+.tx-icon { color: var(--muted); display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 999px; background: var(--raised); overflow: hidden; }
+.tx-icon svg { width: 18px; height: 18px; }
+.tx-icon.has-face { background: none; }
+.tx-icon .avatar { width: 38px; height: 38px; font-size: 13px; background: var(--accent-soft); color: var(--accent-ink); }
 .tx-main { min-width: 0; }
-.tx-amt { display: block; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .005em; }
-.tx-desc { display: block; font-size: 11px; color: var(--muted); letter-spacing: .05em; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tx-end { font-size: 10px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tx-amt { display: block; font-size: 15.5px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .005em; }
+.tx-desc { display: block; font-size: 12.5px; color: var(--muted); letter-spacing: .02em; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tx-end { font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tx.in .tx-amt { color: var(--accent-ink); }
-.tx.in .tx-icon { color: var(--accent-ink); }
+.tx.in .tx-icon { color: var(--accent-ink); background: var(--accent-soft); }
 .tx.void .tx-amt { color: var(--faint); text-decoration: line-through; font-weight: 500; }
 .tx.wait .tx-end, .tx.held .tx-end { color: var(--warn); }
 .tx.void .tx-end { color: var(--danger); }
@@ -278,6 +281,7 @@ a.tx:active { background: var(--raised); }
 .detail-icon svg { width: 24px; height: 24px; }
 .detail-icon.in { background: var(--accent-soft); color: var(--accent-ink); }
 .detail-icon.err { background: var(--danger-soft); color: var(--danger); }
+.detail-icon .avatar.fill { width: 56px; height: 56px; font-size: 19px; background: var(--accent-soft); color: var(--accent-ink); }
 .detail-kind { margin-top: 12px; font-size: 13px; color: var(--muted); }
 .detail-head .amount-xl { margin-top: 2px; }
 .detail-head .amount-xl.in { color: var(--accent-ink); }
@@ -310,7 +314,15 @@ a.tx:active { background: var(--raised); }
 .state-icon.wait { background: var(--warn-soft); color: var(--warn); }
 .spinner { width: 44px; height: 44px; border-radius: 999px; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .9s linear infinite; }
 .spinner.sm { width: 18px; height: 18px; border-width: 2px; }
-.avatar { width: 40px; height: 40px; flex-shrink: 0; border-radius: 999px; background: var(--raised); color: var(--text); display: inline-flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; }
+.avatar { position: relative; overflow: hidden; width: 40px; height: 40px; flex-shrink: 0; border-radius: 999px; background: var(--raised); color: var(--text); display: inline-flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; background: var(--card); }
+.avatar.has-img { color: transparent; }
+/* « Afficher ma photo » and other on/off rows. */
+.switch { appearance: none; -webkit-appearance: none; flex-shrink: 0; width: 46px; height: 28px; border-radius: 999px; background: var(--line-strong); position: relative; cursor: pointer; transition: background .2s var(--ease); margin: 0; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 999px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .25s var(--ease); }
+.switch:checked { background: var(--accent); }
+.switch:checked::after { transform: translateX(18px); }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .avatar-lg { width: 60px; height: 60px; font-size: 21px; background: var(--accent-soft); color: var(--accent-ink); }
 .pill { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--raised); color: var(--muted); }
 .pill.ok { background: var(--accent-soft); color: var(--accent-ink); }
@@ -348,8 +360,8 @@ a.tx:active { background: var(--raised); }
 .tabbar > [aria-current="page"]::after { content: ''; position: absolute; bottom: 8px; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
 .profile { display: flex; align-items: center; gap: 14px; padding: 14px 0 0; }
 .profile-main { min-width: 0; }
-.profile-name { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-handle { font-size: 13px; color: var(--muted); }
+.profile-name { font-size: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-handle { font-size: 14px; color: var(--muted); }
 .hint.err { color: var(--danger); }
 .field textarea { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: transparent; padding: 12px 14px; font-size: 15px; resize: vertical; min-height: 96px; }
 .field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }

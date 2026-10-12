@@ -14,6 +14,9 @@
  *     <section id="auth" class="screen">  sign in (split: brand aside + form)
  */
 export const CONSOLE_CSS = `
+.avatar.avatar-row { width: 32px; height: 32px; font-size: 12px; background: var(--accent-soft); color: var(--accent-ink); }
+.logo-edit { display: flex; align-items: center; gap: 16px; }
+.logo-edit-main { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 html.console-page, html.console-page body { height: 100%; overflow: hidden; }
 html.console-page body { display: block; padding: 0; background: var(--bg); }
 html.console-page .foot { display: none; }

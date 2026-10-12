@@ -69,7 +69,7 @@ export type PushResult = 'sent' | 'invalid_token' | 'failed' | 'skipped';
  * One notification to one phone. Shown by Android even when the app is closed; a tap opens
  * the app, which reads `data.route` to open the right screen.
  */
-export async function sendPush(token: string, n: { title: string; body: string; data?: Record<string, string>; tag?: string }): Promise<PushResult> {
+export async function sendPush(token: string, n: { title: string; body: string; data?: Record<string, string>; tag?: string; image?: string }): Promise<PushResult> {
   const a = serviceAccount();
   if (!a) {
     if (!warned) console.warn('[PUSH] LIGHTPAY_FCM_SERVICE_ACCOUNT not set: push notifications skipped');
@@ -88,7 +88,8 @@ export async function sendPush(token: string, n: { title: string; body: string; 
           android: {
             priority: 'HIGH',
             // Silhouette du logo LightPay (drawable de l'app), teintée en vert LightPay.
-            notification: { channel_id: 'lightpay_events', icon: 'ic_stat_lightpay', color: '#10B981', tag: n.tag, default_sound: true },
+            // image : la photo de la personne ou le logo de l'app, en vignette à droite du texte.
+            notification: { channel_id: 'lightpay_events', icon: 'ic_stat_lightpay', color: '#10B981', tag: n.tag, default_sound: true, ...(n.image ? { image: n.image } : {}) },
           },
         },
       }),

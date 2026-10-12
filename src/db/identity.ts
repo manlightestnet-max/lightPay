@@ -2,6 +2,7 @@ import { query } from './pool.js';
 import { ConnectError } from './connect.js';
 import { Environment } from '../types/index.js';
 import type { LightPayUser } from '../security/user-token.js';
+import { photoOf } from './avatars.js';
 
 /**
  * Identity-level data, one per LightPay person (production database, both ledgers use it):
@@ -90,6 +91,7 @@ export async function findRecipient(environment: Environment, toRaw: unknown, cu
     walletId: row.id as string,
     uid,
     name: (row.metadata?.name as string | undefined) || null,
+    picture: photoOf(row.metadata),
     username: await getUsername(uid),
     email: byEmail ? to : null,
   };

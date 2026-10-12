@@ -127,6 +127,7 @@ ${flowScreens(frame)}
     <ul class="group">
       <li><a class="row" href="#/username"><span class="row-icon">${iconSvg('user')}</span><span class="row-main"><span class="row-title">Nom d’utilisateur</span><span class="row-sub" id="accUsername"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
       <li><div class="row"><span class="row-icon">${iconSvg('mail')}</span><span class="row-main"><span class="row-title">Compte Google</span><span class="row-sub" id="secEmail"></span></span></div></li>
+      <li><label class="row" for="photoSwitch"><span class="row-icon">${iconSvg('user')}</span><span class="row-main"><span class="row-title">Afficher ma photo</span><span class="row-sub" id="photoSub">Vue par les personnes que vous payez ou qui vous paient</span></span><input class="switch" type="checkbox" id="photoSwitch" role="switch"></label></li>
     </ul>
     <p class="group-title">Autorisations</p>
     <ul class="group">
@@ -139,7 +140,7 @@ ${flowScreens(frame)}
       <li><button class="row" type="button" id="signOut"><span class="row-icon">${iconSvg('logout')}</span><span class="row-main"><span class="row-title">Se déconnecter</span></span></button></li>
     </ul>
     <ul class="group mt-lg">
-      <li><a class="row danger" href="#/delete"><span class="row-icon">${iconSvg('trash')}</span><span class="row-main"><span class="row-title">Supprimer mon compte</span></span></a></li>
+      <li><a class="row" href="#/advanced"><span class="row-icon">${iconSvg('apps')}</span><span class="row-main"><span class="row-title">Options avancées</span><span class="row-sub">Fermeture du compte</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
     </ul>
     <div class="msg" id="accMsg" role="status" aria-live="polite"></div>
   </div>
@@ -174,19 +175,30 @@ ${flowScreens(frame)}
   <div class="actions-bar"><button class="btn" type="button" id="devGo" hidden>Envoyer la demande</button><a class="btn" id="devOpen" href="/account/console#/home" hidden>Ouvrir la console</a></div>
 </section>
 
+<section class="screen" data-screen="advanced" hidden>
+  ${bar('Options avancées')}
+  <div class="content">
+    <p class="small muted mt">Des réglages dont vous aurez rarement besoin.</p>
+    <p class="group-title">Mon compte</p>
+    <ul class="group">
+      <li><a class="row" href="#/delete"><span class="row-icon">${iconSvg('logout')}</span><span class="row-main"><span class="row-title">Fermer mon compte</span><span class="row-sub">Possible quand votre solde est à zéro</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
+    </ul>
+  </div>
+</section>
+
 <section class="screen" data-screen="delete" hidden>
-  ${bar('Supprimer mon compte')}
+  ${bar('Fermer mon compte')}
   <div class="content">
     <p class="small muted mt">Possible si vos wallets réel et test sont à zéro et qu’aucun paiement n’est en attente. Les apps connectées perdent leur accès ; l’historique comptable est conservé.</p>
-    <div class="field"><label for="delConfirm">Tapez SUPPRIMER pour confirmer</label><input id="delConfirm" autocomplete="off"></div>
+    <div class="field"><label for="delConfirm">Tapez FERMER pour confirmer</label><input id="delConfirm" autocomplete="off"></div>
     <div class="msg" id="delMsg" role="status" aria-live="polite"></div>
   </div>
-  <div class="actions-bar"><button class="btn btn-danger" type="button" id="delGo" disabled>Supprimer définitivement</button></div>
+  <div class="actions-bar"><button class="btn btn-danger" type="button" id="delGo" disabled>Fermer définitivement</button></div>
 </section>
 
 <section class="screen" data-screen="bye" hidden>
   ${topbar({ brand: true, back: false, env })}
-  <div class="state"><span class="state-icon ok">${iconSvg('check')}</span><h2>Compte supprimé</h2><p>Votre compte LightPay a été fermé. Merci de l’avoir utilisé.</p></div>
+  <div class="state"><span class="state-icon ok">${iconSvg('check')}</span><h2>Compte fermé</h2><p>Votre compte LightPay a été fermé. Merci de l’avoir utilisé.</p></div>
 </section>
 
 <nav class="tabbar" id="tabbar" aria-label="Navigation" hidden>
@@ -237,9 +249,15 @@ ${flowScreens(frame)}
   }
   const settledOk = (a) => a.status === 'SUCCEEDED' || a.status === 'LOCKED' || a.status === 'PENDING';
   const END_LABEL = { FAILED: 'Refusé', PENDING: 'En cours', LOCKED: 'Bloqué', REFUNDED: 'Remboursé', EXPIRED: 'Expiré', CANCELLED: 'Annulé' };
+  // Who it was with: the person (photo or initials) for a transfer, the app's logo when it has one.
+  function actFace(a, cls) {
+    if (a.kind === 'TRANSFER' && a.status !== 'FAILED' && a.counterparty) return face(a.avatar_url, a.counterparty, cls);
+    return a.avatar_url ? face(a.avatar_url, a.counterparty, cls) : null;
+  }
   function actRow(a, short) {
     const incoming = a.direction === 'IN';
     return txRow({
+      face: actFace(a),
       icon: a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock'),
       amount: (incoming ? '+' : '−') + LP.money(walletAmount(a), a.currency),
       desc: actTitle(a),
@@ -264,7 +282,10 @@ ${flowScreens(frame)}
     $('homeClosed').hidden = !closed;
     $('homeActions').hidden = closed;
     amountParts($('compactAmount'), me.wallet.available_balance, cur());
-    $('accAvatar').textContent = initials(name);
+    $('accAvatar').replaceWith(Object.assign(face(me.user.picture, name, 'avatar-lg'), { id: 'accAvatar' }));
+    $('photoSwitch').checked = me.user.show_photo !== false;
+    $('photoSwitch').disabled = !me.user.picture;
+    $('photoSub').textContent = me.user.picture ? 'Vue par les personnes que vous payez ou qui vous paient' : 'Pas de photo sur votre compte Google';
     $('accName').textContent = name;
     $('accHandle').textContent = me.username ? '@' + me.username : '';
     $('accUsername').textContent = me.username ? '@' + me.username : 'À choisir';
@@ -358,7 +379,7 @@ ${FLOWS_SCRIPT}
       const incoming = a.direction === 'IN';
       const failed = !settledOk(a) || (a.status === 'REFUNDED' && incoming);
       $('itemIcon').className = 'detail-icon' + (a.status === 'FAILED' ? ' err' : incoming && !failed ? ' in' : '');
-      $('itemIcon').replaceChildren(icon(a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock')));
+      $('itemIcon').replaceChildren(actFace(a, 'fill') || icon(a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock')));
       // What happened, with whom, by which means (server description), not just a name.
       $('itemKind').textContent = a.description || actTitle(a);
       $('itemAmount').className = 'amount-xl' + (failed ? ' void' : incoming ? ' in' : '');
@@ -399,7 +420,7 @@ ${FLOWS_SCRIPT}
     await guarded(async () => {
       await loadConnections();
       $('appsList').replaceChildren.apply($('appsList'), connections.length ? connections.map((c) => listRow({
-        icon: el('span', { class: 'avatar', text: initials(c.app_name) }),
+        icon: face(c.logo_url, c.app_name),
         title: c.app_name,
         sub: c.scopes.length + (c.scopes.length > 1 ? ' permissions' : ' permission') + ' · depuis le ' + new Date(c.created_at).toLocaleDateString('fr-FR'),
         href: '#/apps/' + encodeURIComponent(c.id),
@@ -414,7 +435,7 @@ ${FLOWS_SCRIPT}
       if (!connections.length) await loadConnections();
       const c = connections.find((x) => x.id === id);
       if (!c) return nav.go('apps', true);
-      $('appAvatar').textContent = initials(c.app_name);
+      $('appAvatar').replaceWith(Object.assign(face(c.logo_url, c.app_name, 'avatar-lg'), { id: 'appAvatar' }));
       $('appName').textContent = c.app_name;
       $('appSince').textContent = 'Autorisée le ' + new Date(c.created_at).toLocaleDateString('fr-FR');
       $('appScopes').replaceChildren.apply($('appScopes'), c.scopes.map((s) => listRow({
@@ -518,8 +539,17 @@ ${FLOWS_SCRIPT}
     await loadMe().catch(() => {});
     say('accMsg', LP.ENV === 'sandbox' ? 'Compte de test : aucun argent réel.' : 'Compte réel.', 'ok');
   });
+  $('photoSwitch').addEventListener('change', () => guarded(async () => {
+    const on = $('photoSwitch').checked;
+    try {
+      await LP.api('PUT', '/v1/me/photo', { visible: on });
+      if (me) me.user.show_photo = on;
+      say('accMsg', on ? 'Votre photo est visible.' : 'Votre photo est masquée : vos initiales s’affichent.', 'ok');
+    } catch (e) { $('photoSwitch').checked = !on; throw e; }
+  }, 'accMsg'));
   $('signOut').addEventListener('click', () => { LP.signOut(); me = null; signIn(); });
-  $('delConfirm').addEventListener('input', () => { $('delGo').disabled = $('delConfirm').value.trim() !== 'SUPPRIMER'; });
+  const delArmed = () => $('delConfirm').value.trim().toUpperCase() === 'FERMER';
+  $('delConfirm').addEventListener('input', () => { $('delGo').disabled = !delArmed(); });
   $('delGo').addEventListener('click', () => guarded(async () => {
     $('delGo').disabled = true;
     try {
@@ -527,7 +557,7 @@ ${FLOWS_SCRIPT}
       await LP.deleteIdentity();
       $('tabbar').hidden = true;
       showOnly(document.querySelector('[data-screen="bye"]'));
-    } finally { $('delGo').disabled = $('delConfirm').value.trim() !== 'SUPPRIMER'; }
+    } finally { $('delGo').disabled = !delArmed(); }
   }, 'delMsg'));
 
   // ---------------------------------------------------------------- navigation
@@ -555,7 +585,8 @@ ${FLOWS_SCRIPT}
       account: { enter: enterAccount },
       username: { parent: 'account', enter: enterUsername },
       developer: { parent: 'account', enter: enterDeveloper },
-      delete: { parent: 'account', enter: () => { say('delMsg', ''); $('delConfirm').value = ''; $('delGo').disabled = true; } },
+      advanced: { parent: 'account' },
+      delete: { parent: 'advanced', enter: () => { say('delMsg', ''); $('delConfirm').value = ''; $('delGo').disabled = true; } },
       security: { enter: () => nav.go('account', true) },
     },
   });

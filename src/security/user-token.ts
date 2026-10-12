@@ -16,6 +16,8 @@ export interface LightPayUser {
   emailVerified: boolean;
   phone: string | null;
   name: string | null;
+  /** Photo of the Google account (https), if any. */
+  picture?: string | null;
   /** When the person last signed in (seconds since epoch). */
   authTime: number;
 }
@@ -92,6 +94,7 @@ export async function verifyUserToken(token: string): Promise<LightPayUser> {
     emailVerified: payload.email_verified === true,
     phone: payload.phone_number ?? null,
     name: payload.name ?? null,
+    picture: typeof payload.picture === 'string' && payload.picture.startsWith('https://') && payload.picture.length < 1000 ? payload.picture : null,
     authTime: typeof payload.auth_time === 'number' ? payload.auth_time : payload.iat,
   };
 }
