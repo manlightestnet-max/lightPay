@@ -241,13 +241,19 @@ export const FLOWS_SCRIPT = `
     const note = $('sendNote').value.trim();
     const rows = [['À', who], ['Frais', 'Aucun']].concat(note ? [['Message', note]] : []).concat([['Solde après envoi', LP.money(available() - amount, cur()), true]]);
     sendBusy = true;
-    const ok = await confirmSheet({ title: 'Vous envoyez', amount: LP.money(amount, cur()), rows: rows, confirm: 'Envoyer' });
-    if (!ok) { sendBusy = false; return; }
-    sendState = { to: $('sendTo').value.trim(), who: w, amount: String(amount), note: note, key: LP.uuid() };
+    const next = { to: $('sendTo').value.trim(), who: w, amount: String(amount), note: note, key: LP.uuid() };
+    // « Envoyer » opens the code step; the transfer leaves once, with the 6th digit.
+    const done = await confirmSheet({
+      title: 'Vous envoyez', amount: LP.money(amount, cur()), rows: rows, confirm: 'Envoyer',
+      pin: (code) => LP.api('POST', '/v1/me/transfers', { to: next.to, amount: next.amount, note: next.note }, next.key, code),
+    });
+    if (!done) { sendBusy = false; return; }
+    sendState = next;
     sendResult = null;
     nav.go('send/done');
     await operate('send', async () => {
-      const r = await LP.api('POST', '/v1/me/transfers', { to: sendState.to, amount: sendState.amount, note: sendState.note }, sendState.key);
+      if (done.error) throw done.error;
+      const r = done.result;
       sendResult = r.transfer;
       $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = ''; $('sendWho').textContent = ''; sendWho = null; sendCheck();
       await loadMe().catch(() => {});
@@ -343,7 +349,9 @@ export const FLOWS_SCRIPT = `
     const q = wdQuote;
     const msisdn = digits($('wdPhone').value).replace(/^242/, '');
     wdBusy = true;
-    const ok = await confirmSheet({
+    const next = { quote: q, network: wdNet, msisdn: msisdn, key: LP.uuid() };
+    // « Retirer » opens the code step; the withdrawal leaves once, with the 6th digit.
+    const done = await confirmSheet({
       title: 'Vous retirez',
       amount: LP.money(q.amount, q.currency),
       rows: [
@@ -354,13 +362,15 @@ export const FLOWS_SCRIPT = `
         ['Solde après retrait', LP.money(available() - Number(q.total), q.currency)],
       ],
       confirm: 'Retirer',
+      pin: (code) => LP.api('POST', '/v1/me/withdrawals', { amount: next.quote.amount, msisdn: next.msisdn, network: next.network }, next.key, code),
     });
-    if (!ok) { wdBusy = false; return; }
-    wdState = { quote: q, network: wdNet, msisdn: msisdn, key: LP.uuid() };
+    if (!done) { wdBusy = false; return; }
+    wdState = next;
     wdResult = null;
     nav.go('withdraw/done');
     await operate('wd', async () => {
-      const r = await LP.api('POST', '/v1/me/withdrawals', { amount: wdState.quote.amount, msisdn: wdState.msisdn, network: wdState.network }, wdState.key);
+      if (done.error) throw done.error;
+      const r = done.result;
       wdResult = r.withdrawal;
       wdQuote = null;
       $('wdAmount').value = ''; renderWdFees(); wdCheck();

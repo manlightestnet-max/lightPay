@@ -3,7 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { CheckoutError, payWithWallet, publicView, startMobileMoney } from '../db/checkout.js';
 import { ConnectError, findUserWallet, validateAuthorizeRequest } from '../db/connect.js';
 import { EscrowError } from '../db/escrow.js';
-import { requireUser } from './me.js';
+import { pinOk, requireUser } from './me.js';
 import { accountPage, connectPage, consolePage, hostedCsp, lightpaySdk, payPage } from '../pages/hosted.js';
 import { embedOriginFor } from '../db/developer.js';
 import { appLogo } from '../db/avatars.js';
@@ -28,7 +28,7 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9_-]{16,40}$/;
  *        /pay/:id?embed=1&origin=…  payment dialog (framed by the app's declared sites only)
  *   GET  /lightpay.js                                 script that opens the payment dialog
  *   GET  /v1/checkout/public/authorize                validate an app authorization request
- *   POST /v1/checkout/public/sessions/:id/wallet      pay with a LightPay wallet (signed in)
+ *   POST /v1/checkout/public/sessions/:id/wallet      pay with a LightPay wallet (signed in + X-LightPay-Pin)
  *   GET  /v1/checkout/public/apps/:id/logo            an app's logo (public, cached)
  *   GET  /v1/checkout/public/sessions/:id             what the page shows (polled)
  *   POST /v1/checkout/public/sessions/:id/mobile-money   { msisdn, network }
@@ -97,6 +97,8 @@ export async function checkoutPublicRoutes(fastify: FastifyInstance) {
     const { id } = request.params as any;
     if (!SESSION_ID.test(id)) return reply.status(404).send({ error: 'Session not found' });
     if (!allow(request.ip)) return reply.status(429).send({ error: 'TOO_MANY_REQUESTS', message: 'Trop de tentatives, réessayez dans une minute.' });
+    // Paying from the wallet: the person's 6-digit code (X-LightPay-Pin).
+    if (!(await pinOk(request, reply))) return;
     try {
       return { status: 'success', session: await payWithWallet(id, request.lightpayUser!) };
     } catch (err: any) {

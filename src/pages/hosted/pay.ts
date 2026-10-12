@@ -403,25 +403,26 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     } catch (e) { showFailed('Connexion impossible. Vérifiez votre réseau et réessayez.'); }
     finally { busy = false; }
   });
+  // Wallet: « Payer » opens the code step, the payment leaves once with the 6th digit. Nothing
+  // happens on a phone: never the « Confirmez sur votre téléphone » screen (mobile money only).
   $('payWallet').addEventListener('click', async () => {
     if (busy || $('payWallet').disabled) return;
     busy = true;
-    const ok = await confirmSheet({
+    const done = await confirmSheet({
       title: 'Vous payez',
       amount: LP.money(session.amount, session.currency),
       rows: [['Depuis', 'Votre wallet LightPay'], ['À', session.merchant], ['Frais', 'Aucun'], ['Solde après', LP.money(String((walletBalance || 0) - Number(session.amount)), session.currency), true]],
       confirm: 'Payer',
+      pin: (code) => LP.api('POST', '/v1/checkout/public/sessions/' + encodeURIComponent(id) + '/wallet', null, null, code),
     });
-    if (!ok) { busy = false; return; }
-    waiting('Paiement avec votre wallet LightPay…');
-    try {
-      const r = await LP.api('POST', '/v1/checkout/public/sessions/' + encodeURIComponent(id) + '/wallet');
-      paidWithWallet = true;
-      render(r.session);
-    } catch (e) {
-      if (e.signIn) mountAuth(openWallet, { title: 'Payer avec LightPay', onBack: backFromAuth });
-      else showFailed(e.message);
-    } finally { busy = false; }
+    busy = false;
+    if (!done) return;
+    if (done.error) {
+      if (done.error.signIn) return mountAuth(openWallet, { title: 'Payer avec LightPay', onBack: backFromAuth });
+      return showFailed(done.error.message);
+    }
+    paidWithWallet = true;
+    render(done.result.session);
   });
 
   // The app's page hands over the payer's current sign-in (lightpay.js, from the declared site only).

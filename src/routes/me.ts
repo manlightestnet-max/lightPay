@@ -11,6 +11,7 @@ import { developerAccess, findRecipient, getUsername, requestDeveloperAccess, se
 import { noteSignIn, notifyAccount, registerDevice, removeAllDevices, removeDevice } from '../notify/index.js';
 import { ACCOUNT } from '../notify/catalog.js';
 import { appLogos, setPhotoVisible } from '../db/avatars.js';
+import { PinError, hasPin, removePin, setPin, verifyPin } from '../db/pin.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -53,6 +54,24 @@ const idem = (request: FastifyRequest, reply: FastifyReply) => {
   return key;
 };
 
+/**
+ * Money leaving the wallet: the person's 6-digit LightPay code, in the X-LightPay-Pin header
+ * (db/pin.ts: hashed, 5 wrong codes lock it 15 minutes). Asked when the person confirms, so a
+ * burst of taps never sends twice and a stolen session alone cannot move money.
+ */
+export async function pinOk(request: FastifyRequest, reply: FastifyReply) {
+  try {
+    await verifyPin(request.lightpayUser!.uid, request.headers['x-lightpay-pin']);
+    return true;
+  } catch (err) {
+    if (err instanceof PinError) {
+      reply.status(err.statusCode).send({ status: 'error', error: err.code, message: err.message, ...err.extra });
+      return false;
+    }
+    throw err;
+  }
+}
+
 /** Sensitive actions: signed in (Google) in the last 10 minutes. */
 const recent = (request: FastifyRequest, reply: FastifyReply) => {
   if (isRecentSignIn(request.lightpayUser!)) return true;
@@ -70,8 +89,10 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   POST   /v1/me/connect/approve         approve an app's request -> redirect URL with code
  *   PATCH  /v1/me/connections/:id         remove permissions / change the charge limit
  *   POST   /v1/me/deposits                top up by mobile money -> hosted page
- *   POST   /v1/me/transfers               send to another LightPay user (recent sign-in)
- *   POST   /v1/me/withdrawals             withdraw to mobile money (recent sign-in)
+ *   POST   /v1/me/transfers               send to another LightPay user (X-LightPay-Pin)
+ *   POST   /v1/me/withdrawals             withdraw to mobile money (X-LightPay-Pin)
+ *   PUT    /v1/me/pin                     { pin, current_pin? }  choose / change the 6-digit code
+ *                                          (forgotten: recent Google sign-in instead of current_pin)
  *   GET    /v1/me/withdrawals             my withdrawals
  *   GET    /v1/me/withdrawals/quote       ?amount&network -> amount received, fees, total debited
  *   GET    /v1/me/deposits/quote          ?amount -> what the phone pays, per operator
@@ -111,6 +132,8 @@ export async function meRoutes(fastify: FastifyInstance) {
       environment: envOf(request),
       recent_sign_in: isRecentSignIn(user),
       username: await getUsername(user.uid),
+      // The 6-digit code is mandatory: chosen right after the @username.
+      pin_set: await hasPin(user.uid),
       developer: (await developerAccess(user.uid)).status,
     };
   });
@@ -165,7 +188,7 @@ export async function meRoutes(fastify: FastifyInstance) {
 
   fastify.post('/transfers', async (request, reply) => {
     const key = idem(request, reply);
-    if (!key || !recent(request, reply)) return;
+    if (!key || !(await pinOk(request, reply))) return;
     try {
       return { status: 'success', transfer: await sendMoney(envOf(request), request.lightpayUser!, (request.body ?? {}) as any, key) };
     } catch (err) {
@@ -175,7 +198,7 @@ export async function meRoutes(fastify: FastifyInstance) {
 
   fastify.post('/withdrawals', async (request, reply) => {
     const key = idem(request, reply);
-    if (!key || !recent(request, reply)) return;
+    if (!key || !(await pinOk(request, reply))) return;
     try {
       return { status: 'success', withdrawal: await withdraw(envOf(request), request.lightpayUser!, (request.body ?? {}) as any, key) };
     } catch (err) {
@@ -215,6 +238,19 @@ export async function meRoutes(fastify: FastifyInstance) {
     };
     request.raw.on('close', close);
     res.on('close', close);
+  });
+
+  // The 6-digit code: chosen once signed in; changed with the current code, or after a fresh
+  // Google sign-in when forgotten.
+  fastify.put('/pin', async (request, reply) => {
+    const b = (request.body ?? {}) as any;
+    try {
+      await setPin(request.lightpayUser!.uid, b.pin, { current: b.current_pin, recentSignIn: isRecentSignIn(request.lightpayUser!) });
+      return { status: 'success', pin_set: true };
+    } catch (err) {
+      if (err instanceof PinError) return reply.status(err.statusCode).send({ status: 'error', error: err.code, message: err.message, ...err.extra });
+      return fail(reply, err);
+    }
   });
 
   fastify.put('/username', async (request, reply) => {
@@ -287,6 +323,7 @@ export async function meRoutes(fastify: FastifyInstance) {
       const closed = await closeAccount(request.lightpayUser!);
       notifyAccount(envOf(request), request.lightpayUser!, ACCOUNT.accountClosed(), String(Date.now()));
       await removeAllDevices(request.lightpayUser!.uid).catch(() => undefined);
+      await removePin(request.lightpayUser!.uid).catch(() => undefined);
       return { status: 'success', ...closed };
     } catch (err) {
       return fail(reply, err);

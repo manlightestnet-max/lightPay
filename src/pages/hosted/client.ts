@@ -84,17 +84,21 @@ export const CLIENT = (env: string) => `
       write(Object.assign({}, s, { idToken: d.id_token, refreshToken: d.refresh_token, expiresAt: Date.now() + (Number(d.expires_in) - 60) * 1000 }));
       return d.id_token;
     };
-    const api = async (method, path, body, idem) => {
+    const api = async (method, path, body, idem, pin) => {
       const t = await token();
       if (!t) throw Object.assign(new Error('Connectez-vous à LightPay.'), { signIn: true });
       const headers = { Authorization: 'Bearer ' + t, 'X-Environment': ENV };
       if (body) headers['Content-Type'] = 'application/json';
       if (idem) headers['Idempotency-Key'] = idem;
+      // The 6-digit LightPay code, on money leaving the wallet (asked in the confirmation sheet).
+      if (pin) headers['X-LightPay-Pin'] = pin;
       // Never waits forever: past 25 s the call is given up (an idempotency key makes a retry safe).
       const res = await fetch(path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store', signal: deadline(25000) })
         .catch((e) => { throw new Error(e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 'Le serveur ne répond pas. Vérifiez votre connexion et réessayez.' : 'Connexion impossible. Vérifiez votre réseau et réessayez.'); });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 && data.error === 'RECENT_SIGN_IN_REQUIRED') throw Object.assign(new Error(data.message), { reauth: true });
+      // A wrong or missing code is not a lost session: the sheet asks again.
+      if (String(data.error || '').indexOf('PIN_') === 0) throw Object.assign(new Error(data.message || 'Code LightPay requis.'), { pin: true, code: data.error, status: res.status, attemptsLeft: data.attempts_left });
       if (res.status === 401) { write(null); throw Object.assign(new Error(data.message || 'Session expirée.'), { signIn: true }); }
       if (!res.ok) throw Object.assign(new Error(data.message || 'Une erreur est survenue.'), { status: res.status, code: data.error });
       return data;
@@ -352,7 +356,48 @@ export const CLIENT = (env: string) => `
         resolve(ok);
       };
       const onKey = (e) => { if (e.key === 'Escape') finish(false); };
-      const go = el('button', { class: 'btn', type: 'button', text: o.confirm || 'Confirmer', on: { click: () => { go.disabled = true; finish(true); } } });
+      // With o.pin(code): the button opens the code step; the operation runs once, when the 6th
+      // digit is typed (no double send however many taps). Resolves { result } or { error }.
+      const go = el('button', { class: 'btn', type: 'button', text: o.confirm || 'Confirmer', on: { click: () => { go.disabled = true; if (o.pin) codeStep(); else finish(true); } } });
+      function codeStep() {
+        const msg = el('p', { class: 'msg pin-msg', role: 'status', 'aria-live': 'polite' });
+        const forgot = el('a', { class: 'link pin-forgot', href: (LP.ENV === 'sandbox' ? '/account?env=sandbox' : '/account') + '#/pin', target: '_blank', rel: 'noopener', text: 'Code oublié ?' });
+        const pad = pinPad({
+          label: 'Code LightPay à 6 chiffres',
+          onFull: async (code) => {
+            msg.className = 'msg pin-msg'; msg.textContent = 'Vérification…';
+            try {
+              const r = await o.pin(code);
+              finish({ result: r });
+            } catch (e) {
+              if (e && e.code === 'PIN_NOT_SET') return createStep();
+              if (e && (e.code === 'PIN_INVALID' || e.code === 'PIN_REQUIRED')) { msg.className = 'msg pin-msg err'; msg.textContent = e.message; pad.reset(true); return; }
+              if (e && e.code === 'PIN_LOCKED') { msg.className = 'msg pin-msg err'; msg.textContent = e.message; pad.lock(); return; }
+              finish({ error: e });
+            }
+          },
+        });
+        sheet.replaceChildren(
+          el('div', { class: 'pin-step' }, [
+            el('span', { class: 'pin-lock', 'aria-hidden': 'true' }, [icon('lock')]),
+            el('p', { class: 'eyebrow', text: 'Code LightPay' }),
+            el('p', { class: 'pin-lead', text: 'Entrez votre code à 6 chiffres pour confirmer' + (o.amount ? ' ' + o.amount : '') + '.' }),
+            pad.el, msg, forgot,
+            el('div', { class: 'btn-row mt-lg' }, [el('button', { class: 'btn btn-secondary', type: 'button', text: 'Annuler', on: { click: () => finish(false) } })]),
+          ])
+        );
+        pad.focus();
+      }
+      // No code yet (mandatory): chosen right here, then the operation runs with it.
+      function createStep() {
+        sheet.replaceChildren(pinCreate({
+          onDone: async (code) => {
+            try { finish({ result: await o.pin(code) }); }
+            catch (e) { finish({ error: e }); }
+          },
+          onCancel: () => finish(false),
+        }));
+      }
       const sheet = el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': o.title }, [
         el('p', { class: 'eyebrow', text: o.title }),
         o.amount ? el('div', { class: 'amount-xl sheet-amount', text: o.amount }) : null,
@@ -367,6 +412,67 @@ export const CLIENT = (env: string) => `
       (document.querySelector('.app') || document.body).append(overlay);
       go.focus();
     });
+  }
+  // ------------------------------------------------------------------ LightPay code (6 digits)
+  // Six boxes over one numeric field: o.onFull(code) runs once when the 6th digit is typed.
+  function pinPad(o) {
+    const input = el('input', { class: 'pin-input', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '6', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false', 'aria-label': o.label || 'Code à 6 chiffres' });
+    const boxes = Array.from({ length: 6 }, () => el('span', { class: 'pin-box' }));
+    const wrap = el('label', { class: 'pin' }, [el('span', { class: 'pin-boxes', 'aria-hidden': 'true' }, boxes), input]);
+    let locked = false;
+    const paint = () => { const n = input.value.length; boxes.forEach((b, i) => { b.classList.toggle('on', i < n); b.classList.toggle('cur', i === n && !locked); }); };
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/[^0-9]/g, '').slice(0, 6);
+      paint();
+      if (input.value.length === 6 && !locked) { locked = true; input.blur(); paint(); o.onFull(input.value); }
+    });
+    paint();
+    return {
+      el: wrap,
+      focus: () => setTimeout(() => input.focus(), 60),
+      reset: (shake) => {
+        input.value = ''; locked = false; input.disabled = false; paint();
+        if (shake) { wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake'); if (navigator.vibrate) navigator.vibrate(60); }
+        setTimeout(() => input.focus(), 30);
+      },
+      lock: () => { locked = true; input.disabled = true; paint(); },
+    };
+  }
+  // Choosing the code: type it, type it again, saved (PUT /v1/me/pin). o.current: the current code
+  // when changing it. Returns the element; o.onDone(code) once saved.
+  function pinCreate(o) {
+    const box = el('div', { class: 'pin-step' });
+    const msg = el('p', { class: 'msg pin-msg', role: 'status', 'aria-live': 'polite' });
+    let first = null;
+    function step(title, lead, shake) {
+      const pad = pinPad({
+        label: title,
+        onFull: async (code) => {
+          if (first === null) { first = code; msg.className = 'msg pin-msg'; msg.textContent = ''; return step('Confirmez votre code', 'Tapez-le une seconde fois.'); }
+          if (code !== first) { first = null; msg.className = 'msg pin-msg err'; msg.textContent = 'Les deux codes ne sont pas identiques. Recommencez.'; return step('Choisissez votre code', 'Six chiffres, faciles à retenir pour vous seul.', true); }
+          msg.className = 'msg pin-msg'; msg.textContent = 'Enregistrement…';
+          try {
+            await LP.api('PUT', '/v1/me/pin', o.current ? { pin: code, current_pin: o.current } : { pin: code });
+            msg.className = 'msg pin-msg ok'; msg.textContent = 'Code enregistré.';
+            o.onDone(code);
+          } catch (e) {
+            if (e.reauth && o.onReauth) return o.onReauth();
+            if (o.current && o.onBadCurrent && (e.code === 'PIN_INVALID' || e.code === 'PIN_LOCKED' || e.code === 'PIN_REQUIRED')) return o.onBadCurrent(e);
+            first = null; msg.className = 'msg pin-msg err'; msg.textContent = e.message; step('Choisissez votre code', 'Six chiffres, faciles à retenir pour vous seul.', true);
+          }
+        },
+      });
+      box.replaceChildren(
+        el('span', { class: 'pin-lock', 'aria-hidden': 'true' }, [icon('lock')]),
+        el('p', { class: 'eyebrow', text: title }),
+        el('p', { class: 'pin-lead', text: lead }),
+        pad.el, msg,
+        o.onCancel ? el('div', { class: 'btn-row mt-lg' }, [el('button', { class: 'btn btn-secondary', type: 'button', text: 'Annuler', on: { click: () => o.onCancel() } })]) : null,
+      );
+      if (shake) pad.reset(true); else pad.focus();
+    }
+    step(o.title || 'Choisissez votre code LightPay', o.lead || 'Six chiffres, demandés pour chaque envoi, retrait ou paiement avec votre wallet.');
+    return box;
   }
   const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   function dayLabel(d) {

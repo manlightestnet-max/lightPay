@@ -136,18 +136,18 @@ svg.i { width: 20px; height: 20px; flex-shrink: 0; }
 .hero-split .hero-sub { justify-content: flex-start; }
 .hero-split .amount-xl { font-size: 36px; }
 .hero-actions { display: grid; gap: 8px; flex-shrink: 0; }
-.chip { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 38px; padding: 0 16px 0 12px; border-radius: 999px; border: 0; background: var(--raised); color: var(--text); font-size: 13px; font-weight: 500; text-decoration: none; transition: transform .08s, filter .15s; white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 38px; padding: 0 16px 0 12px; border-radius: 999px; border: 0; background: var(--raised); color: var(--text); font-size: 14px; font-weight: 600; text-decoration: none; transition: transform .08s, filter .15s; white-space: nowrap; }
 .chip svg { width: 17px; height: 17px; }
 .chip.primary { background: var(--accent); color: var(--on-accent); }
-.chip:active { transform: scale(.97); }
+.chip:active { transform: scale(.95); }
 .chip:hover { filter: brightness(1.06); }
 .home-hero { display: flex; flex-direction: column; justify-content: center; padding: 24px 0 6px; }
 .home-hero .amount-xl { font-size: 52px; }
 .home-hero .hero-sub { margin-top: 10px; }
 /* The three actions fill the row, edge to edge. */
 .home-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
-.home-actions .chip { height: 50px; border-radius: 16px; padding: 0 8px; font-size: 14px; }
-.home-more { display: block; margin: 8px 0 4px; padding: 14px; border-radius: 14px; background: var(--raised); text-align: center; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500; }
+.home-actions .chip { height: 50px; border-radius: 999px; padding: 0 8px; font-size: 15px; font-weight: 600; }
+.home-more { display: block; margin: 8px 0 4px; padding: 14px; border-radius: 999px; background: var(--raised); text-align: center; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500; }
 .send-link { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 14px; background: var(--raised); color: var(--text); text-decoration: none; font-size: 14px; }
 .send-link svg { width: 18px; height: 18px; } .send-link .chev { color: var(--faint); } .send-link span { flex: 1; }
 /* home: compact bar (motion on scroll) */
@@ -246,14 +246,16 @@ a.tx:active { background: var(--raised); }
 .op-logo.lp { background-image: var(--mark); background-size: 78%; background-color: var(--card); box-shadow: inset 0 0 0 1px var(--line-strong); }
 
 /* ---------- buttons ---------- */
-.btn { width: 100%; min-height: 52px; padding: 0 20px; border: 0; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: filter .15s, opacity .15s, transform .08s; text-decoration: none; }
+/* Buttons: full pills, words as written (the new YouTube look): solid green for the main action, soft grey for the others. */
+.btn { width: 100%; min-height: 52px; padding: 0 22px; border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 15px; letter-spacing: .01em; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: filter .15s, opacity .15s, transform .18s cubic-bezier(.34,1.6,.64,1), background .15s; text-decoration: none; }
 .btn:hover { filter: brightness(1.05); }
-.btn:active { transform: scale(.99); }
+.btn:active { transform: scale(.97); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: .35; cursor: not-allowed; filter: none; transform: none; }
-.btn-secondary { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.btn-danger { background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
+.btn-secondary { background: var(--raised); color: var(--text); }
+.btn-secondary:hover { filter: none; background: var(--line); }
+.btn-danger { background: var(--danger-soft); color: var(--danger); }
 .btn-ghost { background: transparent; color: var(--text); min-height: 44px; }
-.btn.btn-sm { min-height: 40px; padding: 0 14px; font-size: 11px; border-radius: 999px; }
+.btn.btn-sm { min-height: 40px; padding: 0 16px; font-size: 14px; border-radius: 999px; }
 .btn.btn-sm svg { width: 16px; height: 16px; }
 .btn-row { display: flex; gap: 10px; }
 .btn-row .btn { flex: 1; }
@@ -346,6 +348,27 @@ a.tx:active { background: var(--raised); }
 .sheet-amount { text-align: center; font-size: 34px; margin-top: 6px; }
 .sheet .receipt { margin-top: 10px; }
 .sheet .btn-row .btn { min-height: 50px; }
+/* LightPay code: six round boxes that fill, a shake when it is wrong. */
+.pin-step { display: flex; flex-direction: column; align-items: center; text-align: center; animation: pin-in .32s cubic-bezier(.34,1.3,.64,1); }
+.pin-step .btn-row { align-self: stretch; }
+.pin-lock { width: 52px; height: 52px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent-ink); margin-bottom: 12px; box-shadow: 0 10px 26px -14px var(--accent); }
+.pin-lock svg { width: 22px; height: 22px; }
+.pin-lead { margin-top: 6px; font-size: 14px; color: var(--muted); line-height: 1.45; max-width: 300px; }
+.pin { position: relative; display: block; margin-top: 22px; cursor: text; }
+.pin-boxes { display: flex; gap: 10px; justify-content: center; }
+.pin-box { width: 42px; height: 52px; border-radius: 14px; background: var(--raised); box-shadow: inset 0 0 0 1.5px var(--line-strong); display: inline-flex; align-items: center; justify-content: center; transition: box-shadow .15s var(--ease), background .15s var(--ease), transform .2s cubic-bezier(.34,1.6,.64,1); }
+.pin-box.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); transform: scale(1.04); }
+.pin-box.on::after { content: ''; width: 12px; height: 12px; border-radius: 999px; background: var(--accent-ink); animation: dot-in .2s cubic-bezier(.34,1.6,.64,1); }
+.pin-box.cur { box-shadow: inset 0 0 0 2px var(--accent); }
+.pin-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; font-size: 16px; color: transparent; background: transparent; caret-color: transparent; }
+.pin.shake .pin-boxes { animation: shake .42s cubic-bezier(.36,.07,.19,.97); }
+.pin.shake .pin-box { box-shadow: inset 0 0 0 1.5px var(--danger); }
+.pin-msg { min-height: 20px; margin-top: 14px; }
+.pin-forgot { margin-top: 4px; font-size: 13px; }
+@keyframes pin-in { from { opacity: 0; transform: translateY(12px) scale(.98); } }
+@keyframes dot-in { from { transform: scale(0); } }
+@keyframes shake { 10%, 90% { transform: translateX(-2px); } 20%, 80% { transform: translateX(4px); } 30%, 50%, 70% { transform: translateX(-7px); } 40%, 60% { transform: translateX(7px); } }
+@media (max-width: 360px) { .pin-box { width: 38px; height: 48px; } .pin-boxes { gap: 8px; } }
 
 /* ---------- scaffold: pinned blocks, sticky headings, bottom bar ---------- */
 .pinned { flex-shrink: 0; padding: 0 24px 10px; border-bottom: 1px solid var(--line); }

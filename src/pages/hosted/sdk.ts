@@ -4,7 +4,8 @@
  *   <script src="https://checkout.smlab.xyz/lightpay.js"></script>
  *   const result = await LightPay.pay(checkoutUrl);   // { status: 'completed' | 'closed', session }
  *   LightPay.pay(checkoutUrl, { idToken })            // payer already signed in with LightPay: no second sign-in
- *   LightPay.pay(checkoutUrl, { theme: 'dark' })      // the dialog in the app's theme ('dark' | 'light')
+ *   LightPay.pay(checkoutUrl, { theme: 'dark' })      // the dialog in the app's theme ('dark' | 'light');
+ *                                                      // without it, the dialog follows the site's own background
  *
  * Opens the LightPay payment page in a dialog over the app. The page stays on LightPay's
  * origin: the app can open and close it, never read or change it. `completed` is only a hint
@@ -22,10 +23,27 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
   var AFTER_LOAD_MS = 1200;
   var open = null;
 
+  // The dialog in the site's colours when the app does not say: a dark page gets the dark
+  // dialog, any other the light one (never a dark box popping over a white site).
+  function siteTheme() {
+    function rgb(el) {
+      if (!el) return null;
+      var m = /rgba?\\(([^)]+)\\)/.exec(getComputedStyle(el).backgroundColor || '');
+      if (!m) return null;
+      var p = m[1].split(',').map(function (x) { return parseFloat(x); });
+      return p.length > 3 && p[3] === 0 ? null : p;
+    }
+    var c = rgb(document.body) || rgb(document.documentElement);
+    if (!c) return window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] < 110 ? 'dark' : 'light';
+  }
+
   var CSS = [
     ':host { all: initial; }',
-    '.backdrop { position: fixed; inset: 0; z-index: 2147483646; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; animation: fade .18s ease; }',
-    '.frame { position: relative; width: 440px; max-width: 100%; height: min(760px, calc(100dvh - 32px)); border-radius: 20px; overflow: hidden; background: #141416; box-shadow: 0 30px 80px -20px rgba(0,0,0,.6); animation: rise .22s cubic-bezier(.2,.7,.2,1); }',
+    // The site stays visible, softly blurred, behind a card that springs in (a sheet from the bottom on phones).
+    '.backdrop { position: fixed; inset: 0; z-index: 2147483646; background: rgba(12,14,16,.42); -webkit-backdrop-filter: blur(8px) saturate(120%); backdrop-filter: blur(8px) saturate(120%); display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; animation: fade .2s ease; }',
+    '.frame { position: relative; width: 440px; max-width: 100%; height: min(760px, calc(100dvh - 32px)); border-radius: 28px; overflow: hidden; background: #141416; box-shadow: 0 40px 100px -30px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06); animation: rise .42s cubic-bezier(.34,1.3,.64,1); }',
+    '.frame.light { box-shadow: 0 40px 100px -30px rgba(15,23,42,.35), 0 0 0 1px rgba(15,23,42,.06); }',
     'iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; opacity: 0; transition: opacity .15s; }',
     '.loaded iframe { opacity: 1; }',
     // Shimmer of the payment page while it loads (same layout), in the app's theme.
@@ -42,8 +60,8 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
     '.sk .field { height: 52px; margin-top: 30px; border-radius: 10px; }',
     '.sk .row { height: 11px; margin-top: 16px; }',
     '.sk .btn { height: 52px; margin-top: auto; border-radius: 14px; }',
-    '@media (max-width: 520px) { .backdrop { padding: 0; } .frame { width: 100%; height: 100%; border-radius: 0; } }',
-    '@keyframes fade { from { opacity: 0 } } @keyframes rise { from { opacity: 0; transform: translateY(12px) } } @keyframes sh { from { background-position: 100% 0 } to { background-position: -150% 0 } }',
+    '@media (max-width: 520px) { .backdrop { padding: 0; align-items: flex-end; } .frame { width: 100%; height: min(94dvh, 760px); border-radius: 28px 28px 0 0; animation: up .38s cubic-bezier(.2,.9,.25,1); } }',
+    '@keyframes fade { from { opacity: 0 } } @keyframes rise { from { opacity: 0; transform: translateY(24px) scale(.97) } } @keyframes up { from { transform: translateY(100%) } } @keyframes sh { from { background-position: 100% 0 } to { background-position: -150% 0 } }',
     '@media (prefers-reduced-motion: reduce) { .backdrop, .frame { animation: none; } }',
   ].join('\\n');
 
@@ -59,7 +77,8 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
       var src = new URL(url.pathname, ORIGIN);
       src.searchParams.set('embed', '1');
       src.searchParams.set('origin', location.origin);
-      if (options && (options.theme === 'dark' || options.theme === 'light')) src.searchParams.set('theme', options.theme);
+      var theme = options && (options.theme === 'dark' || options.theme === 'light') ? options.theme : siteTheme();
+      src.searchParams.set('theme', theme);
 
       var host = document.createElement('div');
       host.setAttribute('data-lightpay', '');
@@ -69,7 +88,7 @@ export const lightpaySdk = (checkoutOrigin: string) => `/* LightPay checkout · 
       var backdrop = document.createElement('div');
       backdrop.className = 'backdrop';
       var frame = document.createElement('div');
-      var light = Boolean(options && options.theme === 'light');
+      var light = theme === 'light';
       frame.className = light ? 'frame light' : 'frame';
       frame.setAttribute('role', 'dialog');
       frame.setAttribute('aria-modal', 'true');

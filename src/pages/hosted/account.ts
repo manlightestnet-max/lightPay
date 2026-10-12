@@ -136,6 +136,7 @@ ${flowScreens(frame)}
     </ul>
     <p class="group-title">Session</p>
     <ul class="group">
+      <li><a class="row" href="#/pin"><span class="row-icon">${iconSvg('lock')}</span><span class="row-main"><span class="row-title">Code LightPay</span><span class="row-sub">6 chiffres, pour envoyer, retirer et payer</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
       <li><button class="row" type="button" id="envSwitch"><span class="row-icon">${iconSvg('swap')}</span><span class="row-main"><span class="row-title" id="envSwitchTitle"></span><span class="row-sub" id="envSwitchSub"></span></span></button></li>
       <li><button class="row" type="button" id="signOut"><span class="row-icon">${iconSvg('logout')}</span><span class="row-main"><span class="row-title">Se déconnecter</span></span></button></li>
     </ul>
@@ -155,6 +156,14 @@ ${flowScreens(frame)}
     <div class="msg" id="unMsg" role="status" aria-live="polite"></div>
   </div>
   <div class="actions-bar"><button class="btn" type="button" id="unGo">Enregistrer</button></div>
+</section>
+
+<section class="screen" data-screen="pin" hidden>
+  ${topbar({ title: 'Code LightPay', back: true, env, backId: 'pinBack' })}
+  <div class="content">
+    <div id="pinBox"></div>
+    <div class="center mt-lg"><button class="link" type="button" id="pinForgot" hidden>J’ai oublié mon code</button></div>
+  </div>
 </section>
 
 <section class="screen" data-screen="developer" hidden>
@@ -486,6 +495,48 @@ ${FLOWS_SCRIPT}
       $('accAppsSub').textContent = connections.length ? connections.length + (connections.length > 1 ? ' apps autorisées' : ' app autorisée') : 'Aucune app autorisée';
     } catch (e) { /* the count is optional */ }
   }
+  // ---------------------------------------------------------------- LightPay code
+  // First time: choose it (no way around). Afterwards: the current code, then the new one; or,
+  // forgotten, a fresh Google sign-in then the new one.
+  function enterPin(mode) {
+    const first = !me || !me.pin_set;
+    $('pinBack').hidden = first;
+    $('pinForgot').hidden = first || mode === 'forgot';
+    const saved = async () => {
+      await loadMe().catch(() => {});
+      if (first) nav.go('home', true); else { nav.go('account', true); say('accMsg', 'Code LightPay modifié.', 'ok'); }
+    };
+    if (first || mode === 'forgot') {
+      $('pinBox').replaceChildren(pinCreate({
+        title: first ? 'Choisissez votre code LightPay' : 'Nouveau code LightPay',
+        onDone: saved,
+        onReauth: async () => { if (await confirmIdentity()) enterPin('forgot'); },
+      }));
+      return;
+    }
+    const msg = el('p', { class: 'msg pin-msg', id: 'pinMsgCur', role: 'status', 'aria-live': 'polite' });
+    const pad = pinPad({
+      label: 'Code actuel',
+      onFull: (current) => {
+        $('pinBox').replaceChildren(pinCreate({
+          title: 'Nouveau code LightPay', current: current, onDone: saved,
+          onReauth: async () => { if (await confirmIdentity()) enterPin('forgot'); },
+          // The current code was wrong: back to it, with the server's words (attempts left, lock).
+          onBadCurrent: (e) => { enterPin(); say('pinMsgCur', e.message, 'err'); },
+        }));
+      },
+    });
+    $('pinBox').replaceChildren(el('div', { class: 'pin-step' }, [
+      el('span', { class: 'pin-lock', 'aria-hidden': 'true' }, [icon('lock')]),
+      el('p', { class: 'eyebrow', text: 'Code actuel' }),
+      el('p', { class: 'pin-lead', text: 'Entrez votre code actuel pour en choisir un nouveau.' }),
+      pad.el, msg,
+    ]));
+    pad.focus();
+  }
+  // Forgotten: the same Google account again, then a new code (no current code needed).
+  $('pinForgot').addEventListener('click', async () => { if (await confirmIdentity()) enterPin('forgot'); });
+
   function enterUsername() {
     const first = !me || !me.username;
     $('unBack').hidden = first;
@@ -569,6 +620,8 @@ ${FLOWS_SCRIPT}
       syncTabs(c);
       // No wallet without a @username: chosen first.
       if (me && !me.username && c.name !== 'username') setTimeout(() => nav.go('username', true), 0);
+      // Then the 6-digit code (mandatory): asked for every send, withdrawal and wallet payment.
+      else if (me && me.username && me.pin_set === false && c.name !== 'pin') setTimeout(() => nav.go('pin', true), 0);
     },
     screens: {
       home: { enter: enterHome },
@@ -584,6 +637,7 @@ ${FLOWS_SCRIPT}
       app: { parent: 'apps', enter: enterApp },
       account: { enter: enterAccount },
       username: { parent: 'account', enter: enterUsername },
+      pin: { parent: 'account', enter: enterPin },
       developer: { parent: 'account', enter: enterDeveloper },
       advanced: { parent: 'account' },
       delete: { parent: 'advanced', enter: () => { say('delMsg', ''); $('delConfirm').value = ''; $('delGo').disabled = true; } },

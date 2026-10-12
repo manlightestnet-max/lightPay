@@ -1,6 +1,6 @@
 /**
  * LightPay account space end-to-end THROUGH THE HTTP API: self deposit, send to another
- * user, withdraw to mobile money, recent sign-in, permissions, account closure.
+ * user, withdraw to mobile money, 6-digit code, permissions, account closure.
  *   LW_URL=… LW_TEST_KEY=… [LW_LIVE_KEY=…] LIGHTPAY_TEST_TOKEN_PRIVATE_KEY_FILE=… npx tsx test/account.http.ts
  * (server started with LIGHTPAY_TEST_TOKEN_PUBLIC_KEY, simulator rail)
  */
@@ -28,7 +28,7 @@ const userToken = (uid: string, email: string, name: string, signedInSecondsAgo 
 
 async function scenario(env: 'sandbox' | 'production', appKey: string) {
   console.log(`\n== ${env}`);
-  const req = async (method: string, path: string, o: { user?: string; key?: string; body?: any; idem?: string } = {}) => {
+  const req = async (method: string, path: string, o: { user?: string; key?: string; body?: any; idem?: string; pin?: string | null } = {}) => {
     const res = await fetch(`${BASE}${path}`, {
       method,
       headers: {
@@ -36,6 +36,8 @@ async function scenario(env: 'sandbox' | 'production', appKey: string) {
         ...(o.key ? { Authorization: `Bearer ${o.key}` } : {}),
         ...(o.body ? { 'Content-Type': 'application/json' } : {}),
         ...(o.idem ? { 'Idempotency-Key': o.idem } : {}),
+        // The 6-digit code on money leaving a wallet (db/pin.ts); null: sent without it.
+        ...(o.user && o.pin !== null ? { 'X-LightPay-Pin': o.pin ?? '246810' } : {}),
       },
       body: o.body ? JSON.stringify(o.body) : undefined,
     });
@@ -49,6 +51,13 @@ async function scenario(env: 'sandbox' | 'production', appKey: string) {
   const bruno = userToken(`test-bruno-${RUN}`, bEmail, 'Bruno Test');
   const balanceOf = async (u: string) => (await req('GET', '/v1/me', { user: u })).body.wallet;
   await balanceOf(bruno); // Bruno has an account (wallet created at sign-in)
+  // The 6-digit code is mandatory: both choose it (weak codes refused).
+  const weak = await req('PUT', '/v1/me/pin', { user: alice, body: { pin: '123456' } });
+  check('weak code refused', weak.status === 400 && weak.body.error === 'PIN_WEAK');
+  check('alice chooses her code', (await req('PUT', '/v1/me/pin', { user: alice, body: { pin: '246810' } })).status === 200);
+  check('bruno chooses his code', (await req('PUT', '/v1/me/pin', { user: bruno, body: { pin: '246810' } })).status === 200);
+  const changeOld = await req('PUT', '/v1/me/pin', { user: aliceOld, body: { pin: '135790' } });
+  check('changing the code needs the current one (old sign-in)', changeOld.status === 401 && changeOld.body.error === 'PIN_CURRENT_REQUIRED');
 
   // 1. Self top-up by mobile money.
   const dep = await req('POST', '/v1/me/deposits', { user: alice, body: { amount: 50000 }, idem: key('dep') });
@@ -64,8 +73,14 @@ async function scenario(env: 'sandbox' | 'production', appKey: string) {
   // 2. Send to another LightPay user.
   const noIdem = await req('POST', '/v1/me/transfers', { user: alice, body: { to: bEmail, amount: 1000 } });
   check('money moves need an Idempotency-Key', noIdem.status === 400);
-  const old = await req('POST', '/v1/me/transfers', { user: aliceOld, body: { to: bEmail, amount: 1000 }, idem: key('old') });
-  check('old sign-in -> password confirmation required', old.status === 401 && old.body.error === 'RECENT_SIGN_IN_REQUIRED');
+  const noPin = await req('POST', '/v1/me/transfers', { user: alice, body: { to: bEmail, amount: 1000 }, idem: key('nopin'), pin: null });
+  check('no code -> refused', noPin.status === 401 && noPin.body.error === 'PIN_REQUIRED');
+  const badPin = await req('POST', '/v1/me/transfers', { user: alice, body: { to: bEmail, amount: 1000 }, idem: key('badpin'), pin: '999998' });
+  check('wrong code -> refused, attempts left', badPin.status === 401 && badPin.body.error === 'PIN_INVALID' && badPin.body.attempts_left === 4);
+  // Old sign-in + right code: past the code check (no fresh Google sign-in needed); an unknown
+  // recipient keeps the balances of the next checks untouched.
+  const old = await req('POST', '/v1/me/transfers', { user: aliceOld, body: { to: `nobody-old-${RUN}@test.lightpay`, amount: 1000 }, idem: key('old') });
+  check('old sign-in + right code -> past the code check', old.status === 404 && old.body.error === 'RECIPIENT_NOT_FOUND', `${old.status} ${old.body.error ?? ''}`);
   const sent = await req('POST', '/v1/me/transfers', { user: alice, body: { to: bEmail, amount: 12000, note: 'Loyer' }, idem: key('send') });
   const replay = await req('POST', '/v1/me/transfers', { user: alice, body: { to: bEmail, amount: 12000, note: 'Loyer' }, idem: key('send') });
   check('send 12 000 to Bruno', sent.status === 200 && sent.body.transfer?.to?.email === bEmail, `${sent.status} ${sent.body.message ?? ''}`);
