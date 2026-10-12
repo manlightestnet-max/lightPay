@@ -100,6 +100,17 @@ server.get('/health', async () => {
   };
 });
 
+// 1'. Android App Links: the LightPay app (com.smlab.lightpay) opens /connect and /pay/<id> links
+//     itself instead of the browser. LIGHTPAY_ANDROID_SHA256: the app's signing certificate
+//     fingerprints (SHA-256, comma separated: Play upload/app signing key, debug key for tests).
+server.get('/.well-known/assetlinks.json', async (request, reply) => {
+  const fingerprints = String(process.env.LIGHTPAY_ANDROID_SHA256 ?? '').split(',').map((f) => f.trim().toUpperCase()).filter(Boolean);
+  reply.header('Cache-Control', 'public, max-age=3600');
+  return fingerprints.length
+    ? [{ relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: process.env.LIGHTPAY_ANDROID_PACKAGE || 'com.smlab.lightpay', sha256_cert_fingerprints: fingerprints } }]
+    : [];
+});
+
 // 2. En-têtes CORS & Prévol pour les applications clientes
 server.addHook('onRequest', async (request, reply) => {
   reply.header('Access-Control-Allow-Origin', '*');
@@ -144,6 +155,7 @@ server.addHook('onRequest', async (request, reply) => {
   const url = request.url.split('?')[0];
   if (
     url === '/health' ||
+    url === '/.well-known/assetlinks.json' ||
     url.startsWith('/pay/') ||
     url === '/lightpay.js' ||
     url.startsWith('/v1/checkout/public/') ||
@@ -185,6 +197,7 @@ server.addHook('onRequest', async (request, reply) => {
   // - /v1/merchant/apps/register pour l'onboarding autonome d'application grossiste
   if (
     url === '/health' ||
+    url === '/.well-known/assetlinks.json' ||
     // Provider notifications (verified in the route: signature, or status re-read from the provider).
     url.startsWith('/v1/providers/') ||
     url.startsWith('/v1/sdk') ||

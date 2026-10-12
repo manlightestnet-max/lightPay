@@ -8,6 +8,8 @@ import { MOBILE_NETWORKS, providerFor } from '../payments/mobile-money.js';
 import { Environment } from '../types/index.js';
 import { onWalletChange } from '../realtime.js';
 import { developerAccess, findRecipient, getUsername, requestDeveloperAccess, setUsername } from '../db/identity.js';
+import { noteSignIn, notifyAccount, registerDevice, removeAllDevices, removeDevice } from '../notify/index.js';
+import { ACCOUNT } from '../notify/catalog.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -24,6 +26,8 @@ export async function requireUser(request: FastifyRequest, reply: FastifyReply) 
   if (!token) return reply.status(401).send({ error: 'SIGN_IN_REQUIRED', message: 'Connectez-vous à LightPay.' });
   try {
     request.lightpayUser = await verifyUserToken(token);
+    // A sign-in from a device the person never used: « Nouvelle connexion » (notify/).
+    noteSignIn(envOf(request), request.lightpayUser, request.headers['user-agent']);
   } catch (err) {
     return reply.status(401).send({ error: 'SIGN_IN_REQUIRED', message: err instanceof UserTokenError ? err.message : 'Session expirée, reconnectez-vous.' });
   }
@@ -202,7 +206,10 @@ export async function meRoutes(fastify: FastifyInstance) {
 
   fastify.put('/username', async (request, reply) => {
     try {
-      return { status: 'success', username: await setUsername(request.lightpayUser!, (request.body as any)?.username) };
+      const before = await getUsername(request.lightpayUser!.uid);
+      const username = await setUsername(request.lightpayUser!, (request.body as any)?.username);
+      if (before && before !== username) notifyAccount(envOf(request), request.lightpayUser!, ACCOUNT.usernameChanged(username), username);
+      return { status: 'success', username };
     } catch (err) {
       return fail(reply, err);
     }
@@ -227,6 +234,22 @@ export async function meRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Push notifications: the app registers this phone's Firebase Cloud Messaging token (after
+  // sign-in, when it changes) and removes it at sign-out or when notifications are turned off.
+  fastify.post('/devices', async (request, reply) => {
+    const b = (request.body ?? {}) as any;
+    const token = String(b.token ?? '').trim();
+    if (token.length < 20 || token.length > 4096) return reply.status(400).send({ error: 'INVALID_TOKEN', message: 'Jeton de notification invalide.' });
+    const platform = ['android', 'ios', 'web'].includes(b.platform) ? b.platform : 'android';
+    await registerDevice(envOf(request), request.lightpayUser!.uid, token, platform, b.label ? String(b.label).slice(0, 80) : null);
+    return { status: 'success' };
+  });
+  fastify.delete('/devices', async (request) => {
+    const token = String(((request.body ?? {}) as any).token ?? (request.query as any)?.token ?? '').trim();
+    if (token) await removeDevice(request.lightpayUser!.uid, token);
+    return { status: 'success' };
+  });
+
   fastify.get('/withdrawals', async (request) => ({ status: 'success', withdrawals: await listWithdrawals(envOf(request), request.lightpayUser!) }));
 
   fastify.get('/withdrawals/quote', async (request, reply) => {
@@ -248,7 +271,10 @@ export async function meRoutes(fastify: FastifyInstance) {
   fastify.delete('/', async (request, reply) => {
     if (!recent(request, reply)) return;
     try {
-      return { status: 'success', ...(await closeAccount(request.lightpayUser!)) };
+      const closed = await closeAccount(request.lightpayUser!);
+      notifyAccount(envOf(request), request.lightpayUser!, ACCOUNT.accountClosed(), String(Date.now()));
+      await removeAllDevices(request.lightpayUser!.uid).catch(() => undefined);
+      return { status: 'success', ...closed };
     } catch (err) {
       return fail(reply, err);
     }
@@ -256,7 +282,10 @@ export async function meRoutes(fastify: FastifyInstance) {
 
   fastify.delete('/connections/:id', async (request, reply) => {
     try {
-      await revokeConnection(envOf(request), request.lightpayUser!, (request.params as any).id);
+      const id = String((request.params as any).id);
+      const app = (await listUserConnections(envOf(request), request.lightpayUser!)).find((c: any) => c.id === id);
+      await revokeConnection(envOf(request), request.lightpayUser!, id);
+      if (app) notifyAccount(envOf(request), request.lightpayUser!, ACCOUNT.appRevoked(app.app_name), id);
       return { status: 'success' };
     } catch (err) {
       return fail(reply, err);
@@ -275,6 +304,11 @@ export async function meRoutes(fastify: FastifyInstance) {
         chargeLimit: b.charge_limit ? BigInt(b.charge_limit) : undefined,
         acceptTerms: b.accept_terms === true,
       });
+      const app = (await listUserConnections(envOf(request), request.lightpayUser!)).find((c: any) => c.app_id === String(b.app_id ?? '') && c.status === 'ACTIVE');
+      if (app) {
+        const scopes = (app.scopes as string[]).map((sc) => (SCOPE_LABELS as any)[sc] ?? sc);
+        notifyAccount(envOf(request), request.lightpayUser!, ACCOUNT.appAuthorized(app.app_name, scopes), `${app.id}:${scopes.join(',')}`);
+      }
       return { status: 'success', ...result };
     } catch (err) {
       return fail(reply, err);

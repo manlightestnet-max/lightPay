@@ -141,11 +141,11 @@ svg.i { width: 20px; height: 20px; flex-shrink: 0; }
 .chip.primary { background: var(--accent); color: var(--on-accent); }
 .chip:active { transform: scale(.97); }
 .chip:hover { filter: brightness(1.06); }
-.home-hero { min-height: 42vh; min-height: 42dvh; display: flex; flex-direction: column; justify-content: center; padding: 40px 0 30px; }
+.home-hero { display: flex; flex-direction: column; justify-content: center; padding: 24px 0 6px; }
 .home-hero .amount-xl { font-size: 52px; }
 .home-hero .hero-sub { margin-top: 10px; }
 /* The three actions fill the row, edge to edge. */
-.home-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 36px; }
+.home-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
 .home-actions .chip { height: 50px; border-radius: 16px; padding: 0 8px; font-size: 14px; }
 .home-more { display: block; margin: 8px 0 4px; padding: 14px; border-radius: 14px; background: var(--raised); text-align: center; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500; }
 .send-link { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 14px; background: var(--raised); color: var(--text); text-decoration: none; font-size: 14px; }

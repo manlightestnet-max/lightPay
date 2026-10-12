@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import { query } from './pool.js';
 import { Environment } from '../types/index.js';
 import { notifyWallets } from '../realtime.js';
+import { notifyActivity } from '../notify/index.js';
+import { describeActivity } from '../notify/catalog.js';
 
 /**
  * Wallet activity journal — what the person sees in their history: every operation that
@@ -82,14 +84,19 @@ const str = (v: unknown) => (v === undefined || v === null ? null : String(v));
 /** Creates (or refreshes, same operation) a journal line. Never throws. */
 export async function logActivity(environment: Environment, a: ActivityInput): Promise<void> {
   try {
-    await query(
+    // The state before (none for a new line): the person is notified of the change (notify/).
+    const [before] = a.refId
+      ? await query(`SELECT status, reason_code FROM wallet_activity WHERE wallet_id = $1 AND ref_type = $2 AND ref_id = $3`, [a.walletId, a.refType ?? null, a.refId], environment)
+      : [];
+    const [row] = await query(
       `INSERT INTO wallet_activity (id, environment, wallet_id, kind, direction, status, amount, fees, total, currency, counterparty, reason_code, reason, ref_type, ref_id, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        ON CONFLICT (wallet_id, ref_type, ref_id) WHERE ref_id IS NOT NULL
        DO UPDATE SET status = EXCLUDED.status, amount = EXCLUDED.amount, fees = EXCLUDED.fees, total = EXCLUDED.total,
          counterparty = COALESCE(EXCLUDED.counterparty, wallet_activity.counterparty),
          reason_code = EXCLUDED.reason_code, reason = EXCLUDED.reason,
-         metadata = wallet_activity.metadata || EXCLUDED.metadata, updated_at = NOW()`,
+         metadata = wallet_activity.metadata || EXCLUDED.metadata, updated_at = NOW()
+       RETURNING *`,
       [
         `act_${crypto.randomBytes(14).toString('base64url')}`, environment, a.walletId, a.kind, a.direction, a.status,
         str(a.amount ?? 0), str(a.fees ?? 0), str(a.total ?? null), a.currency ?? 'XAF', a.counterparty ?? null,
@@ -98,6 +105,7 @@ export async function logActivity(environment: Environment, a: ActivityInput): P
       environment
     );
     notifyWallets(environment, [a.walletId]);
+    if (row) notifyActivity(environment, row, before ? { status: before.status, reason_code: before.reason_code } : null);
   } catch (err: any) {
     console.error('[ACTIVITY] log failed', a.kind, a.refType, a.refId, err?.message);
   }
@@ -112,17 +120,22 @@ export async function updateActivity(
 ): Promise<void> {
   try {
     const rows = await query(
-      `UPDATE wallet_activity SET status = $3::varchar,
-         reason_code = CASE WHEN $3::varchar IN ('FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'LOCKED') THEN COALESCE($4::varchar, reason_code) ELSE NULL END,
-         reason = CASE WHEN $3::varchar IN ('FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'LOCKED') THEN COALESCE($5::text, reason) ELSE NULL END,
-         fees = COALESCE($6::bigint, fees), total = COALESCE($7::bigint, total), amount = COALESCE($8::bigint, amount),
-         metadata = metadata || $10::jsonb, updated_at = NOW()
-       WHERE ref_type = $1 AND ref_id = $2 AND ($9::uuid IS NULL OR wallet_id = $9::uuid)
-       RETURNING wallet_id`,
+      `WITH before AS (
+         SELECT id, status AS old_status, reason_code AS old_reason_code FROM wallet_activity
+         WHERE ref_type = $1 AND ref_id = $2 AND ($9::uuid IS NULL OR wallet_id = $9::uuid)
+       )
+       UPDATE wallet_activity w SET status = $3::varchar,
+         reason_code = CASE WHEN $3::varchar IN ('FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'LOCKED') THEN COALESCE($4::varchar, w.reason_code) ELSE NULL END,
+         reason = CASE WHEN $3::varchar IN ('FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'LOCKED') THEN COALESCE($5::text, w.reason) ELSE NULL END,
+         fees = COALESCE($6::bigint, w.fees), total = COALESCE($7::bigint, w.total), amount = COALESCE($8::bigint, w.amount),
+         metadata = w.metadata || $10::jsonb, updated_at = NOW()
+       FROM before WHERE w.id = before.id
+       RETURNING w.*, before.old_status, before.old_reason_code`,
       [refType, refId, patch.status, patch.reasonCode ?? null, patch.reason ?? reasonFor(patch.reasonCode), str(patch.fees), str(patch.total), str(patch.amount), patch.walletId ?? null, JSON.stringify(patch.metadata ?? {})],
       environment
     );
     notifyWallets(environment, rows.map((r: any) => r.wallet_id));
+    for (const r of rows) notifyActivity(environment, r, { status: r.old_status, reason_code: r.old_reason_code });
   } catch (err: any) {
     console.error('[ACTIVITY] update failed', refType, refId, err?.message);
   }
@@ -158,13 +171,17 @@ export const failureOf = (err: any): { code: string; message: string } => {
   return { code, message: REASONS[code] && !/[àâéèêçùô]/i.test(String(err?.message)) ? REASONS[code] : String(err?.message ?? 'Erreur') };
 };
 
+/** What the person reads for an operation (notify/catalog.ts), on every line served. */
+const withDescription = (row: any) => (row ? { ...row, description: describeActivity(row) } : row);
+
 export async function listActivity(environment: Environment, walletId: string, limit = 50) {
-  return query(
+  const rows = await query(
     `SELECT id, kind, direction, status, amount::text, fees::text, total::text, currency, counterparty, reason_code, regexp_replace(reason, '^null ', 'L’opérateur a refusé l’envoi. ') AS reason, ref_type, metadata, created_at, updated_at
      FROM wallet_activity WHERE wallet_id = $1 ORDER BY created_at DESC LIMIT $2`,
     [walletId, Math.min(Math.max(limit, 1), 200)],
     environment
   );
+  return rows.map(withDescription);
 }
 
 export async function getActivity(environment: Environment, walletId: string, id: string) {
@@ -174,5 +191,5 @@ export async function getActivity(environment: Environment, walletId: string, id
     [walletId, id],
     environment
   );
-  return row;
+  return withDescription(row);
 }

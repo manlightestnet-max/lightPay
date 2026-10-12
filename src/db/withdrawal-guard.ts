@@ -2,6 +2,8 @@ import { query } from './pool.js';
 import { Environment } from '../types/index.js';
 import { ConnectError } from './connect.js';
 import { controlSettings } from '../payments/control-settings.js';
+import { notifyAccount } from '../notify/index.js';
+import { ACCOUNT } from '../notify/catalog.js';
 
 /**
  * Withdrawal attempts are counted per person: more than `withdrawal_max_attempts` in the last
@@ -51,6 +53,7 @@ export async function recordWithdrawalAttempt(env: Environment, user: { uid: str
     [user.uid, user.email, s.withdrawal_suspension_minutes, `${n} tentatives de retrait en ${s.withdrawal_attempt_window_minutes} min (limite ${s.withdrawal_max_attempts})`],
     env
   );
+  notifyAccount(env, user, ACCOUNT.withdrawalsSuspended(hhmm(new Date(row.until)), true), String(new Date(row.until).getTime()));
   throw suspendedError(row);
 }
 
@@ -71,6 +74,7 @@ export async function suspendAccount(env: Environment, target: { uid: string; em
     [target.uid, target.email, minutes, reason || null, by],
     env
   );
+  notifyAccount(env, target, ACCOUNT.withdrawalsSuspended(hhmm(new Date(row.until)), false), String(new Date(row.until).getTime()));
   return row;
 }
 

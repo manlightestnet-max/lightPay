@@ -359,7 +359,8 @@ ${FLOWS_SCRIPT}
       const failed = !settledOk(a) || (a.status === 'REFUNDED' && incoming);
       $('itemIcon').className = 'detail-icon' + (a.status === 'FAILED' ? ' err' : incoming && !failed ? ' in' : '');
       $('itemIcon').replaceChildren(icon(a.status === 'FAILED' ? 'x' : a.status === 'LOCKED' ? 'lock' : (KIND_ICON[a.kind] === 'send' && incoming ? 'receive' : KIND_ICON[a.kind] || 'clock')));
-      $('itemKind').textContent = actTitle(a);
+      // What happened, with whom, by which means (server description), not just a name.
+      $('itemKind').textContent = a.description || actTitle(a);
       $('itemAmount').className = 'amount-xl' + (failed ? ' void' : incoming ? ' in' : '');
       $('itemAmount').textContent = (incoming ? '+' : '−') + LP.money(walletAmount(a), a.currency);
       $('itemStatus').className = 'status ' + st[0];
