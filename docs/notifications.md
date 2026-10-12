@@ -58,6 +58,7 @@ verrouillé). Icône : silhouette du logo LightPay, teintée en vert. Objet de l
 | Débit par une app | effectué | −{montant} | Débit par {qui} / {qui} a débité votre wallet{réf}. | oui |
 | Débit par une app | refusé | Débit refusé | {qui} : {raison} | non |
 | Débit par une app | remboursé | +{montant} | Débit remboursé / Par {qui}. Le montant a été ajouté à votre solde. | oui |
+| Vente | payée sans séquestre (disponible tout de suite) | +{montant} | Paiement reçu avec succès / Vente sur {qui}{réf}. Le montant a été ajouté à votre solde. | oui |
 | Vente | nouvelle (bloquée) | +{montant} | Nouvelle vente sur {qui} / Réf. CMD-12. Le montant est bloqué jusqu’à la livraison. | oui |
 | Vente | litige | {montant} | Litige ouvert / Réf. CMD-12. Fonds gelés jusqu’à la décision. | oui |
 | Vente | validée | +{montant} | Vente validée avec succès / Sur {qui}{réf}. Le montant a été ajouté à votre solde disponible. | oui |

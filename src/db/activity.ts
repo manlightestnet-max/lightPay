@@ -161,6 +161,29 @@ export async function appName(environment: Environment, appId: string): Promise<
   }
 }
 
+/**
+ * A direct sale (no escrow) on the seller's statement: the sale, then the app's commission as its
+ * own line, like a captured hold. Only for a person's wallet (an app's own wallet has no journal).
+ */
+export async function logDirectSale(
+  environment: Environment,
+  s: { payeeWalletId: string; appId: string; amount: bigint; fee: bigint; currency: string; refType: string; refId: string; reference?: string | null; metadata?: Record<string, any> }
+): Promise<void> {
+  if (!(await isPersonWallet(environment, s.payeeWalletId))) return;
+  const app = await appName(environment, s.appId);
+  await logActivity(environment, {
+    walletId: s.payeeWalletId, kind: 'SALE', direction: 'IN', status: 'SUCCEEDED', amount: s.amount, fees: '0', total: s.amount,
+    currency: s.currency, counterparty: app, refType: s.refType, refId: s.refId, metadata: { ...(s.metadata ?? {}), reference: s.reference ?? undefined, direct: true },
+  });
+  if (s.fee > 0n) {
+    await logActivity(environment, {
+      walletId: s.payeeWalletId, kind: 'COMMISSION', direction: 'OUT', status: 'SUCCEEDED', amount: s.fee, total: s.fee,
+      currency: s.currency, counterparty: app, refType: `${s.refType}_commission`, refId: s.refId,
+      metadata: { reference: s.reference ?? undefined, sale_amount: s.amount.toString() },
+    });
+  }
+}
+
 /** "242065124481" -> "+242 06 ••• •• 81". */
 export const maskPhone = (msisdn: string) => `+242 ${msisdn.slice(3, 5)} ••• •• ${msisdn.slice(-2)}`;
 

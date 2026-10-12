@@ -158,6 +158,7 @@ export function activityMessage(a: ActivityRow, previous: string | null): Messag
     case 'SALE':
       if (now === 'LOCKED' && isNew) return ev('sale.received', vars('une app connectée', '', '+'));
       if (now === 'LOCKED' && a.reason_code === 'DISPUTED') return ev('sale.disputed', vars('une app connectée'));
+      if (now === 'SUCCEEDED' && isNew) return ev('sale.paid', vars('une app connectée', '', '+'));
       if (now === 'SUCCEEDED') return ev('sale.released', vars('une app connectée', '', '+'));
       if (now === 'REFUNDED') return ev('sale.refunded', vars('une app connectée', 'Commande annulée : le montant a été rendu à l’acheteur.'));
       return null;

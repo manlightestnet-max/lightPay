@@ -6,7 +6,7 @@ import { Environment } from '../types/index.js';
 import { MOBILE_NETWORKS, MobileNetwork, NETWORK_NAMES, RailOperation, RailResult, networkOfMsisdn, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
 import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayFeeWallet } from './fee-wallet.js';
-import { appName, failureOf, logActivity, reasonFor, updateActivity } from './activity.js';
+import { appName, failureOf, logActivity, logDirectSale, reasonFor, updateActivity } from './activity.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
 import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundBreakdown } from '../payments/fees.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
@@ -524,6 +524,10 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
       ],
     });
     paymentTx = (paid as any).transactionId ?? (paid as any).transaction?.id ?? null;
+    await logDirectSale(env, {
+      payeeWalletId: session.payee_wallet_id, appId: session.app_id, amount, fee, currency: attempt.currency,
+      refType: 'sale', refId: session.id, reference: session.reference, metadata: { session: session.id },
+    });
   }
 
   return closeSession(session, attempt, providerReference, { payerWalletId: payer.id, payerType: 'GUEST', holdId, paymentTx });
@@ -723,6 +727,12 @@ export async function payWithWallet(id: string, user: LightPayUser) {
     env
   );
   await journal('SUCCEEDED');
+  if (!session.escrow) {
+    await logDirectSale(env, {
+      payeeWalletId: session.payee_wallet_id, appId: session.app_id, amount, fee, currency: session.currency,
+      refType: 'sale', refId: session.id, reference: session.reference, metadata: { session: session.id },
+    });
+  }
   void dispatchWebhook(session.app_id, env, 'checkout.completed', {
     kind: session.kind,
     session_id: session.id,

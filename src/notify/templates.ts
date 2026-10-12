@@ -71,6 +71,7 @@ export const DEFAULT_TEMPLATES: TemplateDef[] = [
   def('charge.refunded', 'Paiements et débits', 'Débit d’une app remboursé', MONEY_IN, '{montant_signe}', 'Débit remboursé\nPar {qui}. Le montant a été ajouté à votre solde.', 'Débit remboursé · {montant_signe}'),
 
   // ---------------------------------------------------------------- sales
+  def('sale.paid', 'Ventes', 'Vente payée (sans séquestre : argent disponible)', MONEY_IN, '{montant_signe}', 'Paiement reçu avec succès\nVente sur {qui}{ref}. Le montant a été ajouté à votre solde.', 'Paiement reçu avec succès · {montant_signe}'),
   def('sale.received', 'Ventes', 'Nouvelle vente (argent bloqué)', MONEY_IN, '{montant_signe}', 'Nouvelle vente sur {qui}\nLe montant est bloqué jusqu’à la livraison{ref}.', 'Nouvelle vente sur {qui} · {montant_signe}'),
   def('sale.disputed', 'Ventes', 'Litige ouvert sur une vente', ['montant', 'qui', 'ref'], '{montant}', 'Litige ouvert\nFonds gelés jusqu’à la décision{ref}.', 'Litige ouvert · {montant}'),
   def('sale.released', 'Ventes', 'Vente validée (argent disponible)', MONEY_IN, '{montant_signe}', 'Vente validée avec succès\nSur {qui}{ref}. Le montant a été ajouté à votre solde disponible.', 'Vente validée avec succès · {montant_signe}'),

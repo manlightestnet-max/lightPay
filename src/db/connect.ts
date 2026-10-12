@@ -5,7 +5,7 @@ import { Escrow } from './escrow.js';
 import { Environment } from '../types/index.js';
 import { LightPayUser } from '../security/user-token.js';
 import { isReservedAppId } from '../security/app-identity.js';
-import { appName, failureOf, logActivity } from './activity.js';
+import { appName, failureOf, logActivity, logDirectSale } from './activity.js';
 
 /**
  * LIGHTPAY CONNECT — an app acts on a person's wallet only through a connection that
@@ -364,7 +364,7 @@ async function chargeUnjournaled(appId: string, environment: Environment, connec
     [appId, currency, environment],
     environment
   );
-  return LedgerEngine.executeTransaction({
+  const result = await LedgerEngine.executeTransaction({
     appId, environment, idempotencyKey, type: 'PAYMENT', amount: input.amount, feeAmount: fee, currency, reference: input.reference, metadata,
     postings: [
       { walletId: payer.wallet_id, direction: 'DEBIT', amount: input.amount, description: input.description },
@@ -372,4 +372,10 @@ async function chargeUnjournaled(appId: string, environment: Environment, connec
       ...(fee > 0n ? [{ walletId: merchant.id, direction: 'CREDIT' as const, amount: fee, description: 'Platform fee' }] : []),
     ],
   });
+  // The seller sees the sale (and the app's commission) on their statement.
+  await logDirectSale(environment, {
+    payeeWalletId: payee.wallet_id, appId, amount: input.amount, fee, currency,
+    refType: 'charge_sale', refId: `${appId}:${idempotencyKey}`, reference: input.reference, metadata: { description: input.description },
+  });
+  return result;
 }
