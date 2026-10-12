@@ -28,6 +28,12 @@ import { PROVIDER_NAMES, ProviderSettingsError, servesLedger, loadProviderSettin
 import { providerByName, providerFor } from '../payments/mobile-money.js';
 import { decideDeveloperAccess, listDeveloperRequests } from '../db/identity.js';
 import { ConnectError } from '../db/connect.js';
+import { DEFAULT_CONTROL_SETTINGS, ControlSettingsError, RANGES, controlSettings, loadControlSettings, saveControlSettings, validateControlSettings } from '../payments/control-settings.js';
+import { PayoutControlError, cancelWaitingPayout, getPayoutAdmin, holdPayout, listPayoutsAdmin, payoutTimings, releasePayout } from '../db/payouts.js';
+import { liftSuspension, listSuspensions, suspendAccount } from '../db/withdrawal-guard.js';
+import { LockdownError, readLockdown, saveLockdown } from '../db/lockdown-store.js';
+import { findRecipient } from '../db/identity.js';
+import { LEVELS, withBypass } from '../security/lockdown.js';
 
 /**
  * Owner's admin console.
@@ -46,6 +52,17 @@ import { ConnectError } from '../db/connect.js';
  *   PUT  /v1/admin-console/fees                 { …all settings }   recent sign-in; applied at once, logged
  *   GET  /v1/admin-console/providers            provider of new collections / payouts, keys present, 30-day figures
  *   PUT  /v1/admin-console/providers            { collection, payout }   recent sign-in; applied at once, logged
+ *   GET  /v1/admin-console/controls             payout delays and withdrawal limits (+ defaults, ranges)
+ *   PUT  /v1/admin-console/controls             { …all settings }   recent sign-in; applied at once, logged
+ *   GET  /v1/admin-console/lockdown             the emergency brake: level, reason, since, by, forced by the environment
+ *   PUT  /v1/admin-console/lockdown             { level, reason }   recent sign-in; works even when everything else is stopped
+ *   GET  /v1/admin-console/payouts[?filter=]    withdrawals and refunds: upcoming (waiting or held) · held · all
+ *   POST /v1/admin-console/payouts/:id/hold     { kind: DISPUTE|SUPPORT|OTHER, reason }   keep a waiting payout
+ *   POST /v1/admin-console/payouts/:id/release  send it at the next pass
+ *   POST /v1/admin-console/payouts/:id/cancel   give the wallet its money back (amount and fees)
+ *   GET  /v1/admin-console/suspensions          accounts suspended for withdrawals and transfers
+ *   POST /v1/admin-console/suspensions          { to, minutes, reason }   suspend one by hand
+ *   DELETE /v1/admin-console/suspensions/:uid   lift a suspension
  *   GET  /v1/admin-console/developers[?status=] advanced-mode requests (pending first)
  *   POST /v1/admin-console/developers/:uid      { approve, note }   decide a request (logged)
  *   GET  /v1/admin-console/audit                admin actions log
@@ -81,6 +98,9 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
 }
 
 const fail = (reply: FastifyReply, err: any) => {
+  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError) {
+    return reply.status((err as any).statusCode ?? 400).send({ status: 'error', error: (err as any).code, message: err.message });
+  }
   if (err instanceof AdminError) return reply.status(err.statusCode).send({ status: 'error', error: err.code, message: err.message });
   throw err;
 };
@@ -245,6 +265,104 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
           await auditAction(env, admin, 'PROVIDERS_UPDATE', null, null, { from: before, to: after });
         }
         return { status: 'success', current: after };
+      });
+
+      // ---------------------------------------------------------- delays and limits
+      api.get('/controls', async (request) => {
+        const env = envOf(request);
+        return { status: 'success', settings: await loadControlSettings(env).catch(() => controlSettings(env)), defaults: DEFAULT_CONTROL_SETTINGS, ranges: RANGES };
+      });
+      api.put('/controls', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        let next;
+        try {
+          next = validateControlSettings(request.body);
+        } catch (e) {
+          return fail(reply, e);
+        }
+        const admin = adminOf(request);
+        const { before, after } = await saveControlSettings(env, next, admin.email || admin.uid);
+        const changed = Object.fromEntries(Object.keys(after).filter((k) => (before as any)[k] !== (after as any)[k]).map((k) => [k, { from: (before as any)[k], to: (after as any)[k] }]));
+        if (Object.keys(changed).length) await auditAction(env, admin, 'CONTROLS_UPDATE', null, null, { changed });
+        return { status: 'success', settings: after };
+      });
+
+      // ---------------------------------------------------------- emergency brake (runs even when everything else is stopped)
+      api.get('/lockdown', async () => ({ status: 'success', lockdown: await readLockdown(), levels: LEVELS }));
+      api.put('/lockdown', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const admin = adminOf(request);
+        const b = (request.body ?? {}) as any;
+        try {
+          const { before, after } = await saveLockdown(b.level, b.reason, admin.email || admin.uid);
+          // The journal lives in the database: when the brake is total it cannot be written, the action stays in the server log.
+          await withBypass(() => auditAction('production', admin, 'LOCKDOWN', null, null, { from: before.level, to: after.level, reason: after.reason })).catch((e) =>
+            console.error('[LOCKDOWN] not logged', after.level, e?.message)
+          );
+          return { status: 'success', lockdown: after };
+        } catch (e) {
+          return fail(reply, e);
+        }
+      });
+
+      // ---------------------------------------------------------- withdrawals and refunds waiting to leave
+      api.get('/payouts', async (request) => {
+        const f = String((request.query as any)?.filter ?? 'upcoming');
+        const env = envOf(request);
+        return { status: 'success', payouts: await listPayoutsAdmin(env, f === 'held' || f === 'all' ? f : 'upcoming'), observed: await payoutTimings(env) };
+      });
+      api.get('/payouts/:id', async (request, reply) => {
+        const p = await getPayoutAdmin(envOf(request), String((request.params as any).id));
+        return p ? { status: 'success', payout: p } : reply.status(404).send({ status: 'error', error: 'NOT_FOUND', message: 'Envoi introuvable.' });
+      });
+      const payoutAction = (name: 'hold' | 'release' | 'cancel') =>
+        api.post(`/payouts/:id/${name}`, async (request, reply) => {
+          if (!recent(request, reply)) return;
+          const env = envOf(request);
+          const id = String((request.params as any).id);
+          const b = (request.body ?? {}) as any;
+          const admin = adminOf(request);
+          try {
+            const who = admin.email || admin.uid;
+            const row = name === 'hold' ? await holdPayout(env, id, b.kind, b.reason, who) : name === 'release' ? await releasePayout(env, id) : await cancelWaitingPayout(env, id);
+            await auditAction(env, admin, `PAYOUT_${name.toUpperCase()}`, id, BigInt(row.amount), { kind: b.kind ?? null, reason: b.reason ?? null, payout_reason: row.reason });
+            return { status: 'success', payout: await getPayoutAdmin(env, id) };
+          } catch (e) {
+            return fail(reply, e);
+          }
+        });
+      payoutAction('hold');
+      payoutAction('release');
+      payoutAction('cancel');
+
+      // ---------------------------------------------------------- accounts suspended for withdrawals and transfers
+      api.get('/suspensions', async (request) => ({ status: 'success', suspensions: await listSuspensions(envOf(request)) }));
+      api.post('/suspensions', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        const b = (request.body ?? {}) as any;
+        const [min, max] = RANGES.withdrawal_suspension_minutes;
+        const minutes = Number(b.minutes);
+        if (!Number.isInteger(minutes) || minutes < min || minutes > max) return reply.status(400).send({ status: 'error', error: 'INVALID_MINUTES', message: `Durée de ${min} à ${max} minutes.` });
+        const admin = adminOf(request);
+        try {
+          const target = await findRecipient(env, b.to);
+          const row = await suspendAccount(env, { uid: target.uid, email: target.email }, minutes, String(b.reason ?? '').trim().slice(0, 300), admin.email || admin.uid);
+          await auditAction(env, admin, 'SUSPEND', target.username ? `@${target.username}` : target.email || target.uid, null, { minutes, reason: b.reason ?? null });
+          return { status: 'success', suspension: row };
+        } catch (e) {
+          if (e instanceof ConnectError) return reply.status(e.statusCode).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
+      });
+      api.delete('/suspensions/:uid', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        const gone = await liftSuspension(env, String((request.params as any).uid));
+        if (!gone) return reply.status(404).send({ status: 'error', error: 'NOT_FOUND', message: 'Aucune suspension en cours pour ce compte.' });
+        await auditAction(env, adminOf(request), 'SUSPEND_LIFT', gone.email || gone.uid, null, {});
+        return { status: 'success' };
       });
 
       api.get('/developers', async (request) => {

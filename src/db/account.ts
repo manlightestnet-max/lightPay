@@ -11,6 +11,8 @@ import { failureOf, logActivity } from './activity.js';
 import { lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
 import { providerFor } from '../payments/mobile-money.js';
 import { maskMsisdn } from './checkout.js';
+import { guardMoney, guardWithdrawals } from '../security/lockdown.js';
+import { assertNotSuspended, recordWithdrawalAttempt } from './withdrawal-guard.js';
 
 /**
  * The person's own money moves (from their LightPay account space):
@@ -52,6 +54,7 @@ const activeWallet = async (environment: Environment, user: LightPayUser) => {
 
 /** Top-up of my own wallet: a DEPOSIT session paid on the hosted page by mobile money. */
 export async function selfDeposit(environment: Environment, user: LightPayUser, amountInput: unknown, idempotencyKey: string) {
+  guardMoney();
   const amount = positive(amountInput);
   if (amount < minMobileMoneyAmount(environment)) throw new ConnectError(`Dépôt minimum : ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   const wallet = await activeWallet(environment, user);
@@ -71,6 +74,7 @@ export async function selfDeposit(environment: Environment, user: LightPayUser, 
 
 /** Send money to another LightPay user, found by e-mail. */
 export async function sendMoney(environment: Environment, user: LightPayUser, input: { to: unknown; amount: unknown; note?: unknown }, idempotencyKey: string) {
+  await assertNotSuspended(environment, user.uid); // an account suspended for withdrawal attempts sends nothing either
   const from = await activeWallet(environment, user);
   const ref = `send:${user.uid}:${idempotencyKey}`;
   const to = String(input.to ?? '').trim().toLowerCase();
@@ -111,6 +115,9 @@ export async function sendMoney(environment: Environment, user: LightPayUser, in
 
 /** Withdraw available money to a mobile-money number. Locked money can never leave. */
 export async function withdraw(environment: Environment, user: LightPayUser, input: { amount: unknown; msisdn: unknown; network: unknown }, idempotencyKey: string) {
+  guardWithdrawals(); // closed by the admin's emergency brake
+  await assertNotSuspended(environment, user.uid);
+  await recordWithdrawalAttempt(environment, user, idempotencyKey); // too many attempts: the account is suspended
   const wallet = await activeWallet(environment, user);
   const refused = async (err: ConnectError) => {
     const phone = normalizeCongoMsisdn(String(input.msisdn ?? ''));
@@ -161,9 +168,11 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   return payoutView(payout);
 }
 
+// A payout waiting for its delay, or kept by the admin, is "in progress" for the person; release_at says when it leaves.
 const payoutView = (p: any) => ({
   id: p.id,
-  status: p.status,
+  status: p.status === 'SCHEDULED' || p.status === 'HELD' ? 'PENDING' : p.status,
+  release_at: p.status === 'SCHEDULED' ? p.release_at : null,
   amount: String(p.amount),
   operator_fee: String(p.operator_fee ?? 0),
   lightpay_fee: String(p.lightpay_fee ?? 0),

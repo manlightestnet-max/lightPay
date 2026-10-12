@@ -1,6 +1,7 @@
-﻿import { Pool, PoolClient } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { config } from '../config/index.js';
 import { Environment } from '../types/index.js';
+import { guardDatabase, guardTransaction } from '../security/lockdown.js';
 
 const isCloudProd = config.databaseUrl.includes('neon.tech') || config.databaseUrl.includes('sslmode=require');
 const isCloudSandbox = config.databaseUrlSandbox.includes('neon.tech') || config.databaseUrlSandbox.includes('sslmode=require');
@@ -37,12 +38,14 @@ export function getPool(environment: Environment = 'production'): Pool {
 }
 
 export async function query<T = any>(text: string, params?: any[], environment: Environment = 'production'): Promise<T[]> {
+  guardDatabase(text);
   const targetPool = getPool(environment);
   const res = await targetPool.query(text, params);
   return res.rows;
 }
 
 export async function getClient(environment: Environment = 'production'): Promise<PoolClient> {
+  guardTransaction();
   const targetPool = getPool(environment);
   return await targetPool.connect();
 }

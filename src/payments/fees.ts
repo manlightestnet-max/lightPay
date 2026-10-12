@@ -20,7 +20,8 @@ import { feeSettings } from './fee-settings.js';
  *                  pawaPay: amount × pawapay_payout_fee_bps. Paid from our provider balance
  *   LightPay fee   max(withdrawal_lightpay_fee_min, amount × withdrawal_lightpay_fee_bps)
  *   The person receives exactly the amount asked; the wallet is debited amount + both fees.
- *   Refunds carry no LightPay fee: the guest gets the largest amount the refund can cover.
+ *   Refunds to a guest's phone carry the same two fees as a withdrawal (operator + LightPay), taken out
+ *   of the refund itself: the guest gets the largest amount that, fees included, fits in what they paid.
  */
 
 const ceilBps = (amount: bigint, bps: number) => (amount * BigInt(bps) + 9_999n) / 10_000n;
@@ -111,17 +112,36 @@ export function withdrawalQuote(env: Environment, amount: bigint, provider: stri
 }
 
 /**
- * Largest amount s ≥ 1 that can be sent with `total` once the operator fee is paid on top
- * (s + fee(s) ≤ total), or 0 when even the fee cannot be covered. s + fee(s) is strictly
- * increasing, so a binary search is exact.
+ * Largest amount s ≥ 1 that can be sent with `total` once both payout fees are paid out of it
+ * (s + operator fee(s) + LightPay fee(s) ≤ total), or 0 when even the fees cannot be covered.
+ * The cost is strictly increasing in s, so a binary search is exact.
  */
 export function refundSendable(env: Environment, total: bigint, provider: string): bigint {
+  const cost = (s: bigint) => s + providerPayoutFee(env, provider, s) + lightpayPayoutFee(env, s);
   let lo = 0n;
   let hi = total;
   while (lo < hi) {
     const mid = (lo + hi + 1n) / 2n;
-    if (mid + providerPayoutFee(env, provider, mid) <= total) lo = mid;
+    if (cost(mid) <= total) lo = mid;
     else hi = mid - 1n;
   }
   return lo;
+}
+
+export interface RefundBreakdown {
+  /** What the phone receives. */
+  sent: bigint;
+  operator_fee: bigint;
+  lightpay_fee: bigint;
+}
+
+/**
+ * A refund of `total` to a guest: what is sent and the two fees. The few francs left over by
+ * rounding count as operator fee, so sent + operator_fee + lightpay_fee is exactly `total`.
+ */
+export function refundBreakdown(env: Environment, total: bigint, provider: string): RefundBreakdown {
+  const sent = refundSendable(env, total, provider);
+  if (sent <= 0n) return { sent: 0n, operator_fee: 0n, lightpay_fee: 0n };
+  const lightpay = lightpayPayoutFee(env, sent);
+  return { sent, operator_fee: total - sent - lightpay, lightpay_fee: lightpay };
 }

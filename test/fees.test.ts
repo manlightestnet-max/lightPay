@@ -9,6 +9,7 @@ import {
   minWithdrawalAmount,
   providerPayoutFee,
   quote,
+  refundBreakdown,
   refundSendable,
   withdrawalQuote,
 } from '../src/payments/fees.js';
@@ -34,19 +35,23 @@ check('withdraw 5 000 via SasPay: 200 + 5 -> total 5 205', wq.amount === '5000' 
 const dq = quote(E, 200n, 'saspay');
 check('deposit 200 via SasPay: 5 + ≈14 -> ≈219', dq.lightpay_fee === '5' && dq.operator_fee === '14' && dq.total === '219', JSON.stringify(dq));
 
-// refundSendable against its definition, brute force.
+// refundSendable against its definition, brute force: a refund pays both payout fees (operator + LightPay) out of itself.
+const refundCost = (s: bigint, provider: string) => s + providerPayoutFee(E, provider, s) + lightpayPayoutFee(E, s);
 let bad = '';
 for (let t = 0n; t <= 200_000n && !bad; t += t < 20_000n ? 1n : 7n) {
   const s = refundSendable(E, t, 'saspay');
-  const fits = s === 0n || s + providerPayoutFee(E, 'saspay', s) <= t;
-  const maximal = s + 1n + providerPayoutFee(E, 'saspay', s + 1n) > t;
+  const fits = s === 0n || refundCost(s, 'saspay') <= t;
+  const maximal = refundCost(s + 1n, 'saspay') > t;
   if (!fits || !maximal) bad = `total ${t} -> ${s}`;
 }
-check('refundSendable is the exact maximum (0 … 200 000)', !bad, bad);
-check('refund of 35 000 via SasPay sends 33 653 (+1 347 fee)', refundSendable(E, 35_000n, 'saspay') === 33_653n);
-check('small refund keeps 4 % for SasPay', refundSendable(E, 700n, 'saspay') === 673n && refundSendable(E, 1n, 'saspay') === 0n);
-check('refund at the 4 % boundary', refundSendable(E, 18_200n, 'saspay') === 17_500n && refundSendable(E, 18_201n, 'saspay') === 17_500n);
-check('simulator refund sends everything', refundSendable(E, 12_345n, 'simulator') === 12_345n);
+check('refundSendable is the exact maximum, both fees included (0 … 200 000)', !bad, bad);
+check('refund of 35 000 via SasPay sends 33 649 (1 346 operator + 5 LightPay)', refundSendable(E, 35_000n, 'saspay') === 33_649n);
+check('small refund via SasPay: 700 -> 668, 1 -> 0', refundSendable(E, 700n, 'saspay') === 668n && refundSendable(E, 1n, 'saspay') === 0n);
+check('simulator refund still pays the LightPay fee', refundSendable(E, 12_345n, 'simulator') === 12_340n);
+for (const t of [1_000n, 35_000n, 12_345n]) {
+  const b = refundBreakdown(E, t, 'saspay');
+  check(`refund breakdown of ${t} adds up exactly`, b.sent + b.operator_fee + b.lightpay_fee === t && b.lightpay_fee === lightpayPayoutFee(E, b.sent), JSON.stringify({ ...b, sent: String(b.sent) }, (_, v) => (typeof v === 'bigint' ? v.toString() : v)));
+}
 
 let refused = '';
 try { validateFeeSettings({ ...DEFAULT_FEE_SETTINGS, withdrawal_min: 0 }); } catch (e: any) { refused = e.message; }

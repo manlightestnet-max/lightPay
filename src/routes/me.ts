@@ -31,7 +31,7 @@ export async function requireUser(request: FastifyRequest, reply: FastifyReply) 
 
 const fail = (reply: FastifyReply, err: any) => {
   const insufficient = String(err?.message ?? '').startsWith('Insufficient funds');
-  return reply.status(err instanceof ConnectError ? err.statusCode : insufficient ? 402 : 400).send({
+  return reply.status(err instanceof ConnectError || err?.code === 'LOCKED' ? err.statusCode : insufficient ? 402 : 400).send({
     status: 'error',
     error: insufficient ? 'INSUFFICIENT_FUNDS' : err.code || 'REQUEST_ERROR',
     message: insufficient ? 'Solde disponible insuffisant (frais compris).' : err.message,

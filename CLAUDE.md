@@ -42,6 +42,10 @@ Google seulement (Firebase Auth, redirection dans le même onglet ; fenêtre seu
 
 - Frais et minimums : **uniquement depuis l’admin** (« Frais et minimums »), par environnement ;
   rien en dur. Formules dans `src/payments/fees.ts`.
+- **Délais, limites et frein d’urgence : uniquement depuis l’admin** (« Contrôle »), rien en dur : délai avant un retrait et avant un
+  remboursement (un envoi attend, l’admin peut le retenir pour litige / support / autre, le libérer ou l’annuler), nombre de tentatives de
+  retrait puis suspension du compte, frein d’urgence à cinq niveaux (`src/security/lockdown.ts`, variable `LIGHTWALLET_LOCKDOWN`).
+  Même design que « Frais et minimums » (`settingItem`). Un remboursement coûte comme un retrait (frais opérateur + LightPay).
 - Fournisseur des encaissements et des envois : choisi dans l’admin (« Fournisseurs ») ;
   SasPay = réel seulement, simulateur = test seulement.
 - Un dépôt sans validation est fermé après 5 min ; un succès tardif est quand même crédité.

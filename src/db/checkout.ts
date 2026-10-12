@@ -8,9 +8,10 @@ import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayFeeWallet } from './fee-wallet.js';
 import { appName, failureOf, logActivity, reasonFor, updateActivity } from './activity.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
-import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundSendable } from '../payments/fees.js';
+import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundBreakdown } from '../payments/fees.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { LightPayUser } from '../security/user-token.js';
+import { guardMoney } from '../security/lockdown.js';
 import { getConnection, payeeWallet, requireScope, userWallet } from './connect.js';
 
 /**
@@ -262,6 +263,7 @@ const railOp = (a: Attempt): RailOperation => ({
 });
 
 export async function startMobileMoney(id: string, msisdnInput: string, network: string) {
+  guardMoney(); // a deposit or payment rings a phone: stopped with the other money movements
   const session = await getSession(id);
   if (!session) throw new CheckoutError('Session not found', 'SESSION_NOT_FOUND', 404);
   const environment = session.environment;
@@ -600,11 +602,11 @@ export async function refundGuestPayer(hold: HoldRecord) {
   );
   const msisdn: string = attempt?.msisdn ?? payer.metadata?.msisdn;
   const network: MobileNetwork = attempt?.network ?? 'MTN_MOMO_COG';
-  // The operator fee of a refund is paid out of the refund itself (LightPay takes nothing):
-  // the guest gets the largest amount that, fee included, fits in what they paid.
+  // A refund costs what a withdrawal costs (operator fee + LightPay fee), taken out of the refund itself:
+  // the guest gets the largest amount that, fees included, fits in what they paid.
   const total = BigInt(hold.amount);
   const provider = providerFor(env, network, 'payout').name;
-  const sendable = refundSendable(env, total, provider);
+  const { sent: sendable, operator_fee: operatorFee, lightpay_fee: lightpayFee } = refundBreakdown(env, total, provider);
   if (sendable <= 0n) {
     // Nothing can be sent without losing money: the amount stays in the guest wallet (bound to
     // this number) and the app is told, so it can settle with the customer another way.
@@ -627,7 +629,8 @@ export async function refundGuestPayer(hold: HoldRecord) {
     msisdn,
     network,
     amount: sendable,
-    operatorFee: total - sendable,
+    operatorFee,
+    lightpayFee,
     currency: hold.currency,
     reason: 'GUEST_REFUND',
     reference: `refund:${hold.id}`,
@@ -641,12 +644,13 @@ export async function refundGuestPayer(hold: HoldRecord) {
     paid: hold.amount,
     sent: payout.amount,
     operator_fee: payout.operator_fee,
+    lightpay_fee: payout.lightpay_fee,
     currency: hold.currency,
     to: maskMsisdn(msisdn),
     network,
     status: payout.status,
   });
-  return { id: payout.id, status: payout.status, amount: String(payout.amount), operator_fee: String(payout.operator_fee), total: String(payout.total_debited ?? payout.amount), to: maskMsisdn(msisdn), network };
+  return { id: payout.id, status: payout.status, release_at: payout.release_at ?? null, amount: String(payout.amount), operator_fee: String(payout.operator_fee), lightpay_fee: String(payout.lightpay_fee), total: String(payout.total_debited ?? payout.amount), to: maskMsisdn(msisdn), network };
 }
 
 // ---------------------------------------------------------------- LightPay wallet & deposits

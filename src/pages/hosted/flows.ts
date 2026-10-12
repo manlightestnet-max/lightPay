@@ -378,6 +378,7 @@ export const FLOWS_SCRIPT = `
     const w = wdResult;
     if (w.status === 'FAILED') result('wd', 'err', 'Retrait échoué', (w.reason || 'L’opérateur a refusé l’envoi.') + ' Les ' + LP.money(w.total, w.currency) + ' ont été restitués sur votre wallet.');
     else if (w.status === 'SUCCEEDED') result('wd', 'ok', 'Retrait envoyé', LP.money(w.amount, w.currency) + ' vers ' + w.to + '. Vous allez recevoir un SMS de votre opérateur.');
+    else if (w.release_at) { result('wd', 'wait', 'Retrait programmé', LP.money(w.amount, w.currency) + ' vers ' + w.to + ' : l’envoi part à ' + new Date(w.release_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '. Vous recevrez un SMS de votre opérateur.'); followWithdrawal(w.id); }
     else { result('wd', 'wait', 'Retrait en cours', LP.money(w.amount, w.currency) + ' vers ' + w.to + ' : l’opérateur traite l’envoi, vous recevrez un SMS.'); followWithdrawal(w.id); }
   }
   // A pending withdrawal is re-read while its screen stays open: the operator usually confirms
@@ -385,7 +386,7 @@ export const FLOWS_SCRIPT = `
   let wdFollow = null;
   function followWithdrawal(id, tries = 0) {
     clearTimeout(wdFollow);
-    if (tries >= 60) return;
+    if (tries >= 400) return;
     wdFollow = setTimeout(async () => {
       const c = nav.current();
       if (!c || c.name !== 'withdraw-done' || !wdResult || wdResult.id !== id) return;

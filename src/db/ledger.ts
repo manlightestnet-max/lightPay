@@ -3,6 +3,7 @@ import { getClient, query } from './pool.js';
 import { LedgerBucket, LedgerDirection, TransactionType, Environment } from '../types/index.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
 import { notifyWallets } from '../realtime.js';
+import { guardMoney } from '../security/lockdown.js';
 
 export interface LedgerPosting {
   walletId: string;
@@ -45,6 +46,7 @@ export class LedgerEngine {
    * n'a été écrit, et l'idempotence renvoie le résultat si une exécution a abouti.
    */
   static async executeTransaction(params: ExecuteTransactionParams) {
+    guardMoney();
     for (let attempt = 1; ; attempt++) {
       try {
         return await LedgerEngine.executeOnce(params);

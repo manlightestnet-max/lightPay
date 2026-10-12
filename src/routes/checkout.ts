@@ -13,6 +13,8 @@ import {
   walletStatement,
 } from '../db/connect.js';
 import { EscrowError } from '../db/escrow.js';
+import { refundBreakdown } from '../payments/fees.js';
+import { MOBILE_NETWORKS, providerFor } from '../payments/mobile-money.js';
 
 const context = (request: FastifyRequest) => ({
   appId: request.appData!.id,
@@ -195,6 +197,24 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
     } catch (err) {
       return fail(reply, err);
     }
+  });
+
+  /**
+   * What a guest (mobile-money payer) would get back if a payment of `amount` were refunded: the two
+   * payout fees come out of the refund. A LightPay-wallet payer is always refunded in full.
+   */
+  fastify.get('/checkout/refund-quote', async (request, reply) => {
+    const raw = String((request.query as any).amount ?? '');
+    if (!/^\d{1,12}$/.test(raw) || BigInt(raw) <= 0n) return reply.status(400).send({ error: 'INVALID_AMOUNT', message: 'amount must be a whole number greater than zero' });
+    const amount = BigInt(raw);
+    const { environment } = context(request);
+    const quotes = Object.fromEntries(
+      MOBILE_NETWORKS.map((network) => {
+        const b = refundBreakdown(environment, amount, providerFor(environment, network, 'payout').name);
+        return [network, { sent: b.sent.toString(), operator_fee: b.operator_fee.toString(), lightpay_fee: b.lightpay_fee.toString(), fees: (amount - b.sent).toString() }];
+      })
+    );
+    return { status: 'success', amount: amount.toString(), quotes };
   });
 
   fastify.get('/checkout/sessions/:id', async (request, reply) => {

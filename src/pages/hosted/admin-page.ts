@@ -6,7 +6,8 @@ import { CONSOLE_CSS } from './console.js';
  * /admin — the owner's console (LightPay sign-in listed in ADMIN_UIDS). Revenue first, then the
  * provider reserves, users, apps, every movement, the main wallet and the admin log.
  * Hash routes: #/home · #/reserves · #/users → #/users/<wallet> · #/apps → #/apps/<id> · #/developers → #/developers/<uid> ·
- *   #/moves → #/moves/<tx> · #/main · #/fees · #/providers · #/audit   (an item is its own screen, with a back link)
+ *   #/moves → #/moves/<tx> · #/main · #/fees · #/providers · #/audit · #/lockdown · #/controls · #/payouts → #/payouts/<id> · #/suspensions
+ *   (an item is its own screen, with a back link)
  * ?env=sandbox for the test ledger. No withdrawal from here, on purpose.
  */
 
@@ -55,6 +56,11 @@ const ADMIN_CSS = `
 .fee-item.saved .fee-val { border-color: var(--accent); }
 .fee-item { flex-wrap: wrap; }
 @media (max-width: 560px) { .fee-edit { width: 100%; justify-content: flex-end; } .fee-edit input { flex: 1; } }
+.fee-val[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); cursor: default; }
+.fee-val.danger { color: var(--danger); }
+.search.wide { max-width: none; }
+.lock-now { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; font-size: 14px; }
+.lock-note { margin-top: 12px; font-size: 13px; color: var(--muted); }
 .fee-item .fee-err { display: block; font-size: 12px; color: var(--danger); margin-top: 2px; }
 .calc-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .calc-amount { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line-strong); }
@@ -130,6 +136,11 @@ export const adminPage = (nonce: string, env: string) => {
     ${navItem('moves', 'moves', 'list', 'Mouvements')}
     <div class="nav-label">Trésorerie</div>
     ${navItem('main', 'main', 'wallet', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>')}
+    <div class="nav-label">Contrôle</div>
+    ${navItem('lockdown', 'lockdown', 'lock', 'Frein d’urgence')}
+    ${navItem('controls', 'controls', 'clock', 'Délais et limites')}
+    ${navItem('payouts', 'payouts', 'withdraw', 'Retraits et remboursements')}
+    ${navItem('suspensions', 'suspensions', 'shield', 'Comptes suspendus')}
     <div class="nav-label">Réglages</div>
     ${navItem('fees', 'fees', 'settings', 'Frais et minimums')}
     ${navItem('providers', 'providers', 'swap', 'Fournisseurs')}
@@ -281,6 +292,50 @@ ${page('fees', 'Frais et minimums', `
   <p class="hint">Cliquez une valeur pour la modifier : appliquée tout de suite, à cet environnement seulement, et inscrite au journal admin.</p>
 `)}
 
+${page('lockdown', 'Frein d’urgence', `
+  <div class="lock-now" id="lockNow"></div>
+  <div class="grid-2">
+    ${panel('Niveau', '<ul class="fee-list" id="lockLevels"></ul>')}
+    ${panel('Appliquer', `
+      <form id="lockForm" novalidate>
+        <div class="field"><label for="lockReason">Raison (elle reste dans le journal)</label><textarea id="lockReason" maxlength="300" rows="3" autocomplete="off"></textarea></div>
+        <div class="msg" id="lockSaveMsg" role="status" aria-live="polite"></div>
+        <button class="btn mt" type="submit" id="lockGo">${iconSvg('check')}Appliquer</button>
+        <p class="hint">Immédiat sur tous les serveurs (quelques secondes). Un niveau imposé par LIGHTWALLET_LOCKDOWN sur l’hébergeur ne se lève pas d’ici.</p>
+      </form>`)}
+  </div>
+  <p class="lock-note">Le frein agit sur les deux environnements, réel et test. Remettre « Normal » rouvre tout.</p>
+`)}
+
+${page('controls', 'Délais et limites', `
+  <div class="grid-2">
+    ${panel('Délais avant envoi', '<ul class="fee-list" id="ctlDelays"></ul>')}
+    ${panel('Tentatives de retrait', '<ul class="fee-list" id="ctlLimits"></ul>')}
+  </div>
+  <p class="hint">Cliquez une valeur pour la modifier : appliquée tout de suite, à cet environnement seulement, et inscrite au journal admin. Pendant un délai, vous pouvez retenir ou annuler l’envoi depuis « Retraits et remboursements ».</p>
+`)}
+
+${page('payouts', 'Retraits et remboursements', `
+  <div id="payObserved"></div>
+  <div class="list-card" id="payTable"></div>
+`, '', { toolbar: seg('payFilter', [['upcoming', 'À venir'], ['held', 'Retenus'], ['all', 'Récents']]) })}
+
+${page('payout', 'Envoi', '<div id="payDetail"></div>', '', { back: { href: '#/payouts', label: 'Retraits et remboursements' } })}
+
+${page('suspensions', 'Comptes suspendus', `
+  <div class="grid-2">
+    ${panel('Suspendus maintenant', '<div id="susTable"></div>', { flush: true, foot: 'Un compte suspendu ne peut ni retirer ni envoyer. Il peut toujours recevoir.' })}
+    ${panel('Suspendre un compte', `
+      <form id="susForm" novalidate>
+        <div class="field"><label for="susTo">Compte</label><input id="susTo" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="@pseudo ou e-mail"></div>
+        <div class="field"><label for="susMinutes">Durée (minutes)</label><input id="susMinutes" data-amount inputmode="numeric" autocomplete="off" value="60"></div>
+        <div class="field"><label for="susReason">Raison</label><input id="susReason" maxlength="300" autocomplete="off"></div>
+        <div class="msg" id="susSaveMsg" role="status" aria-live="polite"></div>
+        <button class="btn mt" type="submit" id="susGo">${iconSvg('lock')}Suspendre</button>
+      </form>`)}
+  </div>
+`)}
+
 ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>')}
 
   </div>
@@ -312,6 +367,13 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     : { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Dépôt sur le wallet main' };
   ACTION.FEES_UPDATE = 'Frais et minimums modifiés';
   ACTION.PROVIDERS_UPDATE = 'Fournisseur mobile money changé';
+  ACTION.CONTROLS_UPDATE = 'Délais et limites modifiés';
+  ACTION.LOCKDOWN = 'Frein d’urgence';
+  ACTION.PAYOUT_HOLD = 'Envoi retenu';
+  ACTION.PAYOUT_RELEASE = 'Envoi libéré';
+  ACTION.PAYOUT_CANCEL = 'Envoi annulé';
+  ACTION.SUSPEND = 'Compte suspendu';
+  ACTION.SUSPEND_LIFT = 'Suspension levée';
   ACTION.DEVELOPER_APPROVED = 'Mode avancé validé';
   ACTION.DEVELOPER_REJECTED = 'Mode avancé refusé';
   const pill = (status) => { const s = STATUS[status] || ['', String(status || '').toLowerCase()]; return el('span', { class: 'pill ' + s[0], text: s[1] }); };
@@ -776,48 +838,67 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   let feeSet = null, feeProv = 'pawapay', calcKind = 'deposit', feeActive = null;
   const pctText = (bps) => String(bps / 100).replace('.', ',');
   const shown = (v, unit) => (unit === 'pct' ? pctText(v) + ' %' : money(v));
-  function parseFee(raw, unit) {
-    const t = String(raw).trim().replace(/\\s/g, '').replace(',', '.').replace(/%|fcfa/gi, '');
+  function parseFee(raw, unit, range) {
+    const t = String(raw).trim().replace(/\\s/g, '').replace(',', '.').replace(/%|fcfa|min|fois/gi, '');
     if (!/^\\d+(\\.\\d+)?$/.test(t)) return NaN;
     const n = Number(t);
     if (unit === 'pct') { const bps = Math.round(n * 100); return Math.abs(bps - n * 100) < 1e-6 && bps <= 5000 ? bps : NaN; }
-    return Number.isInteger(n) && n <= 1000000 ? n : NaN;
+    const min = range ? range[0] : 0, max = range ? range[1] : 1000000;
+    return Number.isInteger(n) && n >= min && n <= max ? n : NaN;
   }
-  function feeItem(def) {
-    const key = def[0], unit = def[3];
+  const UNIT_END = { pct: '%', fcfa: 'FCFA', min: 'min', count: 'fois' };
+  const UNIT_ERR = (unit, range) => unit === 'pct' ? 'Pourcentage de 0 à 50, 2 décimales au plus.' : unit === 'fcfa' ? 'Montant entier en FCFA.' : 'Nombre entier de ' + range[0] + ' à ' + range[1] + '.';
+  const shownValue = (v, unit) => unit === 'min' ? v + ' min' : unit === 'count' ? (v === 0 ? 'Aucune limite' : v + (v > 1 ? ' fois' : ' fois')) : shown(v, unit);
+  /**
+   * One value, read as a button; a click turns it into a field (Enter saves, Échap cancels). One code for every settings screen:
+   * the store tells where the values are, how a full set is saved and which screen line shows the message.
+   * def = [key, label, help, unit, range?]
+   */
+  function settingItem(def, store) {
+    const key = def[0], unit = def[3], range = def[4];
     const li = el('li', { class: 'fee-item' });
     const view = () => {
-      const btn = el('button', { class: 'fee-val', type: 'button', text: shown(feeSet[key], unit), 'aria-label': def[1] + ' : ' + shown(feeSet[key], unit) + '. Modifier' });
+      const btn = el('button', { class: 'fee-val', type: 'button', text: shownValue(store.get()[key], unit), 'aria-label': def[1] + ' : ' + shownValue(store.get()[key], unit) + '. Modifier' });
       btn.addEventListener('click', edit);
       li.replaceChildren(el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: def[1] }), el('span', { class: 'fee-help', text: def[2] })]), btn);
     };
     const edit = () => {
-      const input = el('input', { inputmode: 'decimal', autocomplete: 'off', value: unit === 'pct' ? pctText(feeSet[key]) : String(feeSet[key]), 'aria-label': def[1] });
+      const cur = store.get()[key];
+      const input = el('input', { inputmode: 'decimal', autocomplete: 'off', value: unit === 'pct' ? pctText(cur) : String(cur), 'aria-label': def[1] });
       const err = el('span', { class: 'fee-err', role: 'alert' });
       const save = async () => {
-        const v = parseFee(input.value, unit);
-        if (isNaN(v)) { err.textContent = unit === 'pct' ? 'Pourcentage de 0 à 50, 2 décimales au plus.' : 'Montant entier en FCFA.'; input.focus(); return; }
-        if ((key === 'deposit_min' || key === 'withdrawal_min') && v < 1) { err.textContent = 'Au moins 1 FCFA.'; return; }
-        if (v === feeSet[key]) return view();
+        const v = parseFee(input.value, unit, range);
+        if (isNaN(v)) { err.textContent = UNIT_ERR(unit, range); input.focus(); return; }
+        if (store.min1 && store.min1.indexOf(key) >= 0 && v < 1) { err.textContent = 'Au moins 1 FCFA.'; return; }
+        if (v === cur) return view();
         ok.disabled = true;
         await guarded(async () => {
-          const next = Object.assign({}, feeSet); next[key] = v;
-          feeSet = (await LP.api('PUT', '/v1/admin-console/fees', next)).settings;
+          const next = Object.assign({}, store.get()); next[key] = v;
+          store.set(await store.put(next));
           view(); li.classList.add('saved'); setTimeout(() => li.classList.remove('saved'), 1600);
-          renderCalc();
-        }, 'feesMsg');
+          if (store.after) store.after();
+        }, store.msg);
         ok.disabled = false;
       };
       const ok = el('button', { class: 'ok', type: 'button', text: 'OK', on: { click: save } });
       const no = el('button', { class: 'no', type: 'button', text: 'Annuler', on: { click: view } });
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') view(); });
       li.replaceChildren(el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: def[1] }), err]),
-        el('span', { class: 'fee-edit' }, [input, el('span', { class: 'unit', text: unit === 'pct' ? '%' : 'FCFA' }), no, ok]));
+        el('span', { class: 'fee-edit' }, [input, el('span', { class: 'unit', text: UNIT_END[unit] }), no, ok]));
       input.focus(); input.select();
     };
     view();
     return li;
   }
+  const FEE_STORE = {
+    get: () => feeSet,
+    set: (v) => { feeSet = v; },
+    put: async (next) => (await LP.api('PUT', '/v1/admin-console/fees', next)).settings,
+    after: () => renderCalc(),
+    msg: 'feesMsg',
+    min1: ['deposit_min', 'withdrawal_min'],
+  };
+  const feeItem = (def) => settingItem(def, FEE_STORE);
   function renderFees() {
     document.querySelectorAll('[data-prov]').forEach((b) => {
       b.setAttribute('aria-pressed', String(b.dataset.prov === feeProv));
@@ -867,6 +948,185 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     });
   }
 
+  // ---------------------------------------------------------------- delays and limits (same rows as the fees)
+  const CTL_KEYS = {
+    delays: [
+      ['withdrawal_delay_minutes', 'Délai avant un retrait', 'Le retrait attend ce temps avant de partir vers le téléphone (0 : tout de suite)', 'min'],
+      ['refund_delay_minutes', 'Délai avant un remboursement', 'Un client invité est remboursé après ce délai : vous pouvez retenir l’envoi entre-temps', 'min'],
+    ],
+    limits: [
+      ['withdrawal_max_attempts', 'Tentatives de retrait autorisées', 'Au-delà, le compte est suspendu (0 : pas de limite)', 'count'],
+      ['withdrawal_attempt_window_minutes', 'Durée de comptage', 'Les tentatives sont comptées sur cette durée', 'min'],
+      ['withdrawal_suspension_minutes', 'Durée de la suspension', 'Le compte ne peut ni retirer ni envoyer pendant ce temps', 'min'],
+    ],
+  };
+  let ctlSet = null, ctlRanges = null;
+  const CTL_STORE = {
+    get: () => ctlSet,
+    set: (v) => { ctlSet = v; },
+    put: async (next) => (await LP.api('PUT', '/v1/admin-console/controls', next)).settings,
+    msg: 'controlsMsg',
+  };
+  const ctlDef = (d) => d.slice(0, 4).concat([ctlRanges[d[0]]]);
+  async function enterControls() {
+    crumbs('Contrôle', 'Délais et limites');
+    if (!ctlSet) { skeleton($('ctlDelays'), 2, 'li'); skeleton($('ctlLimits'), 3, 'li'); }
+    await load('controls', async () => {
+      const r = await LP.api('GET', '/v1/admin-console/controls');
+      ctlSet = r.settings; ctlRanges = r.ranges;
+      $('ctlDelays').replaceChildren.apply($('ctlDelays'), CTL_KEYS.delays.map((d) => settingItem(ctlDef(d), CTL_STORE)));
+      $('ctlLimits').replaceChildren.apply($('ctlLimits'), CTL_KEYS.limits.map((d) => settingItem(ctlDef(d), CTL_STORE)));
+    });
+  }
+
+  // ---------------------------------------------------------------- emergency brake
+  const LEVEL_INFO = [
+    ['off', 'Normal', 'Tout fonctionne.'],
+    ['withdrawals', 'Retraits fermés', 'Plus personne ne peut retirer ; les envois vers les téléphones (remboursements compris) attendent la réouverture.'],
+    ['payments', 'Mouvements suspendus', 'Rien ne bouge : ni dépôt, ni paiement, ni envoi, ni retrait. La consultation reste possible.'],
+    ['readonly', 'Lecture seule', 'Mouvements suspendus et aucune écriture dans la base de données.'],
+    ['total', 'Arrêt total', 'Plus rien ne touche la base : toutes les requêtes reçoivent « arrêté ». Seule cette page reste active.'],
+  ];
+  let lockState = null, lockPick = 'off';
+  function renderLock() {
+    const cur = lockState.level;
+    const info = LEVEL_INFO.filter((l) => l[0] === cur)[0];
+    const bits = [el('span', { class: 'pill ' + (cur === 'off' ? 'ok' : 'err'), text: info ? info[1] : cur })];
+    if (lockState.since) bits.push(el('span', { class: 'muted', text: 'depuis ' + fmtDateTime(lockState.since) + (lockState.by ? ' · ' + lockState.by : '') }));
+    if (lockState.reason) bits.push(el('span', { class: 'muted', text: '« ' + lockState.reason + ' »' }));
+    if (lockState.forced) bits.push(el('span', { class: 'muted', text: 'Imposé par LIGHTWALLET_LOCKDOWN (' + lockState.forced + ') : à lever sur l’hébergeur.' }));
+    $('lockNow').replaceChildren.apply($('lockNow'), bits);
+    $('lockLevels').replaceChildren.apply($('lockLevels'), LEVEL_INFO.map((l) => {
+      const li = el('li', { class: 'fee-item' });
+      const btn = el('button', { class: 'fee-val' + (l[0] === 'off' ? '' : ' danger'), type: 'button', text: l[0] === cur ? 'En vigueur' : l[0] === lockPick ? 'Choisi' : 'Choisir', 'aria-pressed': String(l[0] === lockPick) });
+      btn.addEventListener('click', () => { lockPick = l[0]; renderLock(); });
+      li.append(el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: l[1] }), el('span', { class: 'fee-help', text: l[2] })]), btn);
+      return li;
+    }));
+    $('lockGo').disabled = lockPick === cur;
+  }
+  $('lockForm').addEventListener('submit', (e) => { e.preventDefault(); guarded(async () => {
+    $('lockGo').disabled = true;
+    try {
+      lockState = (await LP.api('PUT', '/v1/admin-console/lockdown', { level: lockPick, reason: $('lockReason').value })).lockdown;
+      lockPick = lockState.level; $('lockReason').value = '';
+      renderLock(); say('lockSaveMsg', 'Niveau appliqué : ' + (LEVEL_INFO.filter((l) => l[0] === lockState.level)[0] || [0, lockState.level])[1] + '.', 'ok');
+    } finally { renderLock(); }
+  }, 'lockSaveMsg'); });
+  async function enterLockdown() {
+    crumbs('Contrôle', 'Frein d’urgence');
+    await load('lockdown', async () => {
+      lockState = (await LP.api('GET', '/v1/admin-console/lockdown')).lockdown;
+      lockPick = lockState.level;
+      renderLock();
+    });
+  }
+
+  // ---------------------------------------------------------------- withdrawals and refunds waiting to leave (and the times they really take)
+  const PAY_STATUS = { SCHEDULED: ['warn', 'programmé'], HELD: ['err', 'retenu'], PENDING: ['warn', 'en cours'], SUCCEEDED: ['ok', 'envoyé'], FAILED: ['err', 'échoué'] };
+  const PAY_KIND = { WITHDRAWAL: 'Retrait', GUEST_REFUND: 'Remboursement' };
+  const HOLD_LABEL = { DISPUTE: 'Litige', SUPPORT: 'Support', OTHER: 'Autre' };
+  const payPill = (s) => { const x = PAY_STATUS[s] || ['', String(s).toLowerCase()]; return el('span', { class: 'pill ' + x[0], text: x[1] }); };
+  const until = (d) => { const s = Math.round((new Date(d) - new Date()) / 1000); return s <= 0 ? 'à l’instant' : s < 90 ? 'dans ' + s + ' s' : 'dans ' + Math.round(s / 60) + ' min'; };
+  const dur = (s) => s < 90 ? s + ' s' : s < 5400 ? Math.round(s / 60) + ' min' : (Math.round(s / 360) / 10) + ' h';
+  const payOwner = (p) => p.owner_type === 'GUEST' ? 'Invité' : (p.owner_name || p.owner_email || 'Compte LightPay');
+  let payList = [], payTimer = null;
+  function renderPayouts() {
+    table($('payTable'), [{ label: 'Envoi' }, { label: 'Part' }, { label: 'État' }], payList.map((p) => ({
+      href: '#/payouts/' + encodeURIComponent(p.id),
+      cells: [
+        cell(money(p.amount) + ' · ' + (PAY_KIND[p.reason] || p.reason), payOwner(p) + ' · ' + p.msisdn),
+        p.status === 'SCHEDULED' ? until(p.release_at) : p.status === 'HELD' ? 'retenu · ' + (HOLD_LABEL[p.hold_kind] || '') : fmtDateTime(p.created_at),
+        payPill(p.status),
+      ],
+    })), 'Aucun envoi pour le moment.');
+  }
+  async function loadPayouts() {
+    const r = await LP.api('GET', '/v1/admin-console/payouts?filter=' + (segValue('payFilter') || 'upcoming'));
+    payList = r.payouts;
+    const obs = r.observed || [];
+    const line = (reason) => { const o = obs.filter((x) => x.reason === reason)[0]; return o ? o.n + ' envois en 30 j · moyenne ' + dur(o.avg_seconds) + ' · le plus long ' + dur(o.max_seconds) : 'Aucun envoi terminé en 30 jours'; };
+    const box = el('div', { class: 'rows' });
+    rows(box, [['Retraits', line('WITHDRAWAL')], ['Remboursements', line('GUEST_REFUND')]]);
+    $('payObserved').replaceChildren(el('section', { class: 'panel' }, [el('div', { class: 'panel-head' }, [el('h2', { class: 'panel-title', text: 'Temps observés · de la demande à l’arrivée' })]), el('div', { class: 'panel-body' }, [box])]));
+    renderPayouts();
+  }
+  async function enterPayouts() {
+    crumbs('Contrôle', 'Retraits et remboursements');
+    if (!payList.length) skeleton($('payTable'), 5, 'div');
+    await load('payouts', loadPayouts);
+    clearInterval(payTimer);
+    payTimer = setInterval(() => { const c = nav.current(); if (c && c.name === 'payouts') loadPayouts().catch(() => {}); else clearInterval(payTimer); }, 15000);
+  }
+  async function enterPayout(id) {
+    crumbs('Retraits et remboursements', 'Envoi');
+    $('payoutTitle').textContent = 'Envoi';
+    $('payDetail').replaceChildren(); skeleton($('payDetail'), 5, 'div');
+    await load('payout', async () => {
+      const p = (await LP.api('GET', '/v1/admin-console/payouts/' + encodeURIComponent(id))).payout;
+      $('payoutTitle').textContent = money(p.amount) + ' · ' + (PAY_KIND[p.reason] || p.reason);
+      const box = el('div', { class: 'rows' });
+      const list = [
+        ['État', (PAY_STATUS[p.status] || ['', p.status])[1]],
+        ['Compte', payOwner(p) + (p.owner_email && p.owner_type !== 'GUEST' ? ' · ' + p.owner_email : '')],
+        ['Reçu sur le téléphone', money(p.amount)], ['Frais opérateur', money(p.operator_fee)], ['Frais LightPay', money(p.lightpay_fee)], ['Débité du wallet', money(p.total_debited), true],
+        ['Vers', p.msisdn + ' · ' + p.network], ['Demandé le', fmtDateTime(p.created_at)],
+      ];
+      if (p.status === 'SCHEDULED') list.push(['Part', fmtDateTime(p.release_at) + ' (' + until(p.release_at) + ')']);
+      if (p.status === 'SUCCEEDED') list.push(['Arrivé le', fmtDateTime(p.updated_at)], ['Temps total', dur(Math.round((new Date(p.updated_at) - new Date(p.created_at)) / 1000))]);
+      if (p.status === 'FAILED') list.push(['Fin', fmtDateTime(p.updated_at) + (p.failure_code ? ' · ' + p.failure_code : '')]);
+      if (p.status === 'HELD') list.push(['Retenu par', (p.held_by || '—') + ' · ' + (p.held_at ? fmtDateTime(p.held_at) : '')], ['Motif', (HOLD_LABEL[p.hold_kind] || '') + ' : ' + (p.hold_reason || '')]);
+      list.push(['Numéro d’envoi', p.id]);
+      rows(box, list);
+      const panels = [detailPanel('Envoi', [box])];
+      if (p.status === 'SCHEDULED' || p.status === 'HELD') {
+        const msg = el('div', { class: 'msg', id: 'payActMsg', role: 'status', 'aria-live': 'polite' });
+        const act = (path, body, done) => guarded(async () => { await LP.api('POST', '/v1/admin-console/payouts/' + encodeURIComponent(p.id) + '/' + path, body); say('payoutMsg', done, 'ok'); payList = []; await enterPayout(id); }, 'payActMsg');
+        let kind = 'DISPUTE';
+        const kinds = el('div', { class: 'fee-prov', role: 'group', 'aria-label': 'Motif' }, ['DISPUTE', 'SUPPORT', 'OTHER'].map((k) => {
+          const b = el('button', { type: 'button', text: HOLD_LABEL[k], 'aria-pressed': String(k === kind) });
+          b.addEventListener('click', () => { kind = k; kinds.querySelectorAll('button').forEach((o) => o.setAttribute('aria-pressed', String(o === b))); });
+          return b;
+        }));
+        const reason = el('input', { class: 'search wide mt', placeholder: 'Raison (reste dans le journal)', maxlength: '300', autocomplete: 'off' });
+        let armed = false;
+        const cancel = el('button', { class: 'btn btn-danger', type: 'button', text: 'Annuler et rendre l’argent' });
+        cancel.addEventListener('click', () => { if (!armed) { armed = true; cancel.textContent = 'Confirmer : rendre ' + money(p.total_debited) + ' au wallet'; return; } act('cancel', {}, 'Envoi annulé : le wallet a retrouvé son argent.'); });
+        const buttons = [];
+        if (p.status === 'SCHEDULED') {
+          buttons.push(el('button', { class: 'btn btn-secondary', type: 'button', text: 'Retenir', on: { click: () => { if (!reason.value.trim()) { say('payActMsg', 'Indiquez la raison de la retenue.', 'err'); return; } act('hold', { kind: kind, reason: reason.value }, 'Envoi retenu.'); } } }));
+        }
+        buttons.push(el('button', { class: 'btn', type: 'button', text: p.status === 'HELD' ? 'Libérer' : 'Envoyer maintenant', on: { click: () => act('release', {}, 'Envoi libéré : il part dans quelques secondes.') } }));
+        const body = p.status === 'SCHEDULED' ? [el('p', { class: 'small muted', text: 'Retenir garde l’envoi tant que vous ne le libérez pas : litige, dossier de support ou autre.' }), el('div', { class: 'mt' }, [kinds]), reason] : [el('p', { class: 'small muted', text: 'Cet envoi est retenu : il ne partira qu’une fois libéré.' })];
+        panels.push(detailPanel('Décision', body.concat([el('div', { class: 'btn-row mt' }, buttons), el('div', { class: 'mt' }, [cancel]), msg])));
+      }
+      $('payDetail').replaceChildren.apply($('payDetail'), panels);
+    });
+  }
+
+  // ---------------------------------------------------------------- accounts suspended
+  async function loadSuspensions() {
+    const r = await LP.api('GET', '/v1/admin-console/suspensions');
+    table($('susTable'), [{ label: 'Compte' }, { label: 'Jusqu’à' }, { label: '' }], r.suspensions.map((s) => ({
+      cells: [cell(s.email || s.uid, (s.kind === 'AUTO' ? 'Automatique' : 'Par vous') + (s.reason ? ' · ' + s.reason : '')), fmtDateTime(s.until),
+        el('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: 'Lever', on: { click: (e) => { e.stopPropagation(); guarded(async () => { await LP.api('DELETE', '/v1/admin-console/suspensions/' + encodeURIComponent(s.uid)); say('suspensionsMsg', 'Suspension levée.', 'ok'); await loadSuspensions(); }, 'suspensionsMsg'); } } })],
+    })), 'Aucun compte suspendu.');
+  }
+  $('susForm').addEventListener('submit', (e) => { e.preventDefault(); guarded(async () => {
+    $('susGo').disabled = true;
+    try {
+      await LP.api('POST', '/v1/admin-console/suspensions', { to: $('susTo').value, minutes: Number(digits($('susMinutes').value)), reason: $('susReason').value });
+      $('susTo').value = ''; $('susReason').value = '';
+      say('susSaveMsg', 'Compte suspendu.', 'ok');
+      await loadSuspensions();
+    } finally { $('susGo').disabled = false; }
+  }, 'susSaveMsg'); });
+  async function enterSuspensions() {
+    crumbs('Contrôle', 'Comptes suspendus');
+    skeleton($('susTable'), 3, 'div');
+    await load('suspensions', loadSuspensions);
+  }
+
   // ---------------------------------------------------------------- admin log
   async function enterAudit() {
     crumbs('Trésorerie', 'Journal admin');
@@ -895,13 +1155,18 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     fees: { enter: withNav('fees', enterFees) },
     providers: { enter: withNav('providers', enterProviders) },
     audit: { enter: withNav('audit', enterAudit) },
+    lockdown: { enter: withNav('lockdown', enterLockdown) },
+    controls: { enter: withNav('controls', enterControls) },
+    payouts: { enter: withNav('payouts', enterPayouts) },
+    payout: { parent: 'payouts', enter: withNav('payouts', enterPayout) },
+    suspensions: { enter: withNav('suspensions', enterSuspensions) },
     denied: { enter: () => {} },
   };
   const nav = createNav({
     root: 'home',
     // #/users/<id> opens the item screen "user" (and so on): a list and its item never share a screen.
     resolve: (route) => {
-      const ITEM = { users: 'user', apps: 'app', developers: 'developer', moves: 'move' };
+      const ITEM = { users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout' };
       const i = route.indexOf('/');
       if (i < 0) return [route, null];
       const list = route.slice(0, i);

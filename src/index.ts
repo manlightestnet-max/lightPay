@@ -20,6 +20,10 @@ import { adminConsoleRoutes, adminHost } from './routes/admin-console.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { refreshFeeSettings } from './payments/fee-settings.js';
+import { refreshControlSettings } from './payments/control-settings.js';
+import { lockedMessage, levelNow, refreshLockdown, withBypass } from './security/lockdown.js';
+import { dispatchDuePayouts } from './db/payouts.js';
+import { purgeOldAttempts } from './db/withdrawal-guard.js';
 import { refreshProviderSettings } from './payments/provider-settings.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
 import { registerRateLimits } from './security/rate-limit.js';
@@ -104,6 +108,16 @@ server.addHook('onRequest', async (request, reply) => {
   if (request.method === 'OPTIONS') {
     return reply.status(204).send();
   }
+});
+
+// 2'. Emergency brake (administration > Frein d'urgence, or LIGHTWALLET_LOCKDOWN): at the `total` level nothing is served but
+//     the health probe, the administration's own lock screen and the sign-in relay. The other levels act deeper (database, ledger, payouts).
+server.addHook('onRequest', async (request, reply) => {
+  await refreshLockdown();
+  if (levelNow() !== 'total') return;
+  const url = request.url.split('?')[0];
+  if (url === '/health' || url === '/admin' || url.startsWith('/v1/admin-console/') || url.startsWith('/__/auth/') || url.startsWith('/__/firebase/') || request.method === 'OPTIONS') return;
+  return reply.status(503).send({ error: 'LOCKED', level: 'total', message: lockedMessage('total') });
 });
 
 // 3. En-têtes de sécurité HTTP standards
@@ -278,6 +292,7 @@ const sweep = async () => {
   try {
     await sweepPendingCollections();
     for (const env of ['production', 'sandbox'] as const) {
+      await purgeOldAttempts(env).catch(() => undefined);
       for (const payout of await pendingPayouts(env)) await resolvePayout(payout).catch((err) => console.error('[SWEEP] payout', payout.id, err?.message));
     }
   } catch (err: any) {
@@ -285,6 +300,10 @@ const sweep = async () => {
   }
 };
 setInterval(() => void sweep(), 60_000).unref();
+// Payouts that waited for their delay (the admin sets it) leave as soon as it has passed.
+setInterval(() => {
+  for (const env of ['production', 'sandbox'] as const) void dispatchDuePayouts(env).catch((err) => console.error('[PAYOUT] dispatch', env, err?.message));
+}, 15_000).unref();
 server.register(externalMoneyRoutes, { prefix: '/v1' });
 server.register(adminRoutes, { prefix: '/v1/admin' });
 server.register(sdkDistributionRoutes, { prefix: '/v1/sdk' });
@@ -342,11 +361,13 @@ server.all('/__/firebase/*', proxyFirebaseAuth);
 async function start() {
   try {
     console.log('[STARTUP] Initializing LightPay Headless Core Engine...');
-    await runMigrations();
+    // Migrations must run whatever the emergency brake says (an env lockdown at boot would otherwise stop the server in a loop).
+    await withBypass(() => runMigrations());
     // Fees and minimums come from the admin's settings; re-read every minute.
     await refreshFeeSettings();
     await refreshProviderSettings();
-    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); }, 60_000).unref();
+    await refreshControlSettings();
+    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); void refreshControlSettings(); }, 60_000).unref();
 
     await server.listen({
       port: config.port,

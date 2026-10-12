@@ -5,6 +5,8 @@ import { Environment } from '../types/index.js';
 import { MobileNetwork, NETWORK_NAMES, networkOfMsisdn, providerByName, providerFor, RailOperation, RailResult } from '../payments/mobile-money.js';
 import { lightpayFeeWallet } from './fee-wallet.js';
 import { isPersonWallet, logActivity, maskPhone, reasonFor, updateActivity } from './activity.js';
+import { controlSettings } from '../payments/control-settings.js';
+import { withdrawalsClosed } from '../security/lockdown.js';
 
 /**
  * Money leaving LightPay to a phone number (withdrawals, guest refunds).
@@ -27,7 +29,13 @@ export interface PayoutRow {
   amount: string;
   currency: string;
   reason: 'WITHDRAWAL' | 'GUEST_REFUND';
-  status: 'PENDING' | 'SUCCEEDED' | 'FAILED';
+  /** SCHEDULED: waiting for release_at · HELD: kept by the admin · PENDING: asked to the provider. */
+  status: 'SCHEDULED' | 'HELD' | 'PENDING' | 'SUCCEEDED' | 'FAILED';
+  release_at: Date | null;
+  hold_kind: 'DISPUTE' | 'SUPPORT' | 'OTHER' | null;
+  hold_reason: string | null;
+  held_by: string | null;
+  held_at: Date | null;
   transaction_id: string | null;
   failure_code: string | null;
   reference: string;
@@ -114,12 +122,18 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
     if (again) return again;
   }
 
+  // The admin's delay: the money is debited now, but only leaves for the phone once the delay has passed (and is not held).
+  // While the emergency brake keeps payouts closed, a refund is still booked but waits until they reopen.
+  const settings = controlSettings(env);
+  const delayMinutes = input.reason === 'WITHDRAWAL' ? settings.withdrawal_delay_minutes : settings.refund_delay_minutes;
+  const scheduled = delayMinutes > 0 || withdrawalsClosed();
   const [row] = await query(
-    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING', $10, $11, $12, $13, $14)
+    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited, release_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15::varchar, $10, $11, $12, $13, $14, CASE WHEN $15::varchar = 'SCHEDULED' THEN NOW() + make_interval(mins => $16::int) END)
      ON CONFLICT DO NOTHING RETURNING *`,
     [payoutId, env, input.walletId, provider.name, input.network, input.msisdn, input.amount.toString(), input.currency, input.reason,
-      (debit as any).transactionId ?? (debit as any).transaction?.id ?? null, input.reference, operatorFee.toString(), lightpayFee.toString(), total.toString()],
+      (debit as any).transactionId ?? (debit as any).transaction?.id ?? null, input.reference, operatorFee.toString(), lightpayFee.toString(), total.toString(),
+      scheduled ? 'SCHEDULED' : 'PENDING', delayMinutes],
     env
   );
   if (row && (await isPersonWallet(env, input.walletId))) {
@@ -129,12 +143,18 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
       counterparty: `${input.network === 'AIRTEL_COG' ? 'Airtel Money' : 'MTN MoMo'} · ${maskPhone(input.msisdn)}`, refType: 'payout', refId: payoutId,
     });
   }
+  // Waiting: the sweeper sends it at release_at (dispatchDuePayouts).
+  if (row.status === 'SCHEDULED') return row;
+  return dispatch(row);
+}
+
+/** Asks the provider to send a payout (idempotent on our payout id). An outage leaves it PENDING, retried by the sweeper. */
+async function dispatch(row: PayoutRow): Promise<PayoutRow> {
   let result: RailResult;
   try {
-    result = await provider.requestPayout(railOf(row));
+    result = await providerByName(row.provider).requestPayout(railOf(row));
   } catch (err: any) {
-    // Network or provider outage: stays PENDING; the idempotent request is retried later.
-    console.error('[PAYOUT] request failed, will retry', payoutId, err?.message);
+    console.error('[PAYOUT] request failed, will retry', row.id, err?.message);
     watch(row);
     return row;
   }
@@ -230,4 +250,106 @@ export async function findPayoutByProviderReference(providerReference: string): 
 }
 
 export const pendingPayouts = (env: Environment) =>
-  query<PayoutRow>(`SELECT * FROM payouts WHERE status = 'PENDING' AND created_at < NOW() - interval '20 seconds' ORDER BY created_at LIMIT 50`, [], env);
+  query<PayoutRow>(`SELECT * FROM payouts WHERE status = 'PENDING' AND updated_at < NOW() - interval '20 seconds' ORDER BY created_at LIMIT 50`, [], env);
+
+// ---------------------------------------------------------------- delays and holds (the admin's control)
+
+export class PayoutControlError extends Error {
+  constructor(message: string, public code: string, public statusCode = 409) {
+    super(message);
+  }
+}
+
+/** Sends every payout whose delay has passed (called every few seconds). Nothing leaves while the emergency brake keeps payouts closed. */
+export async function dispatchDuePayouts(env: Environment): Promise<number> {
+  if (withdrawalsClosed()) return 0;
+  const due = await query<PayoutRow>(
+    `UPDATE payouts SET status = 'PENDING', updated_at = NOW()
+     WHERE id IN (SELECT id FROM payouts WHERE status = 'SCHEDULED' AND release_at <= NOW() ORDER BY release_at LIMIT 20 FOR UPDATE SKIP LOCKED)
+     RETURNING *`,
+    [],
+    env
+  );
+  for (const row of due) await dispatch(row).catch((err) => console.error('[PAYOUT] release failed', row.id, err?.message));
+  return due.length;
+}
+
+export const HOLD_KINDS = ['DISPUTE', 'SUPPORT', 'OTHER'] as const;
+export type HoldKind = (typeof HOLD_KINDS)[number];
+
+/** The admin keeps a waiting payout (a dispute, a support case…): it does not leave until released or cancelled. */
+export async function holdPayout(env: Environment, id: string, kind: unknown, reason: unknown, by: string): Promise<PayoutRow> {
+  if (!(HOLD_KINDS as readonly string[]).includes(String(kind))) throw new PayoutControlError('Motif inconnu : litige, support ou autre.', 'INVALID_HOLD_KIND', 400);
+  const note = String(reason ?? '').trim().slice(0, 300);
+  if (!note) throw new PayoutControlError('Indiquez la raison : elle reste dans le journal.', 'REASON_REQUIRED', 400);
+  const [row] = await query<PayoutRow>(
+    `UPDATE payouts SET status = 'HELD', hold_kind = $2, hold_reason = $3, held_by = $4, held_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND status = 'SCHEDULED' RETURNING *`,
+    [id, kind, note, by],
+    env
+  );
+  if (!row) throw new PayoutControlError('Seul un envoi programmé, pas encore parti, peut être retenu.', 'NOT_SCHEDULED');
+  return row;
+}
+
+/** `now`: a held or waiting payout is sent at the next pass (within seconds). */
+export async function releasePayout(env: Environment, id: string): Promise<PayoutRow> {
+  const [row] = await query<PayoutRow>(
+    `UPDATE payouts SET status = 'SCHEDULED', release_at = NOW(), hold_kind = NULL, hold_reason = NULL, held_by = NULL, held_at = NULL, updated_at = NOW()
+     WHERE id = $1 AND status IN ('SCHEDULED', 'HELD') RETURNING *`,
+    [id],
+    env
+  );
+  if (!row) throw new PayoutControlError('Cet envoi n’est ni programmé ni retenu.', 'NOT_WAITING');
+  return row;
+}
+
+/** The admin cancels a waiting payout: the wallet gets the total back (amount and fees), the person is told it was refused. */
+export async function cancelWaitingPayout(env: Environment, id: string): Promise<PayoutRow> {
+  const [row] = await query<PayoutRow>(
+    `UPDATE payouts SET status = 'PENDING', updated_at = NOW() WHERE id = $1 AND status IN ('SCHEDULED', 'HELD') RETURNING *`,
+    [id],
+    env
+  );
+  if (!row) throw new PayoutControlError('Cet envoi n’est ni programmé ni retenu.', 'NOT_WAITING');
+  try {
+    return await applyResult(row, { status: 'FAILED', failureCode: 'CANCELLED_BY_ADMIN' });
+  } catch (err) {
+    // The money could not be given back (brake on, outage): keep it held, never let the sweeper send it.
+    await query(`UPDATE payouts SET status = 'HELD', hold_kind = COALESCE(hold_kind, 'OTHER'), hold_reason = COALESCE(hold_reason, 'Annulation à reprendre'), updated_at = NOW() WHERE id = $1 AND status = 'PENDING' AND provider_reference IS NULL`, [id], env);
+    throw err;
+  }
+}
+
+const ADMIN_COLUMNS = `p.id, p.status, p.reason, p.amount::text, p.operator_fee::text, p.lightpay_fee::text, p.total_debited::text, p.currency, p.network, p.msisdn, p.provider,
+  p.failure_code, p.reference, p.created_at, p.updated_at, p.release_at, p.hold_kind, p.hold_reason, p.held_by, p.held_at,
+  w.account_type AS owner_type, w.metadata->>'name' AS owner_name, w.metadata->>'email' AS owner_email`;
+const adminView = (r: any) => ({ ...r, msisdn: maskPhone(r.msisdn) });
+
+/** Withdrawals and refunds for the admin. `upcoming`: waiting or held · `all`: the latest 100. */
+export async function listPayoutsAdmin(env: Environment, filter: string) {
+  const where = filter === 'held' ? `p.status = 'HELD'` : filter === 'upcoming' ? `p.status IN ('SCHEDULED', 'HELD')` : 'TRUE';
+  const rows = await query(
+    `SELECT ${ADMIN_COLUMNS} FROM payouts p JOIN wallets w ON w.id = p.wallet_id WHERE ${where}
+     ORDER BY ${filter === 'all' ? 'p.created_at DESC' : "p.release_at ASC NULLS LAST, p.created_at ASC"} LIMIT 100`,
+    [],
+    env
+  );
+  return rows.map(adminView);
+}
+
+/** How long payouts really took from the request to the end, over the last 30 days (what the admin watches to set the delays). */
+export const payoutTimings = (env: Environment) =>
+  query(
+    `SELECT reason, COUNT(*)::int AS n,
+            COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))), 0)::int AS avg_seconds,
+            COALESCE(MAX(EXTRACT(EPOCH FROM (updated_at - created_at))), 0)::int AS max_seconds
+     FROM payouts WHERE status = 'SUCCEEDED' AND created_at > NOW() - INTERVAL '30 days' GROUP BY reason`,
+    [],
+    env
+  );
+
+export async function getPayoutAdmin(env: Environment, id: string) {
+  const [row] = await query(`SELECT ${ADMIN_COLUMNS} FROM payouts p JOIN wallets w ON w.id = p.wallet_id WHERE p.id = $1`, [id], env);
+  return row ? adminView(row) : null;
+}
