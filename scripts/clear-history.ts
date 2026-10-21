@@ -25,8 +25,8 @@ const TABLES = [
   'wallet_activity',
   'collection_attempts',
   'payouts',
-  'holds',
   'checkout_sessions',
+  'holds',
   'ledger_entries',
   'transactions',
 ];
