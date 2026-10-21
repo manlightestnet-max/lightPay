@@ -4,7 +4,7 @@ import { CheckoutError, payWithWallet, publicView, startMobileMoney } from '../d
 import { ConnectError, findUserWallet, validateAuthorizeRequest } from '../db/connect.js';
 import { EscrowError } from '../db/escrow.js';
 import { pinOk, requireUser } from './me.js';
-import { accountPage, connectPage, consolePage, hostedCsp, lightpaySdk, payPage } from '../pages/hosted.js';
+import { accountPage, connectPage, consolePage, docsPage, hostedCsp, lightpaySdk, payPage } from '../pages/hosted.js';
 import { embedOriginFor } from '../db/developer.js';
 import { appLogo } from '../db/avatars.js';
 
@@ -155,6 +155,14 @@ export async function checkoutPublicRoutes(fastify: FastifyInstance) {
   fastify.get('/account/console', async (request, reply) =>
     html(reply, (nonce) => consolePage(nonce, (request.query as any).env === 'sandbox' ? 'sandbox' : 'production'))
   );
+
+  // Developer documentation (public): written against the API as it is, with this server's own addresses.
+  fastify.get('/docs', async (request, reply) => {
+    const here = `${request.headers['x-forwarded-proto'] || request.protocol}://${request.headers.host}`;
+    const api = (process.env.PUBLIC_BASE_URL || here).replace(/\/$/, '');
+    const checkout = (process.env.CHECKOUT_BASE_URL || api).replace(/\/$/, '');
+    return html(reply, (nonce) => docsPage({ nonce, api: new URL(api).origin, checkout: new URL(checkout).origin }));
+  });
 
   fastify.get('/connect', async (request, reply) =>
     html(reply, (nonce) => connectPage(nonce, (request.query as any).environment === 'sandbox' ? 'sandbox' : 'production'))

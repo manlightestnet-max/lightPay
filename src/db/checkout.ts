@@ -5,7 +5,7 @@ import { query } from './pool.js';
 import { Environment } from '../types/index.js';
 import { MOBILE_NETWORKS, MobileNetwork, NETWORK_NAMES, RailOperation, RailResult, networkOfMsisdn, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
 import { PayoutRow, sendPayout } from './payouts.js';
-import { lightpayFeeWallet } from './fee-wallet.js';
+import { lightpayRevenueWallet } from './fee-wallet.js';
 import { appName, failureOf, logActivity, logDirectSale, reasonFor, updateActivity } from './activity.js';
 import { appLogoUrl } from './avatars.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
@@ -119,8 +119,11 @@ export interface CreateSessionInput {
   currency: string;
   reference?: string;
   description?: string;
-  /** conn_… of a seller connected with the "payee" scope. */
-  payeeConnectionId: string;
+  /**
+   * conn_… of a seller connected with the "payee" scope (a marketplace paying its sellers). Absent: the app sells for
+   * itself and the money goes to its own merchant wallet, like any direct merchant (no commission then).
+   */
+  payeeConnectionId?: string;
   escrow: boolean;
   methods: CheckoutMethod[];
   returnUrl?: string;
@@ -150,7 +153,12 @@ export async function createSession(appId: string, environment: Environment, ide
   for (const [name, value] of [['return_url', input.returnUrl], ['cancel_url', input.cancelUrl]] as const) {
     if (value && !safeUrl(value)) throw new CheckoutError(`${name} must be an https URL`, 'INVALID_URL');
   }
-  const payee = await payeeWallet(appId, environment, input.payeeConnectionId);
+  if (!input.payeeConnectionId && input.feeAmount > 0n) {
+    throw new CheckoutError('fee_amount is a commission on a seller (payee): an app selling for itself keeps the whole amount', 'FEE_WITHOUT_PAYEE');
+  }
+  const payee = input.payeeConnectionId
+    ? await payeeWallet(appId, environment, input.payeeConnectionId)
+    : { wallet_id: await merchantWallet(appId, environment, input.currency), id: null };
 
   const id = newId(environment === 'sandbox' ? 'cs_test_' : 'cs_live_');
   const minutes = Math.min(Math.max(input.expiresInMinutes, 5), 24 * 60);
@@ -441,7 +449,8 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
   const amount = gross - lightpayFee; // what the payee / wallet receives
   const fee = BigInt(session.fee_amount);
   const inflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, attempt.currency);
-  const lightpayFees = lightpayFee > 0n ? await lightpayFeeWallet(env, attempt.currency) : null;
+  // A collection's fee is final once the money arrived: it goes straight to LightPay's main wallet.
+  const lightpayFees = lightpayFee > 0n ? await lightpayRevenueWallet(env, attempt.currency) : null;
   const feePosting = lightpayFees
     ? [{ walletId: lightpayFees, direction: 'CREDIT' as const, amount: lightpayFee, description: `Frais LightPay - ${attempt.id}` }]
     : [];

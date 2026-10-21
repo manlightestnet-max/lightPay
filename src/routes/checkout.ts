@@ -177,7 +177,7 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
     const idempotencyKey = idempotencyOf(request);
     if (!idempotencyKey) return reply.status(400).send({ error: 'Missing required header: Idempotency-Key' });
     const b = (request.body ?? {}) as any;
-    if (!b.amount || !b.payee) return reply.status(400).send({ error: 'Missing required fields: amount, payee (conn_… of a connected seller)' });
+    if (!b.amount) return reply.status(400).send({ error: 'Missing required field: amount' });
     try {
       const { session, duplicate } = await createSession(appId, environment, idempotencyKey, {
         amount: BigInt(b.amount),
@@ -185,8 +185,9 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
         currency: b.currency ?? 'XAF',
         reference: b.reference,
         description: b.description,
-        payeeConnectionId: String(b.payee),
-        escrow: b.escrow !== false,
+        // Without payee the app sells for itself: paid to its merchant wallet, and not held unless it asks for it.
+        payeeConnectionId: b.payee ? String(b.payee) : undefined,
+        escrow: b.escrow === undefined ? Boolean(b.payee) : b.escrow !== false,
         methods: (Array.isArray(b.methods) ? b.methods : ['mobile_money', 'lightpay_wallet']) as CheckoutMethod[],
         returnUrl: b.return_url,
         cancelUrl: b.cancel_url,

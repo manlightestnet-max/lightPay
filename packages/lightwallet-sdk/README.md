@@ -1,5 +1,7 @@
 # LightWallet SDK (TypeScript / JavaScript)
 
+> **La documentation à jour de l’API LightPay** (sessions de paiement, webhooks, séquestre, LightPay Connect) est sur la page `/docs` du serveur LightPay. Ce SDK historique (wallets en crédits internes) n’est plus le moyen recommandé pour encaisser.
+
 Universal client library for interacting with the **LightWallet Core Engine** (Double-Entry Ledger, Multi-Tenant internal Credits Wallet).
 
 Zero external dependencies. Works in **Node.js 18+**, **Bun**, **Deno**, and modern **Browsers / Web Apps**.

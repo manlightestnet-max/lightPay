@@ -237,6 +237,56 @@ export const CLIENT = (env: string) => `
     (children || []).forEach(function (c) { if (c === null || c === undefined || c === false) return; n.append(typeof c === 'string' ? document.createTextNode(c) : c); });
     return n;
   }
+  // One list component for the account, the console and the admin: rows open their item as a screen, and every column
+  // with more than one row can be sorted (asc, desc, back to the server's order), remembered per list while the page is open.
+  // A row with fixed: true (a total) always stays last. Sort keys: r.keys[i] if given, else the cell's text
+  // (numbers for .num columns, amounts and signs included).
+  const SORTS = {};
+  const sortKey = (c, num) => {
+    const t = c === null || c === undefined ? '' : typeof c === 'string' ? c : c.textContent || '';
+    if (!num) return t.trim().toLowerCase();
+    const digits = t.replace(/[^0-9,−-]/g, '').replace(',', '.');
+    const n = parseFloat(digits.replace('−', '-'));
+    return isNaN(n) ? -Infinity : n;
+  };
+  function table(host, cols, rows, emptyText, noHead) {
+    if (!rows.length) { host.replaceChildren(el('p', { class: 'empty', text: emptyText })); return; }
+    const id = host.id || '';
+    const state = SORTS[id] || null;
+    const order = rows.filter((r) => !r.fixed);
+    if (state && cols[state.col]) {
+      const num = /\\bnum\\b/.test(cols[state.col].cls || '');
+      const key = (r) => (r.keys && r.keys[state.col] !== undefined ? r.keys[state.col] : sortKey(r.cells[state.col], num));
+      order.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (state.dir === 'asc' ? 1 : -1); });
+    }
+    const sorted = order.concat(rows.filter((r) => r.fixed));
+    const canSort = !noHead && order.length > 1;
+    const head = el('tr', {}, cols.map((c, i) => {
+      const dir = state && state.col === i ? state.dir : null;
+      const th = el('th', { class: c.cls || '', 'aria-sort': dir ? (dir === 'asc' ? 'ascending' : 'descending') : null });
+      if (!canSort || c.sortable === false || !c.label) { th.textContent = c.label; return th; }
+      th.append(el('button', { class: 'th-sort', type: 'button', 'data-dir': dir, on: { click: () => {
+        const next = !dir ? 'asc' : dir === 'asc' ? 'desc' : null;
+        if (next) SORTS[id] = { col: i, dir: next }; else delete SORTS[id];
+        table(host, cols, rows, emptyText, noHead);
+      } } }, [c.label, el('span', { class: 'th-dir', 'aria-hidden': 'true', text: dir === 'asc' ? '↑' : dir === 'desc' ? '↓' : '↕' })]));
+      return th;
+    }));
+    const body = sorted.map((r) => {
+      const tr = el('tr', { 'data-href': r.href || null, 'aria-selected': r.selected ? 'true' : null }, r.cells.map((c, i) => {
+        const td = el('td', { class: cols[i].cls || '' });
+        if (c !== null && c !== undefined) td.append(typeof c === 'string' ? document.createTextNode(c) : c);
+        return td;
+      }));
+      if (r.href) {
+        tr.tabIndex = 0;
+        tr.addEventListener('click', () => { location.hash = r.href; });
+        tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.hash = r.href; });
+      }
+      return tr;
+    });
+    host.replaceChildren(el('div', { class: 'tbl-wrap' }, [el('table', { class: 'tbl' }, [noHead ? null : el('thead', {}, [head]), el('tbody', {}, body)])]));
+  }
   const initials = (s) => String(s || '?').replace(/@.*/, '').split(/[\\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
   // A face: the person's photo or the app's logo when there is one, initials otherwise (and when
   // the image does not load).

@@ -18,6 +18,7 @@ import {
   mainOverview,
   overview,
   rechargeMain,
+  recordProviderBalance,
   reserves,
   sendFromMain,
 } from '../db/admin-console.js';
@@ -43,7 +44,8 @@ import { sendTest } from '../notify/index.js';
  *   GET  /admin                                 the console page (on ADMIN_BASE_URL's host when set)
  *   GET  /v1/admin-console/me                   am I an admin?
  *   GET  /v1/admin-console/overview?period=     revenue, volume, counts, 30-day series, ledger check
- *   GET  /v1/admin-console/reserves             per-provider reserves + client money coverage
+ *   GET  /v1/admin-console/reserves             per-provider reserves (expected at the provider) + client money coverage
+ *   POST /v1/admin-console/reserves/checks      { provider, balance, note }   the real balance read at a provider
  *   GET  /v1/admin-console/users[?q=&offset=]   LightPay users · /users/:walletId
  *   GET  /v1/admin-console/apps                 apps · /apps/:id (attached users)
  *   GET  /v1/admin-console/transactions[?type=&app=&q=&before=] · /transactions/:id (ledger entries)
@@ -160,6 +162,17 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
       });
 
       api.get('/reserves', async (request) => ({ status: 'success', reserves: await reserves(envOf(request)) }));
+      api.post('/reserves/checks', async (request, reply) => {
+        const env = envOf(request);
+        const admin = adminOf(request);
+        try {
+          const check = await recordProviderBalance(env, admin, (request.body ?? {}) as any);
+          await auditAction(env, admin, 'PROVIDER_BALANCE_CHECK', null, null, { provider: check.provider, balance: check.balance, note: check.note });
+          return { status: 'success', check, reserves: await reserves(env) };
+        } catch (e) {
+          return fail(reply, e);
+        }
+      });
 
       api.get('/users', async (request) => {
         const q = request.query as any;

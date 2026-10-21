@@ -3,7 +3,7 @@ import { query } from './pool.js';
 import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
 import { MobileNetwork, NETWORK_NAMES, networkOfMsisdn, providerByName, providerFor, RailOperation, RailResult } from '../payments/mobile-money.js';
-import { lightpayFeeWallet } from './fee-wallet.js';
+import { lightpayFeeWallet, settlePayoutFee } from './fee-wallet.js';
 import { isPersonWallet, logActivity, maskPhone, reasonFor, updateActivity } from './activity.js';
 import { controlSettings } from '../payments/control-settings.js';
 import { withdrawalsClosed } from '../security/lockdown.js';
@@ -15,7 +15,8 @@ import { withdrawalsClosed } from '../security/lockdown.js';
  *        wallet --total--> SYSTEM outflow (amount + operator fee) + LIGHTPAY_FEES (LightPay fee)
  *      the provider sends exactly `amount`; its fee is paid on top from our provider balance
  *   2. payout row PENDING, then the provider is asked (idempotent on our payout id)
- *   3. SUCCEEDED -> done · FAILED -> the exact mirror is booked: the total comes back (once)
+ *   3. SUCCEEDED -> the LightPay fee leaves LIGHTPAY_FEES (pending) for the main wallet (once)
+ *      FAILED    -> the exact mirror is booked: the total comes back (once)
  *   PENDING payouts are resolved by the watcher, the provider webhook and the sweeper.
  */
 
@@ -201,6 +202,10 @@ async function applyResult(p: PayoutRow, r: RailResult): Promise<PayoutRow> {
     [p.id, r.status, r.failureCode ?? null, r.providerReference ?? null],
     env
   );
+  if (row?.status === 'SUCCEEDED') {
+    // Confirmed: the fee is LightPay's for good. A failure here is caught up by scripts/settle-fees-to-main.ts.
+    await settlePayoutFee(row).catch((err) => console.error('[PAYOUT] fee not moved to the main wallet yet', row.id, err?.message));
+  }
   if (row) {
     await updateActivity(env, 'payout', p.id, {
       status: r.status === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',

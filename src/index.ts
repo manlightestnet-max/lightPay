@@ -163,6 +163,7 @@ server.addHook('onRequest', async (request, reply) => {
     url === '/account' ||
     url === '/account/console' ||
     url === '/connect' ||
+    url === '/docs' ||
     url === '/v1/me' ||
     url.startsWith('/v1/me/') ||
     url.startsWith('/__/auth/') ||
@@ -211,6 +212,7 @@ server.addHook('onRequest', async (request, reply) => {
     url === '/account' ||
     url === '/account/console' ||
     url === '/connect' ||
+    url === '/docs' ||
     url === '/v1/me' ||
     url.startsWith('/v1/me/') ||
     // Firebase Auth redirect helper routes (same origin proxying to firebaseapp.com)

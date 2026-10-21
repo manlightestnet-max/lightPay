@@ -72,6 +72,7 @@ export const consolePage = (nonce: string, env: string) => {
     ${navItem('apps', 'apps', 'apps', 'Apps connectées', '<span class="nav-count" id="navConnCount" hidden></span>')}
     <div class="nav-label">Développeurs</div>
     ${navItem('dev', 'dev', 'code', 'Mes apps')}
+    <a class="nav-item" href="/docs" target="_blank" rel="noopener">${iconSvg('external')}<span>Documentation</span></a>
     <div id="navDevApps"></div>
     <div class="nav-label">Compte</div>
     ${navItem('security', 'security', 'shield', 'Sécurité et compte')}
@@ -392,24 +393,7 @@ ${page('dev-app', 'App', `
     return el('span', { class: 'tip' }, [el('button', { type: 'button', 'aria-label': 'Aide', 'aria-describedby': id }, [icon('info')]), el('span', { class: 'tip-text', role: 'tooltip', id: id, text: text })]);
   }
   /** Table with small-caps headers; rows with href are clickable, the selected one is marked. */
-  function table(host, cols, rows, emptyText, noHead) {
-    if (!rows.length) { host.replaceChildren(el('p', { class: 'empty', text: emptyText })); return; }
-    const head = el('tr', {}, cols.map((c) => el('th', { class: c.cls || '', text: c.label })));
-    const body = rows.map((r) => {
-      const tr = el('tr', { 'data-href': r.href || null, 'aria-selected': r.selected ? 'true' : null }, r.cells.map((c, i) => {
-        const td = el('td', { class: cols[i].cls || '' });
-        if (c !== null && c !== undefined) td.append(typeof c === 'string' ? document.createTextNode(c) : c);
-        return td;
-      }));
-      if (r.href) {
-        tr.tabIndex = 0;
-        tr.addEventListener('click', () => { location.hash = r.href; });
-        tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.hash = r.href; });
-      }
-      return tr;
-    });
-    host.replaceChildren(el('div', { class: 'tbl-wrap' }, [el('table', { class: 'tbl' }, [noHead ? null : el('thead', {}, [head]), el('tbody', {}, body)])]));
-  }
+  // Lists: table() of the shared client (sortable columns).
   function cellMain(iconNode, title, sub, subClass) {
     return el('span', { class: 'cell' }, [
       iconNode,

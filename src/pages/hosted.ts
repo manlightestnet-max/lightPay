@@ -10,3 +10,4 @@ export { connectPage } from './hosted/connect.js';
 export { payPage } from './hosted/pay.js';
 export { lightpaySdk } from './hosted/sdk.js';
 export { adminPage } from './hosted/admin-page.js';
+export { docsPage } from './hosted/docs.js';

@@ -34,8 +34,8 @@ import { AIRTEL_PNG, MARK_PNG, MTN_PNG } from './brand.js';
  * Utilities: .muted .small .mt .mt-lg .center .num
  */
 export const CSS = `
-/* Colours: Salacope's tokens are the source of truth (src/styles/tokens.css there).
-   Night by default, like Salacope; day with data-theme="light". */
+/* Colours: LightPay's own tokens, defined here and nowhere else (LightPay serves any app and depends on none).
+   Night by default; day with data-theme="light"; an app opening the payment passes its theme with ?theme=. */
 :root {
   color-scheme: dark;
   --mark: url("${MARK_PNG}"); --mtn: url("${MTN_PNG}"); --airtel: url("${AIRTEL_PNG}");

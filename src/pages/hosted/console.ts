@@ -72,6 +72,14 @@ html.console-page .foot { display: none; }
 .btn.btn-sm { width: auto; min-height: 40px; padding: 0 16px; font-size: 14px; }
 .btn.btn-sm svg { width: 17px; height: 17px; }
 
+/* ---------- sortable list headers ---------- */
+.th-sort { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; border-radius: 6px; }
+.th-sort:hover, .th-sort[data-dir] { color: var(--text); }
+.th-sort:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.th-dir { font-size: 10px; opacity: .55; }
+.th-sort[data-dir] .th-dir { opacity: 1; color: var(--accent-ink); }
+th.num .th-sort { flex-direction: row-reverse; }
+
 /* ---------- tabs (sub-pages) ---------- */
 .tabs { display: flex; gap: 6px; margin: -6px 0 22px; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }

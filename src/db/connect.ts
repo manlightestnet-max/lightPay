@@ -348,11 +348,21 @@ async function chargeUnjournaled(appId: string, environment: Environment, connec
   if (input.amount > BigInt(payer.charge_limit)) {
     throw new ConnectError(`Above the limit this person allowed (${payer.charge_limit}). Use a checkout session instead.`, 'ABOVE_CHARGE_LIMIT', 403);
   }
-  if (!input.payeeConnectionId) throw new ConnectError('payee (a connected seller) is required', 'PAYEE_REQUIRED');
-  const payee = await payeeWallet(appId, environment, input.payeeConnectionId);
   const [payerWallet] = await query(`SELECT currency FROM wallets WHERE id = $1`, [payer.wallet_id], environment);
   const currency = payerWallet?.currency ?? DEFAULT_CURRENCY;
-  const metadata = { ...(input.metadata ?? {}), connection: payer.id, payee_connection: payee.id };
+  const [merchant] = await query(
+    `INSERT INTO wallets (app_id, account_id, account_type, currency, environment, metadata)
+     VALUES ($1, $1, 'MERCHANT', $2, $3, '{"role":"merchant_root"}')
+     ON CONFLICT (app_id, account_id, currency, environment) DO UPDATE SET updated_at = NOW() RETURNING id`,
+    [appId, currency, environment],
+    environment
+  );
+  // Without payee the app sells for itself: the money goes to its own merchant wallet, without commission.
+  if (!input.payeeConnectionId && input.feeAmount > 0n) {
+    throw new ConnectError('fee_amount is a commission on a seller (payee): an app selling for itself keeps the whole amount', 'FEE_WITHOUT_PAYEE');
+  }
+  const payee = input.payeeConnectionId ? await payeeWallet(appId, environment, input.payeeConnectionId) : { id: null, wallet_id: merchant.id as string };
+  const metadata = { ...(input.metadata ?? {}), connection: payer.id, ...(payee.id ? { payee_connection: payee.id } : { direct: true }) };
 
   if (input.escrow) {
     return Escrow.create({
@@ -361,13 +371,6 @@ async function chargeUnjournaled(appId: string, environment: Environment, connec
     });
   }
   const fee = input.feeAmount;
-  const [merchant] = await query(
-    `INSERT INTO wallets (app_id, account_id, account_type, currency, environment, metadata)
-     VALUES ($1, $1, 'MERCHANT', $2, $3, '{"role":"merchant_root"}')
-     ON CONFLICT (app_id, account_id, currency, environment) DO UPDATE SET updated_at = NOW() RETURNING id`,
-    [appId, currency, environment],
-    environment
-  );
   const result = await LedgerEngine.executeTransaction({
     appId, environment, idempotencyKey, type: 'PAYMENT', amount: input.amount, feeAmount: fee, currency, reference: input.reference, metadata,
     postings: [
@@ -376,8 +379,8 @@ async function chargeUnjournaled(appId: string, environment: Environment, connec
       ...(fee > 0n ? [{ walletId: merchant.id, direction: 'CREDIT' as const, amount: fee, description: 'Platform fee' }] : []),
     ],
   });
-  // The seller sees the sale (and the app's commission) on their statement.
-  await logDirectSale(environment, {
+  // The seller sees the sale (and the app's commission) on their statement (an app selling for itself has no seller).
+  if (payee.id) await logDirectSale(environment, {
     payeeWalletId: payee.wallet_id, appId, amount: input.amount, fee, currency,
     refType: 'charge_sale', refId: `${appId}:${idempotencyKey}`, reference: input.reference, metadata: { description: input.description },
   });

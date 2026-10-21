@@ -7,7 +7,8 @@ import { Environment } from '../types/index.js';
 
 /**
  * LightPay admin console (owner only). Reads the ledger as it is, never rewrites it:
- *   - revenue: what reached LightPay's fee wallet (deposit, payment and withdrawal fees);
+ *   - revenue: LightPay's fees (deposit, payment, withdrawal), credited to the main wallet; a payout's fee waits in
+ *     LIGHTPAY_FEES until the operator confirms the send (./fee-wallet.ts);
  *   - provider reserves: per provider, money collected minus money paid out through the
  *     transit account, i.e. what should be sitting at that provider (to compare with its balance);
  *   - wallet main (SYSTEM_MAIN_TREASURY): the owner's own funds, separate from client money.
@@ -38,7 +39,7 @@ const since = (p: Period) =>
 const SYSTEM_LABELS: Record<string, string> = {
   SYSTEM_GATEWAY_INFLOW: 'Réserve providers',
   SYSTEM_MAIN_TREASURY: 'Wallet main',
-  LIGHTPAY_FEES: 'Revenus LightPay',
+  LIGHTPAY_FEES: 'Frais en attente',
   SANDBOX_FAUCET_ISSUE: 'Émission du faucet',
 };
 /** The test ledger names the main wallet after what it is there: the faucet. */
@@ -93,7 +94,7 @@ export async function overview(env: Environment, period: Period) {
               COALESCE(SUM(CASE WHEN le.direction = 'CREDIT' THEN le.amount ELSE -le.amount END), 0)::text AS amount,
               COUNT(*) FILTER (WHERE le.direction = 'CREDIT')::int AS count
        FROM ledger_entries le
-       JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'LIGHTPAY_FEES' AND w.currency = $1
+       JOIN wallets w ON w.id = le.wallet_id AND w.account_id IN ('LIGHTPAY_FEES', 'SYSTEM_MAIN_TREASURY') AND w.currency = $1 AND le.description LIKE 'Frais LightPay%'
        JOIN transactions t ON t.id = le.transaction_id AND t.status = 'SUCCESS'
        WHERE le.created_at >= ${from} AND ${NOT_CANCELLED}
        GROUP BY 1`,
@@ -131,7 +132,7 @@ export async function overview(env: Environment, period: Period) {
       `SELECT to_char(d, 'YYYY-MM-DD') AS day,
               (SELECT COUNT(*) FROM transactions t WHERE t.status = 'SUCCESS' AND t.created_at >= d AND t.created_at < d + INTERVAL '1 day' AND ${NOT_CANCELLED})::int AS transactions,
               (SELECT COALESCE(SUM(CASE WHEN le.direction = 'CREDIT' THEN le.amount ELSE -le.amount END), 0)
-                 FROM ledger_entries le JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'LIGHTPAY_FEES' AND w.currency = $1
+                 FROM ledger_entries le JOIN wallets w ON w.id = le.wallet_id AND w.account_id IN ('LIGHTPAY_FEES', 'SYSTEM_MAIN_TREASURY') AND w.currency = $1 AND le.description LIKE 'Frais LightPay%'
                  JOIN transactions t ON t.id = le.transaction_id
                 WHERE le.created_at >= d AND le.created_at < d + INTERVAL '1 day' AND ${NOT_CANCELLED})::text AS revenue
        FROM generate_series(date_trunc('day', NOW()) - INTERVAL '29 days', date_trunc('day', NOW()), INTERVAL '1 day') AS d
@@ -217,23 +218,50 @@ export async function providerStats(env: Environment, period: Period) {
 // ---------------------------------------------------------------- provider reserves
 
 /**
- * Per provider: collected (in), paid out (out), and the reserve that should be at that provider.
- * Also the check that all client money is covered: reserves = every other wallet together.
+ * Which provider moved the money of a transit entry: the transaction says so, else its payout (a failed payout's give-back
+ * carries only the payout id), else its collection attempt. Old entries with neither stay "autre".
+ */
+const ENTRY_PROVIDER = `upper(COALESCE(NULLIF(t.metadata->>'provider', ''),
+    (SELECT p.provider FROM payouts p WHERE p.id = COALESCE(t.metadata->>'payout', t.metadata->>'payout_id')),
+    (SELECT a.provider FROM collection_attempts a WHERE a.id = t.metadata->>'attempt'),
+    'autre'))`;
+
+/**
+ * Per provider, what should be sitting at that provider, to compare with its real balance:
+ *   collected   money brought in (amount + LightPay fee), refused payouts and their give-backs left out (nothing moved);
+ *   sent        payouts booked (amount + operator fee);
+ *   waiting     booked payouts not sent yet (programmed, held, asked): still at the provider;
+ *   expected    collected − sent + waiting = the real balance the provider should show;
+ *   checked     the last balance the owner read at the provider (Contrôle des réserves), and the gap with expected.
+ * And the check that all client money is covered: the transit account equals every other wallet together.
  */
 export async function reserves(env: Environment) {
-  const [perProvider, balances] = await Promise.all([
+  const [perProvider, waitingRows, checks, balances] = await Promise.all([
     query(
-      `SELECT upper(COALESCE(NULLIF(t.metadata->>'provider', ''), 'autre')) AS provider,
+      `SELECT ${ENTRY_PROVIDER} AS provider,
               COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'DEBIT'), 0)::text AS money_in,
               COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'CREDIT'), 0)::text AS money_out,
               COUNT(*)::int AS movements, MAX(le.created_at) AS last_at
        FROM ledger_entries le
        JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'SYSTEM_GATEWAY_INFLOW' AND w.currency = $1
        JOIN transactions t ON t.id = le.transaction_id
+       WHERE ${NOT_CANCELLED}
        GROUP BY 1 ORDER BY 1`,
       [CURRENCY],
       env
     ),
+    query(
+      `SELECT upper(provider) AS provider, COUNT(*)::int AS count, COALESCE(SUM(amount + COALESCE(operator_fee, 0)), 0)::text AS amount
+       FROM payouts WHERE currency = $1 AND status IN ('SCHEDULED', 'HELD', 'PENDING') GROUP BY 1`,
+      [CURRENCY],
+      env
+    ),
+    query(
+      `SELECT DISTINCT ON (provider) upper(provider) AS provider, balance::text, note, checked_by, checked_at
+       FROM provider_balance_checks WHERE environment = $1 AND currency = $2 ORDER BY provider, checked_at DESC`,
+      [env, CURRENCY],
+      env
+    ).catch(() => [] as any[]),
     query(
       `SELECT CASE
                 WHEN account_id = 'SYSTEM_GATEWAY_INFLOW' THEN 'reserve'
@@ -256,10 +284,32 @@ export async function reserves(env: Environment) {
   const reserve = -total('reserve');
   // Test money issued by the faucet came in without a provider: it is set aside from the comparison.
   const covered = ['main', 'revenue', 'users', 'guests', 'apps', 'other', 'issued'].reduce((s, k) => s + total(k), 0n);
+  const names = [...new Set([...perProvider.map((p) => p.provider), ...waitingRows.map((w) => w.provider), ...checks.map((c: any) => c.provider)])].sort();
+  const providers = names.map((provider) => {
+    const p = perProvider.find((x) => x.provider === provider) ?? { money_in: '0', money_out: '0', movements: 0, last_at: null };
+    const w = waitingRows.find((x) => x.provider === provider);
+    const c = checks.find((x: any) => x.provider === provider) as any;
+    const waiting = BigInt(w?.amount ?? 0);
+    const reserveLedger = BigInt(p.money_in) - BigInt(p.money_out);
+    const expected = reserveLedger + waiting;
+    return {
+      provider,
+      money_in: p.money_in,
+      money_out: p.money_out,
+      movements: p.movements,
+      last_at: p.last_at,
+      reserve: reserveLedger.toString(),
+      waiting: waiting.toString(),
+      waiting_count: w?.count ?? 0,
+      expected: expected.toString(),
+      checked: c ? { balance: c.balance, note: c.note, by: c.checked_by, at: c.checked_at, gap: (BigInt(c.balance) - expected).toString() } : null,
+    };
+  });
   return {
     currency: CURRENCY,
-    providers: perProvider.map((p) => ({ ...p, reserve: (BigInt(p.money_in) - BigInt(p.money_out)).toString() })),
+    providers,
     reserve_total: reserve.toString(),
+    expected_total: providers.reduce((s, p) => s + BigInt(p.expected), 0n).toString(),
     held: {
       main: total('main').toString(),
       revenue: total('revenue').toString(),
@@ -274,6 +324,22 @@ export async function reserves(env: Environment) {
     covered: covered.toString(),
     balanced: covered === reserve,
   };
+}
+
+/** The owner read the real balance at a provider (its dashboard): kept to compare with what LightPay expects there. */
+export async function recordProviderBalance(env: Environment, admin: AdminUser, input: { provider: unknown; balance: unknown; note?: unknown }) {
+  const provider = String(input.provider ?? '').trim().toLowerCase();
+  if (!/^[a-z0-9_-]{2,30}$/.test(provider)) throw new AdminError('Fournisseur invalide.', 'BAD_PROVIDER');
+  const raw = String(input.balance ?? '').replace(/[\s\u00a0\u202f]/g, '');
+  if (!/^-?\d{1,15}$/.test(raw)) throw new AdminError('Solde en FCFA entiers.', 'BAD_BALANCE');
+  const note = String(input.note ?? '').trim().slice(0, 200) || null;
+  const [row] = await query(
+    `INSERT INTO provider_balance_checks (environment, provider, currency, balance, note, checked_by)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, provider, balance::text, note, checked_by, checked_at`,
+    [env, provider, CURRENCY, raw, note, admin.email ?? admin.uid],
+    env
+  );
+  return row;
 }
 
 // ---------------------------------------------------------------- users

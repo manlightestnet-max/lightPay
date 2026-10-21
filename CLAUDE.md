@@ -6,31 +6,57 @@ Pages hébergées en HTML/JS sans framework : `src/pages/hosted/*` (compte, cons
 
 ## Règles d’interface (à ne jamais enfreindre)
 
-- **Toute liste est un scaffold.** L’en-tête de l’écran (retour, titre, actions) et la barre d’outils
-  de la liste (recherche, filtres, onglets) sont épinglés et **ne défilent jamais** ; seules les lignes
-  défilent, la ligne d’en-tête des colonnes reste collée en haut.
-- **Un élément s’ouvre en écran à part** (`#/users/<id>` → écran `user`) avec un lien retour,
-  comme une app Android ou le back-office Salacope (`Page` avec `back` et `toolbar`). Jamais de
-  panneau de détail coincé à côté de la liste. Au retour, la liste garde sa position.
-  Admin et console : helper `page(screen, title, inner, { toolbar, back, actions })`, styles
-  `.scaffold`, `.page-top`, `.page-toolbar`, `.page-scroll`, `.list-card` dans `console.ts`.
-- **Argent : un seul code.** Dépôt, Envoyer, Retirer et leurs écrans de résultat sont dans
-  `flows.ts`, partagés par le compte et la console. Formulaire → bottom sheet de confirmation →
-  écran d’attente → résultat. Le formulaire n’affiche **aucune erreur** : le bouton reste grisé
-  tant que ce n’est pas complet ; un refus s’affiche sur l’écran de résultat. Le bouton du sheet
-  se verrouille au premier appui (anti double/triple appui) ; chaque opération a sa clé d’idempotence.
+LightPay est un produit à part : il sert n’importe quelle app et n’en nomme aucune (ni texte, ni logo, ni couleur
+d’une app précise). Deux interfaces, deux registres :
+**le compte** (`/account`, l’app Android) est simple et grand public ; **la console et l’admin** sont un back-office
+SaaS (barre latérale, écrans en scaffold). La console ne s’ouvre que depuis le « Mode avancé » du compte.
+
+### Écrans et listes (console, admin)
+
+- **Scaffold.** L’en-tête de l’écran (retour, titre, actions) et la barre d’outils (recherche, filtres, onglets)
+  sont épinglés et **ne défilent jamais** ; seul le contenu défile. Helper `page(screen, title, inner,
+  { toolbar, back, actions })`, styles `.scaffold`, `.page-top`, `.page-toolbar`, `.page-scroll`, `.list-card`
+  (`console.ts`).
+- **Une seule liste : `table()`** du client partagé (`client.ts`), jamais une copie locale. La ligne d’en-tête des
+  colonnes reste collée ; chaque colonne se **trie** (croissant, décroissant, retour à l’ordre du serveur), le tri
+  est gardé par liste pendant la visite ; une ligne de total (`fixed: true`) reste en bas. Filtres en pastilles dans
+  la barre d’outils ; « Afficher plus » ajoute la page suivante sans perdre la position.
+- **Suivi.** Chaque élément qui avance (envoi, demande, litige) montre son état en pastille (en attente, retenu,
+  envoyé, échoué…) et l’heure de son dernier changement ; une liste qui a des éléments à traiter l’affiche dans la
+  barre latérale (compteur).
+- **Un élément s’ouvre en écran à part** (`#/users/<id>` → écran `user`) avec un lien retour, comme une app Android.
+  Jamais de panneau de détail coincé à côté de la liste. Au retour, la liste garde sa position et son tri.
+
+### Chargement
+
+- **Shimmer seulement pour la toute première charge** d’une donnée jamais vue. Revenir sur un écran ou une liste
+  déjà vus réaffiche tout de suite le dernier état connu, puis vérifie auprès du serveur.
+- Ouvrir le détail d’un **autre** élément montre le shimmer, jamais les données de l’élément précédent.
+
+### Argent
+
+- **Un seul code.** Dépôt, Envoyer, Retirer et leurs écrans de résultat sont dans `flows.ts`, partagés par le
+  compte et la console. Formulaire → bottom sheet de confirmation → écran d’attente → résultat.
+- **Formulaires d’argent des personnes** (compte, console) : aucune erreur affichée, le bouton reste grisé tant que
+  ce n’est pas complet ; un refus s’affiche sur l’écran de résultat. Le bouton du sheet se verrouille au premier
+  appui ; chaque opération a sa clé d’idempotence.
+- **Formulaires de l’admin** (réglages, envoi depuis le main, relevé de solde) : le message s’affiche sous le
+  formulaire (`say(…, 'err' | 'ok')`), parce que l’admin doit savoir tout de suite ce qui ne va pas.
 - **Le numéro choisit l’opérateur** (06 MTN, 05/04 Airtel) ; le serveur refuse un mélange.
-- **Shimmer partout où l’on attend** une réponse ; un détail rouvert pour un autre élément montre
-  le shimmer, jamais les données précédentes.
-- **Mouvement** : avancer glisse depuis la droite, revenir depuis la gauche, les onglets en fondu ;
-  désactivé avec `prefers-reduced-motion`.
-- **Montants** : une sortie affiche ce qui a quitté le wallet, frais compris ; une entrée affiche
-  ce qui est arrivé, jamais ce que le téléphone a payé avec les frais.
-- **Les fournisseurs (SasPay, pawaPay) ne se montrent jamais** aux personnes ni aux apps :
-  seulement dans l’admin.
-- **Couleurs** : celles de Salacope (`src/styles/tokens.css` du dépôt Salacope) sont la référence ;
-  nuit par défaut, jour sur demande ; le thème d’une app qui ouvre le paiement est transmis (`?theme=`).
-- Sobre et utile : une information par bloc, pas de décoration.
+- **Montants** : une sortie affiche ce qui a quitté le wallet, frais compris ; une entrée affiche ce qui est arrivé,
+  jamais ce que le téléphone a payé avec les frais.
+- **Les fournisseurs (SasPay, pawaPay) ne se montrent jamais** aux personnes ni aux apps : seulement dans l’admin.
+
+### Style
+
+- **Couleurs** : les tokens de LightPay, définis dans `src/pages/hosted/design.ts` et nulle part ailleurs (jamais
+  de couleur en dur dans un écran) ; nuit par défaut, jour sur demande ; une app qui ouvre le paiement transmet son
+  thème (`?theme=`).
+- Sobre et utile : une information par bloc, la hiérarchie par la taille et la graisse, pas de décoration.
+- **Mouvement** : avancer glisse depuis la droite, revenir depuis la gauche, les onglets en fondu ; désactivé avec
+  `prefers-reduced-motion`.
+- **Documentation** : `/docs` (`src/pages/hosted/docs.ts`), publique, écrite d’après l’API telle qu’elle est ; toute
+  route publique qui change change aussi sa page.
 
 ## Connexion
 
@@ -40,6 +66,15 @@ Google seulement (Firebase Auth, redirection dans le même onglet ; fenêtre seu
 
 ## Frais, fournisseurs, argent
 
+- **Revenus de LightPay → wallet main** (`src/db/fee-wallet.ts`) : les frais de dépôt et de paiement y vont
+  directement ; les frais d’un retrait ou d’un remboursement attendent dans `LIGHTPAY_FEES` (« frais en attente »)
+  tant que l’opérateur n’a pas confirmé l’envoi, puis passent au main (un envoi refusé rend ses frais). Chaque frais
+  est décrit « Frais LightPay - … » : c’est ainsi que l’admin compte les revenus, où qu’ils soient.
+- **Réserves par fournisseur** (admin → Réserves) : ce qui doit être chez lui = encaissé − versé + envois pas encore
+  partis ; un envoi échoué et sa restitution ne comptent pas (rien n’a bougé chez lui). L’admin relève le vrai solde
+  affiché par le fournisseur (`provider_balance_checks`, une note, aucun argent ne bouge) : l’écart s’affiche.
+- **Marchand direct** : une session de paiement ou un débit sans `payee` paie le wallet de l’app elle-même, sans
+  commission (`fee_amount` exige un vendeur). Le séquestre est alors facultatif (désactivé par défaut).
 - Frais et minimums : **uniquement depuis l’admin** (« Frais et minimums »), par environnement ;
   rien en dur. Formules dans `src/payments/fees.ts`.
 - **Délais, limites et frein d’urgence : uniquement depuis l’admin** (« Contrôle »), rien en dur : délai avant un retrait et avant un

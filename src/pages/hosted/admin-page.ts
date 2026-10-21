@@ -46,6 +46,10 @@ const ADMIN_CSS = `
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .check svg { width: 18px; height: 18px; flex-shrink: 0; }
 .check.ok { color: var(--accent-ink); } .check.err { color: var(--danger); }
+.ok-text { color: var(--accent-ink); } .err-text { color: var(--danger); }
+.inline-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; align-items: end; }
+.inline-form .msg, .inline-form .btn { grid-column: 1 / -1; justify-self: start; }
+@media (max-width: 720px) { .inline-form { grid-template-columns: 1fr; } }
 .share { white-space: pre-wrap; font-size: 14px; line-height: 1.6; padding: 14px 16px; border-radius: 12px; background: var(--raised); }
 .search { width: 100%; max-width: 320px; height: 36px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--card); padding: 0 12px; font-size: 14px; }
 .search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -206,8 +210,16 @@ ${page('home', 'Revenus et activité', `
 ${page('reserves', 'Réserves providers', `
   ${panel('Ce qui doit être chez chaque provider', '<div id="resTable"></div>', {
     flush: true,
-    foot: 'Encaissé moins versé à travers ce provider (frais de l’opérateur compris). Comparez chaque ligne au solde affiché par le provider : un écart signale un problème.',
+    foot: 'Attendu = encaissé − versé + envois pas encore partis (l’argent est encore chez le provider). Relevez le solde affiché par le provider : l’écart se calcule tout seul. Un attendu négatif veut dire que ce provider a envoyé plus qu’il n’a encaissé : de l’argent y a été avancé en dehors de LightPay.',
   })}
+  ${panel('Relever un solde', `
+    <form id="checkForm" class="inline-form" novalidate>
+      <div class="field"><label for="checkProvider">Provider</label><select id="checkProvider"></select></div>
+      <div class="field"><label for="checkBalance">Solde affiché par le provider (FCFA)</label><input id="checkBalance" data-amount inputmode="numeric" autocomplete="off"></div>
+      <div class="field"><label for="checkNote">Note (facultatif)</label><input id="checkNote" maxlength="200" autocomplete="off"></div>
+      <div class="msg" id="checkMsg" role="status" aria-live="polite"></div>
+      <button class="btn btn-secondary btn-sm mt" type="submit" id="checkGo">${iconSvg('check')}Enregistrer le relevé</button>
+    </form>`, { foot: 'Une simple note à côté du grand livre : aucun argent ne bouge.' })}
   <div class="grid-2">
     ${panel('À qui appartient cet argent', '<div class="rows" id="resHeld"></div>')}
     ${panel('Couverture', '<div id="resCheck"></div><p class="small muted mt">Chaque franc dans un wallet est entré par un provider : la réserve totale doit être égale à la somme de tous les wallets.</p>')}
@@ -242,7 +254,7 @@ ${page('move', 'Mouvement', '<div class="stack" id="moveDetail"></div>', '', { b
 
 ${page('main', '<span data-real>Wallet main</span><span data-test hidden>Faucet</span>', `
   ${panel('<span data-real>Votre argent</span><span data-test hidden>Réserve du faucet</span>', `<div class="well">${stat('mainBalance', 'Disponible', 'mainHint', true)}</div>
-    <p class="small muted mt" data-real>Vos fonds propres, séparés de l’argent des clients. Il ne peut jamais descendre sous zéro et se recharge uniquement par un vrai dépôt mobile money. Aucun retrait possible depuis l’administration.</p>
+    <p class="small muted mt" data-real>Vos fonds propres, séparés de l’argent des clients : les revenus de LightPay (frais de dépôt, de paiement et de retrait) y arrivent directement, et vous pouvez le recharger par un vrai dépôt mobile money. Il ne peut jamais descendre sous zéro. Aucun retrait possible depuis l’administration.</p>
     <p class="small muted mt" data-test hidden>L’argent que vous distribuez aux testeurs. Vous l’émettez ici, puis vous l’envoyez à un compte par son e-mail. Il ne peut jamais descendre sous zéro.</p>`)}
   <div class="grid-2">
     ${panel('Envoyer à un utilisateur', `
@@ -421,20 +433,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   document.querySelectorAll('[data-test]').forEach((n) => { n.hidden = !TEST; });
   const MAIN = TEST ? 'Faucet' : 'Wallet main';
 
-  function table(host, cols, list, emptyText) {
-    if (!list.length) { host.replaceChildren(el('p', { class: 'empty', text: emptyText })); return; }
-    const head = el('tr', {}, cols.map((c) => el('th', { class: c.cls || '', text: c.label })));
-    const body = list.map((r) => {
-      const tr = el('tr', { 'data-href': r.href || null, 'aria-selected': r.selected ? 'true' : null }, r.cells.map((c, i) => {
-        const td = el('td', { class: cols[i].cls || '' });
-        if (c !== null && c !== undefined) td.append(typeof c === 'string' ? document.createTextNode(c) : c);
-        return td;
-      }));
-      if (r.href) { tr.tabIndex = 0; tr.addEventListener('click', () => { location.hash = r.href; }); tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.hash = r.href; }); }
-      return tr;
-    });
-    host.replaceChildren(el('div', { class: 'tbl-wrap' }, [el('table', { class: 'tbl' }, [el('thead', {}, [head]), el('tbody', {}, body)])]));
-  }
+  // Lists: table() of the shared client (sortable columns).
   const cell = (title, sub) => el('span', { class: 'cell-main' }, [el('span', { class: 'cell-title', text: title }), sub ? el('span', { class: 'cell-sub', text: sub }) : null]);
   const detailPanel = (title, children) => el('section', { class: 'panel' }, [el('div', { class: 'panel-head' }, [el('h2', { class: 'panel-title', text: title })]), el('div', { class: 'panel-body' }, children)]);
   const flushPanel = (title, child) => el('section', { class: 'panel' }, [el('div', { class: 'panel-head' }, [el('h2', { class: 'panel-title', text: title })]), el('div', { class: 'panel-flush' }, [child])]);
@@ -541,17 +540,45 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     crumbs('Réserves providers');
     await load('reserves', async () => {
       const r = (await LP.api('GET', '/v1/admin-console/reserves')).reserves;
-      table($('resTable'), [{ label: 'Provider' }, { label: 'Encaissé', cls: 'num' }, { label: 'Versé', cls: 'num' }, { label: 'Doit être chez lui', cls: 'num' }],
-        r.providers.map((p) => ({ cells: [cell(PROVIDER[p.provider] || p.provider, num(p.movements) + ' mouvements' + (p.last_at ? ' · dernier ' + fmtDateTime(p.last_at) : '')), money(p.money_in), money(p.money_out), el('b', { text: money(p.reserve) })] }))
-          .concat(r.providers.length > 1 ? [{ cells: [el('b', { text: 'Total' }), '', '', el('b', { text: money(r.reserve_total) })] }] : []),
+      const gapOf = (p) => {
+        if (!p.checked) return el('span', { class: 'muted', text: 'Pas relevé' });
+        const gap = Number(p.checked.gap);
+        return el('span', { class: gap === 0 ? 'ok-text' : 'err-text', text: gap === 0 ? 'Aucun écart' : (gap > 0 ? '+' : '−') + money(Math.abs(gap)) });
+      };
+      table($('resTable'), [{ label: 'Provider' }, { label: 'Encaissé', cls: 'num' }, { label: 'Versé', cls: 'num' }, { label: 'Pas encore parti', cls: 'num' }, { label: 'Attendu chez lui', cls: 'num' }, { label: 'Solde relevé', cls: 'num' }, { label: 'Écart', cls: 'num' }],
+        r.providers.map((p) => ({ cells: [
+          cell(PROVIDER[p.provider] || p.provider, num(p.movements) + ' mouvements' + (p.last_at ? ' · dernier ' + fmtDateTime(p.last_at) : '')),
+          money(p.money_in), money(p.money_out),
+          Number(p.waiting) ? cell(money(p.waiting), num(p.waiting_count) + ' envoi' + (p.waiting_count > 1 ? 's' : '')) : '—',
+          el('b', { class: Number(p.expected) < 0 ? 'err-text' : '', text: (Number(p.expected) < 0 ? '−' : '') + money(Math.abs(Number(p.expected))) }),
+          p.checked ? cell(money(p.checked.balance), fmtDateTime(p.checked.at)) : '—',
+          gapOf(p),
+        ] }))
+          .concat(r.providers.length > 1 ? [{ fixed: true, cells: [el('b', { text: 'Total' }), '', '', '', el('b', { text: money(r.expected_total) }), '', ''] }] : []),
         'Aucun mouvement avec un provider pour le moment.');
+      const choices = [...new Set(r.providers.map((p) => p.provider.toLowerCase()).concat(['saspay', 'pawapay']))];
+      $('checkProvider').replaceChildren(...choices.map((c) => el('option', { value: c, text: PROVIDER[c.toUpperCase()] || c })));
       const h = r.held;
-      rows($('resHeld'), [['Utilisateurs', money(h.users)], ['Invités', money(h.guests)], ['Apps', money(h.apps)], ['Revenus LightPay', money(h.revenue)], [MAIN, money(h.main)]].concat(TEST && Number(h.issued) ? [['Émis par le faucet', '−' + money(h.issued)]] : [])
+      rows($('resHeld'), [['Utilisateurs', money(h.users)], ['Invités', money(h.guests)], ['Apps', money(h.apps)], [MAIN + ' (revenus LightPay compris)', money(h.main)], ['Frais de retrait en attente de confirmation', money(h.revenue)]].concat(TEST && Number(h.issued) ? [['Émis par le faucet', '−' + money(h.issued)]] : [])
         .concat(Number(h.other) ? [['Autres', money(h.other)]] : []).concat([['Dont bloqué en séquestre', money(h.locked)], ['Total', money(r.covered), true]]));
       $('resCheck').replaceChildren(el('p', { class: 'check ' + (r.balanced ? 'ok' : 'err') }, [icon(r.balanced ? 'check' : 'alert'),
         r.balanced ? 'Couvert : réserves ' + money(r.reserve_total) + ' = wallets ' + money(r.covered) + '.' : 'Écart : réserves ' + money(r.reserve_total) + ', wallets ' + money(r.covered) + '.']));
     });
   }
+
+  $('checkForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); say('checkMsg', '');
+    const balance = digits($('checkBalance').value);
+    if (!balance) return say('checkMsg', 'Indiquez le solde affiché par le provider.', 'err');
+    $('checkGo').disabled = true;
+    await guarded(async () => {
+      await LP.api('POST', '/v1/admin-console/reserves/checks', { provider: $('checkProvider').value, balance: balance, note: $('checkNote').value.trim() || undefined });
+      $('checkBalance').value = ''; $('checkNote').value = '';
+      await enterReserves();
+      say('checkMsg', 'Relevé enregistré.', 'ok');
+    }, 'checkMsg');
+    $('checkGo').disabled = false;
+  });
 
   // ---------------------------------------------------------------- users
   let users = [], usersQuery = '', searchTimer = null;
