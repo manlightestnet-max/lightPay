@@ -30,3 +30,6 @@ Thumbs.db
 
 # Documentation locale privée
 FONCTIONNEMENT.md
+
+# Money history archived by scripts/clear-history.ts (stays on the owner's computer)
+archives/
