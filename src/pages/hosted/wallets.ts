@@ -82,7 +82,8 @@ export const WALLETS_SCRIPT = `
     const rq = w.country_request;
     $('walletCountryNote').hidden = !rq;
     $('walletCountryCancel').hidden = !rq || rq.status !== 'PENDING';
-    $('walletCountryGo').hidden = Boolean(rq && rq.status === 'PENDING') || RAILS.countries.length < 2;
+    // Always offered (even with one country open: the screen then says so), except while a request waits.
+    $('walletCountryGo').hidden = Boolean(rq && rq.status === 'PENDING');
     if (rq) $('walletCountryText').textContent = rq.status === 'PENDING' ? 'Changement vers ' + rq.to_country_name + ' en attente de validation par LightPay.'
       : rq.status === 'APPROVED' ? 'Changement vers ' + rq.to_country_name + ' accepté.'
       : 'Changement vers ' + rq.to_country_name + ' refusé' + (rq.note ? ' : ' + rq.note : '.');
@@ -151,14 +152,19 @@ export const WALLETS_SCRIPT = `
 
   // ---------------------------------------------------------------- moving the wallet on screen to another country
   let wcCountry = null, wcQuote = null;
+  // From the account (Compte > Pays) the default wallet is the one moved.
   async function enterWalletCountry() {
     say('wcMsg', '');
+    if (!walletShown && me && me.wallets) walletShown = me.wallets.filter((x) => x.is_default)[0] || null;
     if (!walletShown) return nav.go('wallets', true);
     const w = walletShown;
+    if (w.country_request && w.country_request.status === 'PENDING') return nav.go('wallets/' + w.id, true);
     $('wcIntro').textContent = '« ' + w.label + ' » est aujourd’hui ' + (w.country_name ? 'au pays : ' + w.country_name : 'sans pays') + '. Choisissez le pays où vous voulez l’utiliser.';
     const render = () => {
       const others = RAILS.countries.filter((c) => c.code !== w.country);
       if (!others.some((c) => c.code === wcCountry)) wcCountry = null;
+      say('wcMsg', others.length ? '' : 'Aucun autre pays n’est ouvert sur LightPay pour le moment : revenez quand votre pays sera disponible.');
+      $('wcFees').classList.toggle('muted', !others.length);
       $('wcCountries').replaceChildren.apply($('wcCountries'), others.map((c) => el('button', {
         class: 'seg-opt', type: 'button', 'aria-pressed': String(c.code === wcCountry), text: c.name,
         on: { click: () => { wcCountry = c.code; render(); } },

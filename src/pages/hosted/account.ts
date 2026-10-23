@@ -136,6 +136,7 @@ ${walletScreens(frame)}
     </ul>
     <p class="group-title">Argent</p>
     <ul class="group">
+      <li><button class="row" type="button" id="accCountry"><span class="row-icon">${iconSvg('swap')}</span><span class="row-main"><span class="row-title">Pays</span><span class="row-sub" id="accCountrySub"></span></span>${iconSvg('chevron-right', 'chev')}</button></li>
       <li><a class="row" href="#/wallets"><span class="row-icon">${iconSvg('wallet')}</span><span class="row-main"><span class="row-title">Mes wallets</span><span class="row-sub" id="accWalletsSub">Ouvrir, nommer, déplacer de l’argent entre eux</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
     </ul>
     <p class="group-title">Autorisations</p>
@@ -310,6 +311,10 @@ ${walletScreens(frame)}
     $('homeWalletsBox').hidden = !several;
     if (several) walletList($('homeWallets'), open);
     $('accWalletsSub').textContent = several ? open.length + ' wallets · ouvrir, nommer, déplacer de l’argent entre eux' : 'Ouvrir un autre wallet';
+    // The default wallet's country, and a change waiting for LightPay.
+    const main = open.filter((w) => w.is_default)[0];
+    const rq = main && main.country_request;
+    $('accCountrySub').textContent = (main && main.country_name ? main.country_name : '—') + (rq && rq.status === 'PENDING' ? ' · changement vers ' + rq.to_country_name + ' en attente' : ' · changer de pays');
     const locked = several ? sum('locked_balance') : Number(me.wallet.locked_balance);
     $('homeLockedLine').hidden = !locked;
     $('homeLocked').textContent = LP.money(locked, cur()) + ' bloqués jusqu’à la livraison';
@@ -578,6 +583,14 @@ ${WALLETS_SCRIPT}
   }
   // Forgotten: the same Google account again, then a new code (no current code needed).
   $('pinForgot').addEventListener('click', async () => { if (await confirmIdentity()) enterPin('forgot'); });
+
+  // Compte > Pays: the default wallet's country; a change is a request LightPay validates.
+  $('accCountry').addEventListener('click', () => {
+    const main = me && me.wallets ? me.wallets.filter((w) => w.is_default)[0] : null;
+    if (!main) return;
+    walletShown = main;
+    nav.go(main.country_request && main.country_request.status === 'PENDING' ? 'wallets/' + main.id : 'wallet-country');
+  });
 
   // The first wallet's country, chosen once before using the wallet (when several countries are open).
   let ctyChoice = null;
