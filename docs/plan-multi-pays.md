@@ -138,13 +138,15 @@ Cameroun », « Retrait — MTN Congo »). Jamais le fournisseur.
 
 ### 3.2 Les écritures
 
-- **Une réserve par (fournisseur, pays)** : `SYSTEM_RESERVE_SASPAY_CMR`, `SYSTEM_RESERVE_SASPAY_COG`,
-  `SYSTEM_RESERVE_PAWAPAY_COG`… à la place du compte de transit unique (`SYSTEM_GATEWAY_INFLOW`). Un dépôt crédite
-  la réserve du pays où il arrive ; un retrait débite celle du pays d'où il part.
+- **Une réserve par (fournisseur, pays), calculée** (fait, phase B) : le compte de transit unique
+  (`SYSTEM_GATEWAY_INFLOW`) reste ; chaque écriture de transit est rattachée à son fournisseur et à son opérateur
+  (donc à son pays), et la réserve d'un wallet fournisseur est la somme de ses écritures. Aucune écriture d'argent
+  ne change, aucun script de migration du transit n'est nécessaire.
 - La somme des réserves = l'argent de tout le monde (contrôle actuel, gardé). Chaque réserve se compare au solde
   réel du wallet fournisseur correspondant.
-- Un rééquilibrage = trois écritures, comme chez SasPay : sortie du pays A, entrée au pays B, frais
-  (« Frais fournisseur - transfert »). Les wallets des personnes ne sont jamais touchés.
+- Un rééquilibrage (phase E) est noté dans sa propre table (`provider_transfers` : sortie du pays A, entrée au
+  pays B, frais « Frais fournisseur - transfert ») et entre dans ce calcul. Les wallets des personnes ne sont
+  jamais touchés.
 
 ### 3.3 Frais
 
@@ -268,8 +270,8 @@ change visible. Seuls ces pays portent un risque de change.
 
 | Phase | Contenu | Résultat |
 |---|---|---|
-| **A — Socle** | Module `wallets` (porte d'entrée unique, `label` / `country` / `is_default`), registres `countries` et `rails`, interface fournisseur élargie. | Rien ne change pour les gens. |
-| **B — Réserves par pays + inspection** | Réserves par (fournisseur, pays), migration du transit (script lancé par l'admin), relevé automatique, écart, disponible, niveaux cibles, alertes. | L'admin voit chaque wallet fournisseur. |
+| **A — Socle** ✓ | Module `wallets` (porte d'entrée unique, `label` / `country` / `is_default`), registres `countries` et `rails`, interface fournisseur élargie. | Rien ne change pour les gens. |
+| **B — Réserves par pays + inspection** ✓ | Réserves par (fournisseur, pays) calculées depuis le transit, lecture automatique des soldes (SasPay, pawaPay), écart, disponible, minimum / seuil bas / niveau cible, alertes et compteur, écran par wallet fournisseur. | L'admin voit chaque wallet fournisseur. |
 | **C — Routage** | Règles, simulateur, frais comparés ; SasPay par défaut, pawaPay pour le Congo → Congo. | Moins de frais sur le Congo. |
 | **D — Pays de départ** | Cameroun, Côte d'Ivoire, Togo : dépôts et retraits, numéro international, choix du pays dans `flows.ts`. | Encaisser et retirer dans 4 pays. |
 | **E — Rééquilibrage** | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |

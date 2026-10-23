@@ -19,6 +19,7 @@ import {
   overview,
   rechargeMain,
   recordProviderBalance,
+  reserveWallet,
   reserves,
   sendFromMain,
 } from '../db/admin-console.js';
@@ -38,14 +39,20 @@ import { LEVELS, withBypass } from '../security/lockdown.js';
 import { TemplateError, listTemplates, resetTemplate, sampleVars, saveTemplate, validateTemplate } from '../notify/templates.js';
 import { fromTemplate } from '../notify/catalog.js';
 import { sendTest } from '../notify/index.js';
+import { RESERVE_RANGES, ReserveSettingsError, loadReserveSettings, reserveSettings, saveReserveSettings, validateReserveSettings } from '../payments/reserve-settings.js';
+import { readProviderBalances } from '../payments/reserve-watch.js';
 
 /**
  * Owner's admin console.
  *   GET  /admin                                 the console page (on ADMIN_BASE_URL's host when set)
  *   GET  /v1/admin-console/me                   am I an admin?
  *   GET  /v1/admin-console/overview?period=     revenue, volume, counts, 30-day series, ledger check
- *   GET  /v1/admin-console/reserves             per-provider reserves (expected at the provider) + client money coverage
- *   POST /v1/admin-console/reserves/checks      { provider, balance, note }   the real balance read at a provider
+ *   GET  /v1/admin-console/reserves             reserves per provider wallet (provider + country) + client money coverage
+ *   GET  /v1/admin-console/reserves/:key        one provider wallet (saspay:COG): its line, levels and readings
+ *   POST /v1/admin-console/reserves/checks      { provider, country, balance, note }   the real balance read at a provider
+ *   POST /v1/admin-console/reserves/read        reads every provider wallet now through the providers' APIs
+ *   GET  /v1/admin-console/reserves-settings    gap alert, automatic readings, levels per provider wallet (+ ranges)
+ *   PUT  /v1/admin-console/reserves-settings    { …all settings }   recent sign-in; applied at once, logged
  *   GET  /v1/admin-console/users[?q=&offset=]   LightPay users · /users/:walletId
  *   GET  /v1/admin-console/apps                 apps · /apps/:id (attached users)
  *   GET  /v1/admin-console/transactions[?type=&app=&q=&before=] · /transactions/:id (ledger entries)
@@ -107,7 +114,7 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
 }
 
 const fail = (reply: FastifyReply, err: any) => {
-  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError) {
+  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError || err instanceof ReserveSettingsError) {
     return reply.status((err as any).statusCode ?? 400).send({ status: 'error', error: (err as any).code, message: err.message });
   }
   if (err instanceof AdminError) return reply.status(err.statusCode).send({ status: 'error', error: err.code, message: err.message });
@@ -167,11 +174,42 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         const admin = adminOf(request);
         try {
           const check = await recordProviderBalance(env, admin, (request.body ?? {}) as any);
-          await auditAction(env, admin, 'PROVIDER_BALANCE_CHECK', null, null, { provider: check.provider, balance: check.balance, note: check.note });
+          await auditAction(env, admin, 'PROVIDER_BALANCE_CHECK', null, null, { provider: check.provider, country: check.country, balance: check.balance, note: check.note });
           return { status: 'success', check, reserves: await reserves(env) };
         } catch (e) {
           return fail(reply, e);
         }
+      });
+      api.post('/reserves/read', async (request) => {
+        const env = envOf(request);
+        const admin = adminOf(request);
+        const read = await readProviderBalances(env, admin.email || admin.uid, { force: true });
+        return { status: 'success', read, reserves: await reserves(env) };
+      });
+      api.get('/reserves/:key', async (request, reply) => {
+        try {
+          return { status: 'success', ...(await reserveWallet(envOf(request), String((request.params as any).key))) };
+        } catch (e) {
+          return fail(reply, e);
+        }
+      });
+      api.get('/reserves-settings', async (request) => {
+        const env = envOf(request);
+        return { status: 'success', settings: await loadReserveSettings(env).catch(() => reserveSettings(env)), ranges: RESERVE_RANGES };
+      });
+      api.put('/reserves-settings', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        let next;
+        try {
+          next = validateReserveSettings(request.body);
+        } catch (e) {
+          return fail(reply, e);
+        }
+        const admin = adminOf(request);
+        const { before, after } = await saveReserveSettings(env, next, admin.email || admin.uid);
+        if (JSON.stringify(before) !== JSON.stringify(after)) await auditAction(env, admin, 'RESERVES_UPDATE', null, null, { before, after });
+        return { status: 'success', settings: after };
       });
 
       api.get('/users', async (request) => {

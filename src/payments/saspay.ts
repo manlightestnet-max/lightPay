@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import type { MobileMoneyProvider, RailOperation, RailResult } from './mobile-money.js';
-import { countryByCode, providerCode, railByNetwork } from '../rails/registry.js';
+import type { MobileMoneyProvider, ProviderBalance, RailOperation, RailResult } from './mobile-money.js';
+import { countryByCode, countryByIso2, providerCode, railByNetwork } from '../rails/registry.js';
 import type { Environment } from '../types/index.js';
 
 /**
@@ -10,6 +10,7 @@ import type { Environment } from '../types/index.js';
  *   verify    GET  /payments/{id}/verify/        SUCCESS | PENDING | FAILED | CANCELLED
  *   payout    POST /payouts/initialize/          (API key needs PAYOUT scope + whitelisted IP)
  *   verify    GET  /payouts/{id}/verify/
+ *   balances  GET  /merchant-balances/     one wallet per country: available_amount, pending_amount, is_frozen
  *   webhooks  X-Webhook-Signature = hex HMAC-SHA256(secret, "{X-Webhook-Timestamp}.{raw body}")
  *
  * Env: SASPAY_SECRET_KEY (sk_live_… / sk_test_…), SASPAY_WEBHOOK_SECRET, SASPAY_API_URL,
@@ -163,6 +164,28 @@ export class SasPayProvider implements MobileMoneyProvider {
     const r = await this.call('GET', `/payouts/${encodeURIComponent(op.providerReference)}/verify/`);
     const status = mapStatus(r.status);
     return { status, providerReference: r.id ?? op.providerReference, failureCode: status === 'FAILED' ? `PROVIDER_${String(r.status).toUpperCase()}` : undefined };
+  }
+
+  /** Our wallet in each country (paginated, 100 per page). A country unknown to the registry keeps SasPay's code. */
+  async balances(env: Environment): Promise<ProviderBalance[]> {
+    if (!this.configured(env)) return [];
+    const out: ProviderBalance[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const r = await this.call('GET', `/merchant-balances/?page=${page}&page_size=100`);
+      const list: any[] = Array.isArray(r) ? r : Array.isArray(r?.results) ? r.results : Array.isArray(r?.data) ? r.data : [];
+      for (const b of list) {
+        const iso2 = String(b.country ?? '').toUpperCase();
+        out.push({
+          country: countryByIso2(iso2)?.code ?? iso2,
+          currency: String(b.currency ?? ''),
+          available: whole(b.available_amount) ?? 0n,
+          pending: whole(b.pending_amount),
+          frozen: b.is_frozen === true,
+        });
+      }
+      if (!r?.next) break;
+    }
+    return out;
   }
 }
 

@@ -26,6 +26,8 @@ import { dispatchDuePayouts } from './db/payouts.js';
 import { purgeOldAttempts } from './db/withdrawal-guard.js';
 import { refreshProviderSettings } from './payments/provider-settings.js';
 import { refreshRegistry } from './rails/registry.js';
+import { refreshReserveSettings } from './payments/reserve-settings.js';
+import { startReserveWatch } from './payments/reserve-watch.js';
 import { loadTemplates } from './notify/templates.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
 import { registerRateLimits } from './security/rate-limit.js';
@@ -384,10 +386,12 @@ async function start() {
     await refreshFeeSettings();
     await refreshProviderSettings();
     await refreshRegistry();
+    await refreshReserveSettings();
+    startReserveWatch();
     await refreshControlSettings();
     // Texts of the automatic messages, as the admin wrote them (Administration > Messages).
     await loadTemplates();
-    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); void refreshRegistry(); void refreshControlSettings(); void loadTemplates(); }, 60_000).unref();
+    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); void refreshRegistry(); void refreshReserveSettings(); void refreshControlSettings(); void loadTemplates(); }, 60_000).unref();
 
     await server.listen({
       port: config.port,

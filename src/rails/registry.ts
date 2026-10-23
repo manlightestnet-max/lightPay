@@ -57,6 +57,8 @@ export const DEFAULT_COUNTRY = 'COG';
 export const allCountries = (): Country[] => state.countries;
 export const allRails = (): Rail[] => state.rails;
 export const countryByCode = (code: string) => state.countries.find((c) => c.code === code);
+/** A country from its ISO alpha-2 code (SasPay's): CG → COG. */
+export const countryByIso2 = (iso2: string) => state.countries.find((c) => c.iso2 === String(iso2).toUpperCase());
 export const railByNetwork = (network: string) => state.rails.find((r) => r.network === network);
 export const railByMethod = (method: string) => state.rails.find((r) => r.method === method);
 

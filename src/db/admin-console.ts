@@ -4,13 +4,18 @@ import { LedgerEngine } from './ledger.js';
 import { logActivity } from './activity.js';
 import { minMobileMoneyAmount } from '../payments/fees.js';
 import { Environment } from '../types/index.js';
+import { allCountries, countryByCode, DEFAULT_COUNTRY, railByNetwork } from '../rails/registry.js';
+import { providerByName } from '../payments/mobile-money.js';
+import { PROVIDERS_OF } from '../payments/provider-settings.js';
+import { levelsOf, reserveSettings, walletKey } from '../payments/reserve-settings.js';
+import { FCFA } from '../payments/reserve-watch.js';
 
 /**
  * LightPay admin console (owner only). Reads the ledger as it is, never rewrites it:
  *   - revenue: LightPay's fees (deposit, payment, withdrawal), credited to the main wallet; a payout's fee waits in
  *     LIGHTPAY_FEES until the operator confirms the send (./fee-wallet.ts);
- *   - provider reserves: per provider, money collected minus money paid out through the
- *     transit account, i.e. what should be sitting at that provider (to compare with its balance);
+ *   - provider reserves: per provider wallet (provider + country), money collected minus money paid out through the
+ *     transit account, i.e. what should be sitting there (to compare with its balance, read automatically or typed);
  *   - wallet main (SYSTEM_MAIN_TREASURY): the owner's own funds, separate from client money.
  * Money moves only through the ledger engine: sending from the main wallet (which can never go
  * below zero) and recharging it with a real mobile-money deposit. No withdrawal from here.
@@ -225,20 +230,30 @@ const ENTRY_PROVIDER = `upper(COALESCE(NULLIF(t.metadata->>'provider', ''),
     (SELECT p.provider FROM payouts p WHERE p.id = COALESCE(t.metadata->>'payout', t.metadata->>'payout_id')),
     (SELECT a.provider FROM collection_attempts a WHERE a.id = t.metadata->>'attempt'),
     'autre'))`;
+/** The operator (network) of the same entry, which gives its country: the provider wallet the money is in. */
+const ENTRY_NETWORK = `COALESCE(NULLIF(t.metadata->>'network', ''),
+    (SELECT p.network FROM payouts p WHERE p.id = COALESCE(t.metadata->>'payout', t.metadata->>'payout_id')),
+    (SELECT a.network FROM collection_attempts a WHERE a.id = t.metadata->>'attempt'))`;
+/** Before several countries, every movement was in Congo: an entry without operator is counted there. */
+const countryOfNetwork = (network: string | null) => (network && railByNetwork(network)?.country) || DEFAULT_COUNTRY;
+
+export type ReserveState = 'unchecked' | 'gap' | 'low' | 'ok';
 
 /**
- * Per provider, what should be sitting at that provider, to compare with its real balance:
+ * Per provider wallet (provider + country), what should be sitting there, to compare with its real balance:
  *   collected   money brought in (amount + LightPay fee), refused payouts and their give-backs left out (nothing moved);
  *   sent        payouts booked (amount + operator fee);
- *   waiting     booked payouts not sent yet (programmed, held, asked): still at the provider;
- *   expected    collected − sent + waiting = the real balance the provider should show;
- *   checked     the last balance the owner read at the provider (Contrôle des réserves), and the gap with expected.
+ *   waiting     booked payouts not sent yet: programmed or held (still in the available balance), asked (reserved there);
+ *   expected    collected − sent + waiting = what the provider should show (available + reserved);
+ *   checked     the last reading (automatic or typed by the owner) and the gap with expected;
+ *   available   what can still be sent from there: the real balance − programmed or held payouts − safety minimum.
+ * State: gap above the admin's tolerance, available under the low threshold, never read, or fine.
  * And the check that all client money is covered: the transit account equals every other wallet together.
  */
 export async function reserves(env: Environment) {
-  const [perProvider, waitingRows, checks, balances] = await Promise.all([
+  const [perWallet, waitingRows, checks, balances] = await Promise.all([
     query(
-      `SELECT ${ENTRY_PROVIDER} AS provider,
+      `SELECT ${ENTRY_PROVIDER} AS provider, ${ENTRY_NETWORK} AS network,
               COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'DEBIT'), 0)::text AS money_in,
               COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'CREDIT'), 0)::text AS money_out,
               COUNT(*)::int AS movements, MAX(le.created_at) AS last_at
@@ -246,20 +261,23 @@ export async function reserves(env: Environment) {
        JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'SYSTEM_GATEWAY_INFLOW' AND w.currency = $1
        JOIN transactions t ON t.id = le.transaction_id
        WHERE ${NOT_CANCELLED}
-       GROUP BY 1 ORDER BY 1`,
+       GROUP BY 1, 2`,
       [CURRENCY],
       env
     ),
     query(
-      `SELECT upper(provider) AS provider, COUNT(*)::int AS count, COALESCE(SUM(amount + COALESCE(operator_fee, 0)), 0)::text AS amount
-       FROM payouts WHERE currency = $1 AND status IN ('SCHEDULED', 'HELD', 'PENDING') GROUP BY 1`,
+      `SELECT upper(provider) AS provider, network, status = 'PENDING' AS asked, COUNT(*)::int AS count,
+              COALESCE(SUM(amount + COALESCE(operator_fee, 0)), 0)::text AS amount
+       FROM payouts WHERE currency = $1 AND status IN ('SCHEDULED', 'HELD', 'PENDING') GROUP BY 1, 2, 3`,
       [CURRENCY],
       env
     ),
     query(
-      `SELECT DISTINCT ON (provider) upper(provider) AS provider, balance::text, note, checked_by, checked_at
-       FROM provider_balance_checks WHERE environment = $1 AND currency = $2 ORDER BY provider, checked_at DESC`,
-      [env, CURRENCY],
+      `SELECT DISTINCT ON (provider, COALESCE(country, $3)) upper(provider) AS provider, COALESCE(country, $3) AS country,
+              balance::text, pending::text, note, checked_by, checked_at
+       FROM provider_balance_checks WHERE environment = $1 AND currency = ANY($2)
+       ORDER BY provider, COALESCE(country, $3), checked_at DESC`,
+      [env, FCFA, DEFAULT_COUNTRY],
       env
     ).catch(() => [] as any[]),
     query(
@@ -279,37 +297,90 @@ export async function reserves(env: Environment) {
       env
     ),
   ]);
+
+  interface Acc { provider: string; country: string; money_in: bigint; money_out: bigint; movements: number; last_at: Date | null; scheduled: bigint; asked: bigint; waiting_count: number }
+  const acc = new Map<string, Acc>();
+  const get = (provider: string, country: string) => {
+    const key = walletKey(provider, country);
+    if (!acc.has(key)) acc.set(key, { provider, country, money_in: 0n, money_out: 0n, movements: 0, last_at: null, scheduled: 0n, asked: 0n, waiting_count: 0 });
+    return acc.get(key)!;
+  };
+  for (const r of perWallet) {
+    const a = get(r.provider, countryOfNetwork(r.network));
+    a.money_in += BigInt(r.money_in);
+    a.money_out += BigInt(r.money_out);
+    a.movements += r.movements;
+    if (r.last_at && (!a.last_at || new Date(r.last_at) > a.last_at)) a.last_at = new Date(r.last_at);
+  }
+  for (const r of waitingRows) {
+    const a = get(r.provider, countryOfNetwork(r.network));
+    if (r.asked) a.asked += BigInt(r.amount);
+    else a.scheduled += BigInt(r.amount);
+    a.waiting_count += r.count;
+  }
+  for (const c of checks) get(c.provider, c.country);
+
+  const settings = reserveSettings(env);
+  const wallets = [...acc.values()]
+    .sort((x, y) => x.provider.localeCompare(y.provider) || x.country.localeCompare(y.country))
+    .map((a) => {
+      const c = checks.find((x) => x.provider === a.provider && x.country === a.country);
+      const reserveLedger = a.money_in - a.money_out;
+      const waiting = a.scheduled + a.asked;
+      const expected = reserveLedger + waiting;
+      const levels = levelsOf(env, a.provider, a.country);
+      const real = c ? BigInt(c.balance) + BigInt(c.pending ?? 0) : null;
+      const gap = real === null ? null : real - expected;
+      const available = c ? BigInt(c.balance) - a.scheduled - BigInt(levels.min) : null;
+      const state: ReserveState =
+        gap === null || available === null
+          ? 'unchecked'
+          : (gap < 0n ? -gap : gap) > BigInt(settings.gap_alert)
+            ? 'gap'
+            : levels.low && available < BigInt(levels.low)
+              ? 'low'
+              : 'ok';
+      return {
+        key: walletKey(a.provider, a.country),
+        provider: a.provider,
+        country: a.country,
+        country_name: countryByCode(a.country)?.name ?? a.country,
+        money_in: a.money_in.toString(),
+        money_out: a.money_out.toString(),
+        movements: a.movements,
+        last_at: a.last_at,
+        reserve: reserveLedger.toString(),
+        waiting: waiting.toString(),
+        waiting_scheduled: a.scheduled.toString(),
+        waiting_asked: a.asked.toString(),
+        waiting_count: a.waiting_count,
+        expected: expected.toString(),
+        checked: c ? { balance: c.balance, pending: c.pending, note: c.note, by: c.checked_by, at: c.checked_at, gap: (gap ?? 0n).toString() } : null,
+        available: available === null ? null : available.toString(),
+        levels,
+        state,
+      };
+    });
+
   const b = Object.fromEntries(balances.map((r) => [r.bucket, { available: r.available, locked: r.locked }])) as Record<string, { available: string; locked: string }>;
   const total = (k: string) => (b[k] ? BigInt(b[k].available) + BigInt(b[k].locked) : 0n);
   const reserve = -total('reserve');
   // Test money issued by the faucet came in without a provider: it is set aside from the comparison.
   const covered = ['main', 'revenue', 'users', 'guests', 'apps', 'other', 'issued'].reduce((s, k) => s + total(k), 0n);
-  const names = [...new Set([...perProvider.map((p) => p.provider), ...waitingRows.map((w) => w.provider), ...checks.map((c: any) => c.provider)])].sort();
-  const providers = names.map((provider) => {
-    const p = perProvider.find((x) => x.provider === provider) ?? { money_in: '0', money_out: '0', movements: 0, last_at: null };
-    const w = waitingRows.find((x) => x.provider === provider);
-    const c = checks.find((x: any) => x.provider === provider) as any;
-    const waiting = BigInt(w?.amount ?? 0);
-    const reserveLedger = BigInt(p.money_in) - BigInt(p.money_out);
-    const expected = reserveLedger + waiting;
-    return {
-      provider,
-      money_in: p.money_in,
-      money_out: p.money_out,
-      movements: p.movements,
-      last_at: p.last_at,
-      reserve: reserveLedger.toString(),
-      waiting: waiting.toString(),
-      waiting_count: w?.count ?? 0,
-      expected: expected.toString(),
-      checked: c ? { balance: c.balance, note: c.note, by: c.checked_by, at: c.checked_at, gap: (BigInt(c.balance) - expected).toString() } : null,
-    };
-  });
   return {
     currency: CURRENCY,
-    providers,
+    wallets,
+    alerts: wallets.filter((w) => w.state === 'gap' || w.state === 'low').length,
+    settings: { gap_alert: settings.gap_alert, auto_check_minutes: settings.auto_check_minutes },
+    /** Countries LightPay knows, for a reading typed by hand. */
+    countries: allCountries().map((c) => ({ code: c.code, name: c.name })),
+    /** Providers LightPay can read by itself on this ledger. */
+    readable: PROVIDERS_OF[env].filter((n) => {
+      const p = providerByName(n);
+      return Boolean(p.balances) && p.configured(env);
+    }),
     reserve_total: reserve.toString(),
-    expected_total: providers.reduce((s, p) => s + BigInt(p.expected), 0n).toString(),
+    expected_total: wallets.reduce((s, w) => s + BigInt(w.expected), 0n).toString(),
     held: {
       main: total('main').toString(),
       revenue: total('revenue').toString(),
@@ -326,17 +397,33 @@ export async function reserves(env: Environment) {
   };
 }
 
-/** The owner read the real balance at a provider (its dashboard): kept to compare with what LightPay expects there. */
-export async function recordProviderBalance(env: Environment, admin: AdminUser, input: { provider: unknown; balance: unknown; note?: unknown }) {
+/** One provider wallet: its line of reserves(), its levels and the history of its readings. */
+export async function reserveWallet(env: Environment, key: string) {
+  const all = await reserves(env);
+  const wallet = all.wallets.find((w) => w.key === key);
+  if (!wallet) throw new AdminError('Réserve introuvable.', 'NOT_FOUND', 404);
+  const history = await query(
+    `SELECT id, balance::text, pending::text, currency, note, checked_by, checked_at FROM provider_balance_checks
+     WHERE environment = $1 AND provider = $2 AND COALESCE(country, $4) = $3 ORDER BY checked_at DESC LIMIT 100`,
+    [env, wallet.provider.toLowerCase(), wallet.country, DEFAULT_COUNTRY],
+    env
+  );
+  return { wallet, history, settings: all.settings };
+}
+
+/** The owner read the real balance of a provider wallet (its dashboard): kept to compare with what LightPay expects there. */
+export async function recordProviderBalance(env: Environment, admin: AdminUser, input: { provider: unknown; country?: unknown; balance: unknown; note?: unknown }) {
   const provider = String(input.provider ?? '').trim().toLowerCase();
   if (!/^[a-z0-9_-]{2,30}$/.test(provider)) throw new AdminError('Fournisseur invalide.', 'BAD_PROVIDER');
-  const raw = String(input.balance ?? '').replace(/[\s\u00a0\u202f]/g, '');
+  const country = countryByCode(String(input.country ?? DEFAULT_COUNTRY).trim().toUpperCase());
+  if (!country) throw new AdminError('Pays inconnu.', 'BAD_COUNTRY');
+  const raw = String(input.balance ?? '').replace(/[\s  ]/g, '');
   if (!/^-?\d{1,15}$/.test(raw)) throw new AdminError('Solde en FCFA entiers.', 'BAD_BALANCE');
   const note = String(input.note ?? '').trim().slice(0, 200) || null;
   const [row] = await query(
-    `INSERT INTO provider_balance_checks (environment, provider, currency, balance, note, checked_by)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, provider, balance::text, note, checked_by, checked_at`,
-    [env, provider, CURRENCY, raw, note, admin.email ?? admin.uid],
+    `INSERT INTO provider_balance_checks (environment, provider, country, currency, balance, note, checked_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, provider, country, balance::text, note, checked_by, checked_at`,
+    [env, provider, country.code, country.currency, raw, note, admin.email ?? admin.uid],
     env
   );
   return row;

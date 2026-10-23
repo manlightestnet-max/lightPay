@@ -116,8 +116,8 @@ const ADMIN_CSS = `
 @media (max-width: 960px) { .console .grid-2 { grid-template-columns: 1fr; } }
 `;
 
-const navItem = (route: string, key: string, icon: string, label: string) =>
-  `<a class="nav-item" href="#/${route}" data-nav="${key}">${iconSvg(icon)}<span>${label}</span></a>`;
+const navItem = (route: string, key: string, icon: string, label: string, extra = '') =>
+  `<a class="nav-item" href="#/${route}" data-nav="${key}">${iconSvg(icon)}<span>${label}</span>${extra}</a>`;
 const envBadge = '<span class="badge" data-env-badge hidden>Test</span>';
 const seg = (name: string, items: [string, string][]) =>
   `<div class="seg-sm" role="group" data-seg="${name}">${items.map(([v, l], i) => `<button type="button" data-value="${v}" aria-pressed="${i === 0}">${l}</button>`).join('')}</div>`;
@@ -152,7 +152,7 @@ export const adminPage = (nonce: string, env: string) => {
   <nav class="side-nav" aria-label="Navigation">
     <div class="nav-label">Pilotage</div>
     ${navItem('home', 'home', 'home', 'Revenus et activité')}
-    ${navItem('reserves', 'reserves', 'shield', 'Réserves providers')}
+    ${navItem('reserves', 'reserves', 'shield', 'Réserves providers', '<span class="nav-count" id="navResCount" hidden></span>')}
     <div class="nav-label">Réseau</div>
     ${navItem('users', 'users', 'user', 'Utilisateurs')}
     ${navItem('apps', 'apps', 'apps', 'Applications')}
@@ -208,23 +208,25 @@ ${page('home', 'Revenus et activité', `
 `)}
 
 ${page('reserves', 'Réserves providers', `
-  ${panel('Ce qui doit être chez chaque provider', '<div id="resTable"></div>', {
-    flush: true,
-    foot: 'Attendu = encaissé − versé + envois pas encore partis (l’argent est encore chez le provider). Relevez le solde affiché par le provider : l’écart se calcule tout seul. Un attendu négatif veut dire que ce provider a envoyé plus qu’il n’a encaissé : de l’argent y a été avancé en dehors de LightPay.',
-  })}
-  ${panel('Relever un solde', `
+  <div class="list-card" id="resTable"></div>
+  <p class="small muted mt">Une ligne par wallet chez un fournisseur (un par pays). Attendu = encaissé − versé + envois pas encore partis. Écart = solde réel (disponible + réservé chez lui) − attendu. Disponible = ce qui peut encore partir : solde − envois programmés ou retenus − minimum de sécurité.</p>
+  ${panel('Surveillance', '<ul class="fee-list" id="resSettings"></ul>', { foot: 'Les soldes sont lus chez les fournisseurs qui le permettent (SasPay, pawaPay) : une note à côté du grand livre, aucun argent ne bouge.' })}
+  ${panel('Relever un solde à la main', `
     <form id="checkForm" class="inline-form" novalidate>
       <div class="field"><label for="checkProvider">Provider</label><select id="checkProvider"></select></div>
+      <div class="field"><label for="checkCountry">Pays</label><select id="checkCountry"></select></div>
       <div class="field"><label for="checkBalance">Solde affiché par le provider (FCFA)</label><input id="checkBalance" data-amount inputmode="numeric" autocomplete="off"></div>
       <div class="field"><label for="checkNote">Note (facultatif)</label><input id="checkNote" maxlength="200" autocomplete="off"></div>
       <div class="msg" id="checkMsg" role="status" aria-live="polite"></div>
       <button class="btn btn-secondary btn-sm mt" type="submit" id="checkGo">${iconSvg('check')}Enregistrer le relevé</button>
-    </form>`, { foot: 'Une simple note à côté du grand livre : aucun argent ne bouge.' })}
+    </form>`, { foot: 'Pour un fournisseur qui ne donne pas son solde par API, ou pour vérifier une lecture.' })}
   <div class="grid-2">
     ${panel('À qui appartient cet argent', '<div class="rows" id="resHeld"></div>')}
     ${panel('Couverture', '<div id="resCheck"></div><p class="small muted mt">Chaque franc dans un wallet est entré par un provider : la réserve totale doit être égale à la somme de tous les wallets.</p>')}
   </div>
-`)}
+`, '<button class="btn btn-secondary btn-sm" type="button" id="resRead" hidden>' + iconSvg('refresh') + 'Relever maintenant</button>')}
+
+${page('reserve', 'Réserve', '<div class="stack" id="resDetail"></div>', '', { back: { href: '#/reserves', label: 'Réserves providers' } })}
 
 ${page('users', 'Utilisateurs', `
   <div class="list-card" id="usersTable"></div>
@@ -408,6 +410,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   ACTION.FEES_UPDATE = 'Frais et minimums modifiés';
   ACTION.PROVIDERS_UPDATE = 'Fournisseur mobile money changé';
   ACTION.CONTROLS_UPDATE = 'Délais et limites modifiés';
+  ACTION.RESERVES_UPDATE = 'Surveillance des réserves modifiée';
+  ACTION.PROVIDER_BALANCE_CHECK = 'Solde fournisseur relevé';
   ACTION.MESSAGE_UPDATE = 'Message modifié';
   ACTION.MESSAGE_RESET = 'Message rétabli';
   ACTION.LOCKDOWN = 'Frein d’urgence';
@@ -535,34 +539,117 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     try { await navigator.clipboard.writeText($('shareText').textContent); $('shareCopy').replaceChildren(icon('check'), 'Copié'); setTimeout(() => $('shareCopy').replaceChildren(icon('copy'), 'Copier'), 1500); } catch (e) {}
   });
 
-  // ---------------------------------------------------------------- reserves
+  // ---------------------------------------------------------------- reserves (one line per provider wallet: provider + country)
+  const RES_STATE = { ok: ['ok', 'OK'], low: ['warn', 'Sous le seuil'], gap: ['err', 'Écart'], unchecked: ['', 'Pas relevé'] };
+  const resState = (w) => el('span', { class: 'pill ' + RES_STATE[w.state][0], text: RES_STATE[w.state][1] });
+  const signedMoney = (v) => { const n = Number(v); return (n > 0 ? '+' : n < 0 ? '−' : '') + money(Math.abs(n)); };
+  const amountText = (v) => (Number(v) < 0 ? '−' : '') + money(Math.abs(Number(v)));
+  const resName = (w) => (PROVIDER[w.provider] || w.provider) + ' · ' + w.country_name;
+  const byWho = (by) => (by === 'auto' ? 'lu automatiquement' : by ? 'relevé par ' + by : 'relevé');
+  function setResCount(n) { const c = $('navResCount'); c.hidden = !n; c.textContent = n ? String(n) : ''; }
+  async function refreshResCount() { try { setResCount((await LP.api('GET', '/v1/admin-console/reserves')).reserves.alerts); } catch (e) {} }
+
+  let resData = null, resSettings = null, resRanges = null;
+  const RES_STORE = {
+    get: () => resSettings,
+    set: (v) => { resSettings = v; },
+    put: async (next) => (await LP.api('PUT', '/v1/admin-console/reserves-settings', next)).settings,
+    msg: 'reservesMsg',
+  };
+  function renderReserves(r) {
+    table($('resTable'), [{ label: 'Wallet' }, { label: 'Attendu', cls: 'num' }, { label: 'Solde réel', cls: 'num' }, { label: 'Écart', cls: 'num' }, { label: 'Disponible', cls: 'num' }, { label: 'État' }],
+      r.wallets.map((w) => ({ href: '#/reserves/' + encodeURIComponent(w.key), cells: [
+        cell(resName(w), num(w.movements) + ' mouvements' + (Number(w.waiting) ? ' · ' + money(w.waiting) + ' pas encore parti' : '')),
+        el('b', { class: Number(w.expected) < 0 ? 'err-text' : '', text: amountText(w.expected) }),
+        w.checked ? cell(money(Number(w.checked.balance) + Number(w.checked.pending || 0)), fmtDateTime(w.checked.at) + ' · ' + byWho(w.checked.by)) : '—',
+        w.checked ? el('span', { class: Number(w.checked.gap) === 0 ? 'ok-text' : w.state === 'gap' ? 'err-text' : '', text: Number(w.checked.gap) === 0 ? 'Aucun' : signedMoney(w.checked.gap) }) : '—',
+        w.available === null ? '—' : el('span', { class: w.state === 'low' ? 'err-text' : '', text: amountText(w.available) }),
+        resState(w),
+      ], keys: [null, Number(w.expected), w.checked ? Number(w.checked.balance) : -Infinity, w.checked ? Number(w.checked.gap) : -Infinity, w.available === null ? -Infinity : Number(w.available), ['gap', 'low', 'unchecked', 'ok'].indexOf(w.state)] }))
+        .concat(r.wallets.length > 1 ? [{ fixed: true, cells: [el('b', { text: 'Total' }), el('b', { text: money(r.expected_total) }), '', '', '', ''] }] : []),
+      'Aucun wallet chez un fournisseur pour le moment.');
+    setResCount(r.alerts);
+    $('resRead').hidden = !r.readable.length;
+    const providers = [...new Set(r.wallets.map((w) => w.provider.toLowerCase()).concat(['saspay', 'pawapay']))];
+    $('checkProvider').replaceChildren(...providers.map((c) => el('option', { value: c, text: PROVIDER[c.toUpperCase()] || c })));
+    $('checkCountry').replaceChildren(...r.countries.map((c) => el('option', { value: c.code, text: c.name })));
+    const h = r.held;
+    rows($('resHeld'), [['Utilisateurs', money(h.users)], ['Invités', money(h.guests)], ['Apps', money(h.apps)], [MAIN + ' (revenus LightPay compris)', money(h.main)], ['Frais de retrait en attente de confirmation', money(h.revenue)]].concat(TEST && Number(h.issued) ? [['Émis par le faucet', '−' + money(h.issued)]] : [])
+      .concat(Number(h.other) ? [['Autres', money(h.other)]] : []).concat([['Dont bloqué en séquestre', money(h.locked)], ['Total', money(r.covered), true]]));
+    $('resCheck').replaceChildren(el('p', { class: 'check ' + (r.balanced ? 'ok' : 'err') }, [icon(r.balanced ? 'check' : 'alert'),
+      r.balanced ? 'Couvert : réserves ' + money(r.reserve_total) + ' = wallets ' + money(r.covered) + '.' : 'Écart : réserves ' + money(r.reserve_total) + ', wallets ' + money(r.covered) + '.']));
+  }
+  function renderResSettings() {
+    $('resSettings').replaceChildren(
+      settingItem(['gap_alert', 'Écart toléré', 'Au-delà, la ligne passe en alerte (0 : le moindre écart)', 'fcfa', resRanges.gap_alert], RES_STORE),
+      settingItem(['auto_check_minutes', 'Lecture automatique des soldes', 'LightPay lit les soldes chez les fournisseurs toutes les N minutes (0 : seulement sur demande)', 'min', resRanges.auto_check_minutes], RES_STORE));
+  }
   async function enterReserves() {
-    crumbs('Réserves providers');
+    crumbs('Pilotage', 'Réserves providers');
+    // Already seen: the last known state at once, then the server's.
+    if (resData) renderReserves(resData); else skeleton($('resTable'), 3, 'div');
+    if (resSettings) renderResSettings(); else skeleton($('resSettings'), 2, 'li');
     await load('reserves', async () => {
-      const r = (await LP.api('GET', '/v1/admin-console/reserves')).reserves;
-      const gapOf = (p) => {
-        if (!p.checked) return el('span', { class: 'muted', text: 'Pas relevé' });
-        const gap = Number(p.checked.gap);
-        return el('span', { class: gap === 0 ? 'ok-text' : 'err-text', text: gap === 0 ? 'Aucun écart' : (gap > 0 ? '+' : '−') + money(Math.abs(gap)) });
+      const [r, st] = await Promise.all([LP.api('GET', '/v1/admin-console/reserves'), LP.api('GET', '/v1/admin-console/reserves-settings')]);
+      resData = r.reserves; resSettings = st.settings; resRanges = st.ranges;
+      renderReserves(resData); renderResSettings();
+    });
+  }
+  $('resRead').addEventListener('click', async () => {
+    say('reservesMsg', ''); $('resRead').disabled = true;
+    await guarded(async () => {
+      const r = await LP.api('POST', '/v1/admin-console/reserves/read');
+      resData = r.reserves; renderReserves(resData);
+      const failed = r.read.filter((x) => !x.ok);
+      if (failed.length) say('reservesMsg', failed.map((x) => provName(x.provider) + ' : ' + x.error).join(' · '), 'err');
+      else say('reservesMsg', r.read.map((x) => provName(x.provider) + ' : ' + x.wallets + ' wallet' + (x.wallets > 1 ? 's' : '') + ' lu' + (x.wallets > 1 ? 's' : '')).join(' · ') || 'Aucun fournisseur à lire.', 'ok');
+    }, 'reservesMsg');
+    $('resRead').disabled = false;
+  });
+
+  async function enterReserve(key) {
+    crumbs('Réserves providers', 'Réserve');
+    $('reserveTitle').textContent = 'Réserve';
+    // Another wallet: the shimmer, never the previous one's numbers.
+    $('resDetail').replaceChildren(); skeleton($('resDetail'), 5, 'div');
+    await load('reserve', async () => {
+      const [d, st] = await Promise.all([LP.api('GET', '/v1/admin-console/reserves/' + encodeURIComponent(key)), LP.api('GET', '/v1/admin-console/reserves-settings')]);
+      resSettings = st.settings; resRanges = st.ranges;
+      const w = d.wallet;
+      $('reserveTitle').textContent = resName(w);
+      const box = el('div', { class: 'rows' });
+      rows(box, [
+        ['Encaissé', money(w.money_in)], ['Versé', money(w.money_out)],
+        ['Programmés ou retenus (encore dans le solde)', money(w.waiting_scheduled)], ['Demandés au fournisseur (réservés chez lui)', money(w.waiting_asked)],
+        ['Attendu chez lui', amountText(w.expected), true],
+      ].concat(w.checked ? [
+        ['Dernier solde', money(w.checked.balance) + ' · ' + fmtDateTime(w.checked.at)],
+        ['Réservé chez lui', w.checked.pending === null ? '—' : money(w.checked.pending)],
+        ['Écart', Number(w.checked.gap) === 0 ? 'Aucun' : signedMoney(w.checked.gap)],
+        ['Disponible pour envoyer', amountText(w.available), true],
+      ] : [['Dernier solde', 'Jamais relevé']]));
+      const levels = {
+        get: () => resSettings.wallets[w.key] || { min: 0, low: 0, target: 0 },
+        set: () => {},
+        put: async (next) => {
+          const all = Object.assign({}, resSettings, { wallets: Object.assign({}, resSettings.wallets) });
+          all.wallets[w.key] = next;
+          resSettings = (await LP.api('PUT', '/v1/admin-console/reserves-settings', all)).settings;
+          return resSettings.wallets[w.key];
+        },
+        after: () => enterReserve(key),
+        msg: 'reserveMsg',
       };
-      table($('resTable'), [{ label: 'Provider' }, { label: 'Encaissé', cls: 'num' }, { label: 'Versé', cls: 'num' }, { label: 'Pas encore parti', cls: 'num' }, { label: 'Attendu chez lui', cls: 'num' }, { label: 'Solde relevé', cls: 'num' }, { label: 'Écart', cls: 'num' }],
-        r.providers.map((p) => ({ cells: [
-          cell(PROVIDER[p.provider] || p.provider, num(p.movements) + ' mouvements' + (p.last_at ? ' · dernier ' + fmtDateTime(p.last_at) : '')),
-          money(p.money_in), money(p.money_out),
-          Number(p.waiting) ? cell(money(p.waiting), num(p.waiting_count) + ' envoi' + (p.waiting_count > 1 ? 's' : '')) : '—',
-          el('b', { class: Number(p.expected) < 0 ? 'err-text' : '', text: (Number(p.expected) < 0 ? '−' : '') + money(Math.abs(Number(p.expected))) }),
-          p.checked ? cell(money(p.checked.balance), fmtDateTime(p.checked.at)) : '—',
-          gapOf(p),
-        ] }))
-          .concat(r.providers.length > 1 ? [{ fixed: true, cells: [el('b', { text: 'Total' }), '', '', '', el('b', { text: money(r.expected_total) }), '', ''] }] : []),
-        'Aucun mouvement avec un provider pour le moment.');
-      const choices = [...new Set(r.providers.map((p) => p.provider.toLowerCase()).concat(['saspay', 'pawapay']))];
-      $('checkProvider').replaceChildren(...choices.map((c) => el('option', { value: c, text: PROVIDER[c.toUpperCase()] || c })));
-      const h = r.held;
-      rows($('resHeld'), [['Utilisateurs', money(h.users)], ['Invités', money(h.guests)], ['Apps', money(h.apps)], [MAIN + ' (revenus LightPay compris)', money(h.main)], ['Frais de retrait en attente de confirmation', money(h.revenue)]].concat(TEST && Number(h.issued) ? [['Émis par le faucet', '−' + money(h.issued)]] : [])
-        .concat(Number(h.other) ? [['Autres', money(h.other)]] : []).concat([['Dont bloqué en séquestre', money(h.locked)], ['Total', money(r.covered), true]]));
-      $('resCheck').replaceChildren(el('p', { class: 'check ' + (r.balanced ? 'ok' : 'err') }, [icon(r.balanced ? 'check' : 'alert'),
-        r.balanced ? 'Couvert : réserves ' + money(r.reserve_total) + ' = wallets ' + money(r.covered) + '.' : 'Écart : réserves ' + money(r.reserve_total) + ', wallets ' + money(r.covered) + '.']));
+      const levelList = el('ul', { class: 'fee-list' }, [
+        settingItem(['min', 'Minimum de sécurité', 'Jamais compté comme disponible pour envoyer', 'fcfa', resRanges.level], levels),
+        settingItem(['low', 'Seuil bas', 'Sous ce disponible, la ligne passe en alerte (0 : pas d’alerte)', 'fcfa', resRanges.level], levels),
+        settingItem(['target', 'Niveau cible', 'Le niveau qu’un rééquilibrage rétablit (0 : pas encore fixé)', 'fcfa', resRanges.level], levels),
+      ]);
+      const history = el('div', { id: 'resHistory' });
+      table(history, [{ label: 'Relevé' }, { label: 'Solde', cls: 'num' }, { label: 'Réservé', cls: 'num' }],
+        d.history.map((h) => ({ cells: [cell(fmtDateTime(h.checked_at), byWho(h.checked_by) + (h.note ? ' · ' + h.note : '')), money(h.balance), h.pending === null ? '—' : money(h.pending)], keys: [new Date(h.checked_at).getTime(), Number(h.balance), Number(h.pending || 0)] })),
+        'Aucun relevé pour ce wallet.');
+      $('resDetail').replaceChildren(detailPanel('Wallet chez le fournisseur', [resState(w), box]), detailPanel('Niveaux', [levelList]), flushPanel('Relevés', history));
     });
   }
 
@@ -572,9 +659,9 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     if (!balance) return say('checkMsg', 'Indiquez le solde affiché par le provider.', 'err');
     $('checkGo').disabled = true;
     await guarded(async () => {
-      await LP.api('POST', '/v1/admin-console/reserves/checks', { provider: $('checkProvider').value, balance: balance, note: $('checkNote').value.trim() || undefined });
+      const r = await LP.api('POST', '/v1/admin-console/reserves/checks', { provider: $('checkProvider').value, country: $('checkCountry').value, balance: balance, note: $('checkNote').value.trim() || undefined });
       $('checkBalance').value = ''; $('checkNote').value = '';
-      await enterReserves();
+      resData = r.reserves; renderReserves(resData);
       say('checkMsg', 'Relevé enregistré.', 'ok');
     }, 'checkMsg');
     $('checkGo').disabled = false;
@@ -1319,6 +1406,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   const screens = {
     home: { enter: withNav('home', enterHome) },
     reserves: { enter: withNav('reserves', enterReserves) },
+    reserve: { parent: 'reserves', enter: withNav('reserves', enterReserve) },
     users: { enter: withNav('users', enterUsers) },
     user: { parent: 'users', enter: withNav('users', enterUser) },
     apps: { enter: withNav('apps', enterApps) },
@@ -1344,7 +1432,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     root: 'home',
     // #/users/<id> opens the item screen "user" (and so on): a list and its item never share a screen.
     resolve: (route) => {
-      const ITEM = { users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
+      const ITEM = { reserves: 'reserve', users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
       const i = route.indexOf('/');
       if (i < 0) return [route, null];
       const list = route.slice(0, i);
@@ -1374,6 +1462,9 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       $('meName').textContent = r.admin.email || 'Administrateur';
       syncEnvLinks();
       nav.start();
+      // Reserve alerts show in the menu from the start, whatever screen opens first.
+      const first = nav.current();
+      if (!first || first.name !== 'reserves') void refreshResCount();
     } catch (e) {
       if (e.signIn) return signIn();
       if (e.status === 403) { showOnly(document.querySelector('[data-screen="denied"]')); return; }

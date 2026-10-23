@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Environment } from '../types/index.js';
-import type { MobileMoneyProvider, RailOperation, RailResult } from './mobile-money.js';
+import type { MobileMoneyProvider, ProviderBalance, RailOperation, RailResult } from './mobile-money.js';
 import { providerFeeEstimate } from './fees.js';
 import { providerCode } from '../rails/registry.js';
 
@@ -14,6 +14,7 @@ import { providerCode } from '../rails/registry.js';
  *                                          ACCEPTED · PROCESSING · IN_RECONCILIATION -> COMPLETED | FAILED
  *   payout    POST /v2/payouts            { payoutId, recipient, amount, currency, … }
  *   status    GET  /v2/payouts/{id}       … ENQUEUED too, then COMPLETED | FAILED
+ *   balances  GET  /v2/wallet-balances    { balances: [{ country (alpha-3), balance, currency, provider }] }
  *   callbacks POST /v1/providers/pawapay/callback (deposits and payouts, final states only):
  *             only a hint, the status is re-read from the API before any money moves.
  *
@@ -164,5 +165,23 @@ export class PawaPayProvider implements MobileMoneyProvider {
   async payoutStatus(op: RailOperation): Promise<RailResult> {
     const r = await this.status(op, `/v2/payouts/${pawaPayId(op.id)}`);
     return { status: r.status, failureCode: r.failureCode, providerReference: pawaPayId(op.id) };
+  }
+
+  // ------------------------------------------------------------ balances
+
+  /** Our wallet in each country; wallets kept for a single operator are added to their country's. */
+  async balances(env: Environment): Promise<ProviderBalance[]> {
+    if (!this.configured(env)) return [];
+    const json = await this.call(env, 'GET', '/v2/wallet-balances');
+    const out = new Map<string, ProviderBalance>();
+    for (const b of Array.isArray(json?.balances) ? json.balances : []) {
+      const country = String(b.country ?? '').toUpperCase();
+      const currency = String(b.currency ?? '');
+      const key = `${country}:${currency}`;
+      const prev = out.get(key);
+      const available = whole(b.balance) ?? 0n;
+      out.set(key, { country, currency, available: (prev?.available ?? 0n) + available });
+    }
+    return [...out.values()];
   }
 }
