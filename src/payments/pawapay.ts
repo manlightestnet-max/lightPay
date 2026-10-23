@@ -2,11 +2,11 @@ import crypto from 'crypto';
 import { Environment } from '../types/index.js';
 import type { MobileMoneyProvider, RailOperation, RailResult } from './mobile-money.js';
 import { providerFeeEstimate } from './fees.js';
+import { providerCode } from '../rails/registry.js';
 
 /**
- * pawaPay Merchant API v2 (https://docs.pawapay.io/v2) — Congo-Brazzaville here
- * (MTN_MOMO_COG, AIRTEL_COG, XAF without decimals, numbers 242…). Our network codes are
- * pawaPay's provider codes.
+ * pawaPay Merchant API v2 (https://docs.pawapay.io/v2). Provider codes come from the registry
+ * (src/rails/registry.ts: MTN_MOMO_COG, AIRTEL_COG…, numbers in international form 242…).
  *
  *   collect   POST /v2/deposits           { depositId, payer, amount, currency, … }
  *                                          -> ACCEPTED | DUPLICATE_IGNORED | REJECTED (+ failureReason)
@@ -131,7 +131,7 @@ export class PawaPayProvider implements MobileMoneyProvider {
     const fee = providerFeeEstimate(op.environment, this.name, op.amount);
     return this.initiate(op, '/v2/deposits', {
       depositId: pawaPayId(op.id),
-      payer: { type: 'MMO', accountDetails: { phoneNumber: op.msisdn, provider: op.network } },
+      payer: { type: 'MMO', accountDetails: { phoneNumber: op.msisdn, provider: providerCode('pawapay', op.network) ?? op.network } },
       amount: (op.amount + fee).toString(),
       currency: op.currency,
       clientReferenceId: op.id,
@@ -152,7 +152,7 @@ export class PawaPayProvider implements MobileMoneyProvider {
   async requestPayout(op: RailOperation): Promise<RailResult> {
     return this.initiate(op, '/v2/payouts', {
       payoutId: pawaPayId(op.id),
-      recipient: { type: 'MMO', accountDetails: { phoneNumber: op.msisdn, provider: op.network } },
+      recipient: { type: 'MMO', accountDetails: { phoneNumber: op.msisdn, provider: providerCode('pawapay', op.network) ?? op.network } },
       amount: op.amount.toString(),
       currency: op.currency,
       clientReferenceId: op.id,

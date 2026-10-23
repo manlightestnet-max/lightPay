@@ -119,8 +119,8 @@ export async function overview(env: Environment, period: Period) {
       `SELECT (SELECT COUNT(*) FROM transactions t WHERE t.status = 'SUCCESS' AND t.created_at >= ${from} AND ${NOT_CANCELLED})::int AS transactions,
               (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE status = 'SUCCESS' AND type IN ('PAYMENT', 'HOLD') AND created_at >= ${from})::text AS payments_volume,
               (SELECT COUNT(*) FROM transactions WHERE status = 'SUCCESS' AND type IN ('PAYMENT', 'HOLD') AND created_at >= ${from})::int AS payments,
-              (SELECT COUNT(*) FROM wallets WHERE account_type = 'USER' AND app_id = 'mainapp')::int AS users,
-              (SELECT COUNT(*) FROM wallets WHERE account_type = 'USER' AND app_id = 'mainapp' AND created_at >= ${from})::int AS new_users,
+              (SELECT COUNT(*) FROM wallets WHERE account_type = 'USER' AND app_id = 'mainapp' AND is_default)::int AS users,
+              (SELECT COUNT(*) FROM wallets WHERE account_type = 'USER' AND app_id = 'mainapp' AND is_default AND created_at >= ${from})::int AS new_users,
               (SELECT COUNT(*) FROM wallets WHERE account_type = 'GUEST')::int AS guests,
               (SELECT COUNT(*) FROM apps WHERE id <> 'mainapp' AND is_active = TRUE)::int AS apps,
               (SELECT COUNT(*) FROM connections WHERE status = 'ACTIVE')::int AS connections`,
@@ -352,7 +352,7 @@ export async function listUsers(env: Environment, search: string, limit: number,
             (SELECT COUNT(*) FROM connections c WHERE c.wallet_id = w.id AND c.status = 'ACTIVE')::int AS apps,
             (SELECT MAX(le.created_at) FROM ledger_entries le WHERE le.wallet_id = w.id) AS last_move_at
      FROM wallets w
-     WHERE w.app_id = 'mainapp' AND w.account_type = 'USER' AND w.currency = $1
+     WHERE w.app_id = 'mainapp' AND w.account_type = 'USER' AND w.currency = $1 AND w.is_default
        AND ($2 = '' OR lower(w.metadata->>'email') LIKE '%' || $2 || '%' OR lower(w.metadata->>'name') LIKE '%' || $2 || '%')
      ORDER BY w.created_at DESC LIMIT $3 OFFSET $4`,
     [CURRENCY, q, limit, offset],
@@ -395,7 +395,7 @@ const walletMoves = (env: Environment, walletId: string, limit: number) =>
 export async function listApps(env: Environment) {
   return query(
     `SELECT a.id, a.name, a.is_active, a.owner_uid, a.created_at,
-            (SELECT metadata->>'email' FROM wallets o WHERE o.app_id = 'mainapp' AND o.account_id = 'user:' || a.owner_uid LIMIT 1) AS owner_email,
+            (SELECT metadata->>'email' FROM wallets o WHERE o.app_id = 'mainapp' AND o.account_type = 'USER' AND o.owner_id = 'user:' || a.owner_uid AND o.is_default LIMIT 1) AS owner_email,
             (SELECT COUNT(*) FROM connections c WHERE c.app_id = a.id AND c.status = 'ACTIVE')::int AS users,
             (SELECT COALESCE(SUM(amount), 0) FROM transactions t WHERE t.app_id = a.id AND t.status = 'SUCCESS' AND t.type IN ('PAYMENT', 'HOLD') AND t.created_at >= NOW() - INTERVAL '30 days')::text AS volume_30d,
             (SELECT COUNT(*) FROM transactions t WHERE t.app_id = a.id AND t.status = 'SUCCESS')::int AS transactions
@@ -535,7 +535,7 @@ export async function sendFromMain(env: Environment, admin: AdminUser, input: { 
   const note = String(input.note ?? '').trim().slice(0, 140) || undefined;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new AdminError('Adresse e-mail du destinataire invalide.', 'INVALID_RECIPIENT');
   const [recipient] = await query(
-    `SELECT id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND currency = $1 AND status = 'ACTIVE' AND lower(metadata->>'email') = $2 LIMIT 1`,
+    `SELECT id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND currency = $1 AND status = 'ACTIVE' AND is_default AND lower(metadata->>'email') = $2 LIMIT 1`,
     [CURRENCY, to],
     env
   );

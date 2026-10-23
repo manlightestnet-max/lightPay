@@ -25,6 +25,7 @@ import { lockedMessage, levelNow, refreshLockdown, withBypass } from './security
 import { dispatchDuePayouts } from './db/payouts.js';
 import { purgeOldAttempts } from './db/withdrawal-guard.js';
 import { refreshProviderSettings } from './payments/provider-settings.js';
+import { refreshRegistry } from './rails/registry.js';
 import { loadTemplates } from './notify/templates.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
 import { registerRateLimits } from './security/rate-limit.js';
@@ -382,10 +383,11 @@ async function start() {
     // Fees and minimums come from the admin's settings; re-read every minute.
     await refreshFeeSettings();
     await refreshProviderSettings();
+    await refreshRegistry();
     await refreshControlSettings();
     // Texts of the automatic messages, as the admin wrote them (Administration > Messages).
     await loadTemplates();
-    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); void refreshControlSettings(); void loadTemplates(); }, 60_000).unref();
+    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); void refreshRegistry(); void refreshControlSettings(); void loadTemplates(); }, 60_000).unref();
 
     await server.listen({
       port: config.port,

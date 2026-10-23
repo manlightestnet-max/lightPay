@@ -3,6 +3,7 @@ import { ConnectError } from './connect.js';
 import { Environment } from '../types/index.js';
 import type { LightPayUser } from '../security/user-token.js';
 import { photoOf } from './avatars.js';
+import { ownerOf, uidOfOwner } from '../wallets/owner.js';
 
 /**
  * Identity-level data, one per LightPay person (production database, both ledgers use it):
@@ -69,7 +70,7 @@ export async function findRecipient(environment: Environment, toRaw: unknown, cu
   let row: any;
   if (byEmail) {
     [row] = await query(
-      `SELECT id, account_id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND lower(metadata->>'email') = $3 LIMIT 1`,
+      `SELECT id, owner_id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND is_default AND lower(metadata->>'email') = $3 LIMIT 1`,
       [environment, currency, to],
       environment
     );
@@ -77,8 +78,8 @@ export async function findRecipient(environment: Environment, toRaw: unknown, cu
     const uid = await uidOfUsername(to);
     if (uid) {
       [row] = await query(
-        `SELECT id, account_id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND account_id = $3 LIMIT 1`,
-        [environment, currency, `user:${uid}`],
+        `SELECT id, owner_id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND is_default AND owner_id = $3 LIMIT 1`,
+        [environment, currency, ownerOf(uid)],
         environment
       );
     } else if (!/^@?[a-z0-9._]+$/.test(to)) {
@@ -86,7 +87,7 @@ export async function findRecipient(environment: Environment, toRaw: unknown, cu
     }
   }
   if (!row) throw new ConnectError(byEmail ? 'Aucun compte LightPay avec cet e-mail.' : 'Aucun compte LightPay avec ce nom.', 'RECIPIENT_NOT_FOUND', 404);
-  const uid = String(row.account_id).replace(/^user:/, '');
+  const uid = uidOfOwner(row.owner_id) ?? '';
   return {
     walletId: row.id as string,
     uid,

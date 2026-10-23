@@ -3,7 +3,8 @@ import { LedgerEngine } from './ledger.js';
 import { Escrow, HoldRecord } from './escrow.js';
 import { query } from './pool.js';
 import { Environment } from '../types/index.js';
-import { MOBILE_NETWORKS, MobileNetwork, NETWORK_NAMES, RailOperation, RailResult, networkOfMsisdn, normalizeCongoMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
+import { MobileNetwork, RailOperation, RailResult, mobileNetworks, networkName, networkOfMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
+import { normalizeMsisdn } from '../rails/registry.js';
 import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayRevenueWallet } from './fee-wallet.js';
 import { appName, failureOf, logActivity, logDirectSale, reasonFor, updateActivity } from './activity.js';
@@ -13,7 +14,8 @@ import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFe
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { LightPayUser } from '../security/user-token.js';
 import { guardMoney } from '../security/lockdown.js';
-import { getConnection, payeeWallet, requireScope, userWallet } from './connect.js';
+import { getConnection, payeeWallet, requireScope } from './connect.js';
+import { userWallet } from '../wallets/index.js';
 
 /**
  * CHECKOUT — an app asks LightPay for a payment (server side, secret key); the payer pays
@@ -241,7 +243,7 @@ export async function publicView(id: string) {
     cancel_url: session.cancel_url,
     expires_at: session.expires_at,
     // What the payer will pay by mobile money, per network (exact once the operator reports it).
-    fees: Object.fromEntries(MOBILE_NETWORKS.map((n) => [n, quote(session.environment, BigInt(session.amount), providerFor(session.environment, n).name)])) as Record<MobileNetwork, FeeQuote>,
+    fees: Object.fromEntries(mobileNetworks().map((n) => [n, quote(session.environment, BigInt(session.amount), providerFor(session.environment, n).name)])) as Record<MobileNetwork, FeeQuote>,
     last_attempt: attempt
       ? {
           status: attempt.status,
@@ -279,10 +281,10 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   const environment = session.environment;
   if (session.status !== 'OPEN') throw new CheckoutError(`This payment is ${session.status.toLowerCase()}`, 'SESSION_NOT_OPEN', 409);
   if (!session.methods.includes('mobile_money')) throw new CheckoutError('Mobile money is not accepted for this payment', 'METHOD_NOT_ALLOWED');
-  if (!MOBILE_NETWORKS.includes(network as MobileNetwork)) throw new CheckoutError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
-  const msisdn = normalizeCongoMsisdn(msisdnInput);
+  if (!mobileNetworks().includes(network)) throw new CheckoutError(`network: ${mobileNetworks().join(', ')}`, 'INVALID_NETWORK');
+  const msisdn = normalizeMsisdn(msisdnInput);
   if (!msisdn) throw new CheckoutError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81', 'INVALID_MSISDN');
-  if (networkOfMsisdn(msisdn) !== network) throw new CheckoutError(`Ce numéro n’est pas un numéro ${NETWORK_NAMES[network as MobileNetwork]}.`, 'NETWORK_MISMATCH');
+  if (networkOfMsisdn(msisdn) !== network) throw new CheckoutError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH');
   if (BigInt(session.amount) < minMobileMoneyAmount(environment)) {
     throw new CheckoutError(`Le mobile money accepte au minimum ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   }

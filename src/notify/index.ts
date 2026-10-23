@@ -6,6 +6,7 @@ import { ACCOUNT, ActivityRow, Message, activityMessage } from './catalog.js';
 import { sendEmail } from './email.js';
 import { sendPush } from './push.js';
 import { absoluteUrl, withAvatars } from '../db/avatars.js';
+import { uidOfOwner } from '../wallets/owner.js';
 
 /**
  * Automatic messages, like a SaaS: every money operation that changes state, every new
@@ -32,9 +33,9 @@ interface Person {
 
 /** The person behind a wallet (USER wallets only; a guest wallet is a bare phone number). */
 async function personOfWallet(env: Environment, walletId: string): Promise<Person | null> {
-  const [w] = await query(`SELECT account_type, account_id, metadata FROM wallets WHERE id = $1`, [walletId], env);
-  if (!w || w.account_type !== 'USER' || !String(w.account_id ?? '').startsWith('user:')) return null;
-  return { uid: String(w.account_id).slice(5), email: w.metadata?.email ?? null };
+  const [w] = await query(`SELECT account_type, owner_id, metadata FROM wallets WHERE id = $1`, [walletId], env);
+  const uid = w?.account_type === 'USER' ? uidOfOwner(w.owner_id) : null;
+  return uid ? { uid, email: w.metadata?.email ?? null } : null;
 }
 
 /** Sends one message (push to every phone of the person in this environment, e-mail if asked). */

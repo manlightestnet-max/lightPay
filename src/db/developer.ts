@@ -6,7 +6,7 @@ import { APP_ID_PATTERN, isReservedAppId } from '../security/app-identity.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { Environment } from '../types/index.js';
 import { LedgerEngine } from './ledger.js';
-import { userWallet } from './connect.js';
+import { userWallet } from '../wallets/index.js';
 import { logActivity } from './activity.js';
 import { LightPayUser } from '../security/user-token.js';
 import { logoPath } from './avatars.js';

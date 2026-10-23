@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import { FastifyInstance } from 'fastify';
 import { CheckoutError, payWithWallet, publicView, startMobileMoney } from '../db/checkout.js';
-import { ConnectError, findUserWallet, validateAuthorizeRequest } from '../db/connect.js';
+import { ConnectError, validateAuthorizeRequest } from '../db/connect.js';
+import { findUserWallet } from '../wallets/index.js';
 import { EscrowError } from '../db/escrow.js';
 import { pinOk, requireUser } from './me.js';
 import { accountPage, connectPage, consolePage, docsPage, hostedCsp, lightpaySdk, payPage } from '../pages/hosted.js';

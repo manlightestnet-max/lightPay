@@ -17,9 +17,12 @@ import { Environment } from '../types/index.js';
 import { SasPayProvider } from './saspay.js';
 import { PawaPayProvider } from './pawapay.js';
 import { RailKind, providerSettings, servesLedger } from './provider-settings.js';
+import { enabledRails, railByNetwork, railOfMsisdn } from '../rails/registry.js';
 
-export type MobileNetwork = 'MTN_MOMO_COG' | 'AIRTEL_COG';
-export const MOBILE_NETWORKS: MobileNetwork[] = ['MTN_MOMO_COG', 'AIRTEL_COG'];
+/** A rail's network code (MTN_MOMO_COG…), from the registry (src/rails/registry.ts). */
+export type MobileNetwork = string;
+/** The networks people can use now (enabled rails), in display order. */
+export const mobileNetworks = (): MobileNetwork[] => enabledRails().map((r) => r.network);
 
 export type RailStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED';
 
@@ -60,21 +63,73 @@ export interface MobileMoneyProvider {
   requestPayout(op: RailOperation): Promise<RailResult>;
   /** Current state of a payout. */
   payoutStatus(op: RailOperation): Promise<RailResult>;
+
+  // Optional: what a provider offers beyond collecting and paying out. Absent = it does not do it.
+  /** What it serves for this ledger (countries, operators, limits, state), to fill the registry. */
+  sync?(env: Environment): Promise<ProviderRailInfo[]>;
+  /** The real balance of each of its country wallets (reserve inspection). */
+  balances?(env: Environment): Promise<ProviderBalance[]>;
+  /** Moves our money between two of its country wallets (rebalancing); SasPay only, pawaPay has no API for it. */
+  transfer?(op: TransferOperation): Promise<TransferResult>;
+  transferStatus?(op: TransferOperation): Promise<TransferResult>;
+  /** Gives a collection back to the payer natively (pawaPay), instead of a payout. */
+  refund?(op: RailOperation & { collectionReference: string }): Promise<RailResult>;
 }
 
-/** Congo prefixes: MTN 06, Airtel 05 and 04. A number only works with its own operator. */
-export function networkOfMsisdn(msisdn: string): MobileNetwork | null {
-  const prefix = msisdn.replace(/^242/, '').slice(0, 2);
-  return prefix === '06' ? 'MTN_MOMO_COG' : prefix === '05' || prefix === '04' ? 'AIRTEL_COG' : null;
+/** One operator a provider serves, as it reports it. */
+export interface ProviderRailInfo {
+  /** ISO alpha-3 country. */
+  country: string;
+  currency: string;
+  /** The provider's own code for the operator (mtn_cg, MTN_MOMO_COG). */
+  providerCode: string;
+  collection: boolean;
+  payout: boolean;
+  minAmount?: bigint;
+  maxAmount?: bigint;
+  /** OPERATIONAL, DELAYED, CLOSED… when the provider reports it. */
+  state?: string;
 }
-export const NETWORK_NAMES: Record<MobileNetwork, string> = { MTN_MOMO_COG: 'MTN MoMo', AIRTEL_COG: 'Airtel Money' };
 
-/** Congo numbers: "06 512 44 81", "+242 06…", "24206…" → "242065124481". */
-export function normalizeCongoMsisdn(input: string): string | null {
-  const digits = String(input ?? '').replace(/\D/g, '');
-  const national = digits.startsWith('242') ? digits.slice(3) : digits;
-  return /^0[4-6]\d{7}$/.test(national) ? `242${national}` : null;
+/** One of our wallets at a provider (one per country, sometimes per currency). */
+export interface ProviderBalance {
+  /** ISO alpha-3 country. */
+  country: string;
+  currency: string;
+  /** What can be used now, in whole units. */
+  available: bigint;
+  /** Reserved by operations not finished yet, when the provider reports it. */
+  pending?: bigint;
+  frozen?: boolean;
 }
+
+export interface TransferOperation {
+  /** Our id (tr_…), also the provider's idempotency key. */
+  id: string;
+  environment: Environment;
+  /** ISO alpha-3 countries. */
+  fromCountry: string;
+  toCountry: string;
+  /** In the source wallet's currency. */
+  amount: bigint;
+  providerReference?: string | null;
+}
+
+export interface TransferResult {
+  status: RailStatus;
+  providerReference?: string;
+  /** What arrived in the destination wallet, its currency, the rate and the provider's fee (destination currency). */
+  received?: bigint;
+  receivedCurrency?: string;
+  rate?: string;
+  fee?: bigint;
+  failureCode?: string;
+}
+
+/** The operator of a number (international form), from the registry's prefixes. A number only works with its own operator. */
+export const networkOfMsisdn = (msisdn: string): MobileNetwork | null => railOfMsisdn(msisdn)?.network ?? null;
+/** What people call a network: "MTN MoMo". */
+export const networkName = (network: MobileNetwork) => railByNetwork(network)?.name ?? network;
 
 /**
  * SIMULATOR — deterministic by the last digit of the number (like pawaPay test numbers):

@@ -14,7 +14,7 @@ import {
 } from '../db/connect.js';
 import { EscrowError } from '../db/escrow.js';
 import { refundBreakdown } from '../payments/fees.js';
-import { MOBILE_NETWORKS, providerFor } from '../payments/mobile-money.js';
+import { mobileNetworks, providerFor } from '../payments/mobile-money.js';
 
 const context = (request: FastifyRequest) => ({
   appId: request.appData!.id,
@@ -210,7 +210,7 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
     const amount = BigInt(raw);
     const { environment } = context(request);
     const quotes = Object.fromEntries(
-      MOBILE_NETWORKS.map((network) => {
+      mobileNetworks().map((network) => {
         const b = refundBreakdown(environment, amount, providerFor(environment, network, 'payout').name);
         return [network, { sent: b.sent.toString(), operator_fee: b.operator_fee.toString(), lightpay_fee: b.lightpay_fee.toString(), fees: (amount - b.sent).toString() }];
       })

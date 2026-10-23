@@ -128,7 +128,7 @@ export async function withAvatars<T extends { id: string; kind: string }>(enviro
 /** Shows or hides this person's photo to the people they pay or are paid by (both databases). */
 export async function setPhotoVisible(uid: string, visible: boolean) {
   await bothDatabases(
-    `UPDATE wallets SET metadata = metadata || $2, updated_at = NOW() WHERE app_id = 'mainapp' AND account_id = $1`,
+    `UPDATE wallets SET metadata = metadata || $2, updated_at = NOW() WHERE app_id = 'mainapp' AND account_type = 'USER' AND owner_id = $1`,
     [`user:${uid}`, JSON.stringify({ hide_photo: !visible })]
   );
 }

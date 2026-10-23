@@ -4,8 +4,10 @@ import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
 import { findRecipient } from './identity.js';
 import { LightPayUser } from '../security/user-token.js';
-import { ConnectError, SCOPES, Scope, userWallet } from './connect.js';
-import { MOBILE_NETWORKS, MobileNetwork, NETWORK_NAMES, networkOfMsisdn, normalizeCongoMsisdn } from '../payments/mobile-money.js';
+import { ConnectError, SCOPES, Scope } from './connect.js';
+import { busyError, closeAllWallets, listWallets, userWallet, walletBusy } from '../wallets/index.js';
+import { MobileNetwork, mobileNetworks, networkName, networkOfMsisdn } from '../payments/mobile-money.js';
+import { normalizeMsisdn } from '../rails/registry.js';
 import { sendPayout } from './payouts.js';
 import { failureOf, logActivity } from './activity.js';
 import { lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
@@ -120,7 +122,7 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   await recordWithdrawalAttempt(environment, user, idempotencyKey); // too many attempts: the account is suspended
   const wallet = await activeWallet(environment, user);
   const refused = async (err: ConnectError) => {
-    const phone = normalizeCongoMsisdn(String(input.msisdn ?? ''));
+    const phone = normalizeMsisdn(String(input.msisdn ?? ''));
     await logActivity(environment, {
       walletId: wallet.id, kind: 'WITHDRAWAL', direction: 'OUT', status: 'FAILED', amount: safeAmount(input.amount), currency: wallet.currency,
       counterparty: phone ? maskMsisdn(phone) : null, reasonCode: err.code, reason: err.message, refType: 'withdraw_request', refId: `withdraw:${user.uid}:${idempotencyKey}`,
@@ -136,10 +138,10 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   const minimum = minWithdrawalAmount(environment);
   if (amount < minimum) throw await refused(new ConnectError(`Retrait minimum : ${minimum} FCFA.`, 'BELOW_MINIMUM'));
   const network = String(input.network ?? '') as MobileNetwork;
-  if (!MOBILE_NETWORKS.includes(network)) throw await refused(new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK'));
-  const msisdn = normalizeCongoMsisdn(String(input.msisdn ?? ''));
+  if (!mobileNetworks().includes(network)) throw await refused(new ConnectError(`network: ${mobileNetworks().join(', ')}`, 'INVALID_NETWORK'));
+  const msisdn = normalizeMsisdn(String(input.msisdn ?? ''));
   if (!msisdn) throw await refused(new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN'));
-  if (networkOfMsisdn(msisdn) !== network) throw await refused(new ConnectError(`Ce numéro n’est pas un numéro ${NETWORK_NAMES[network]}.`, 'NETWORK_MISMATCH'));
+  if (networkOfMsisdn(msisdn) !== network) throw await refused(new ConnectError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH'));
   const provider = providerFor(environment, network, 'payout').name;
   const operatorFee = providerPayoutFee(environment, provider, amount);
   const lightpayFee = lightpayPayoutFee(environment, amount);
@@ -217,29 +219,21 @@ export async function updateConnection(environment: Environment, user: LightPayU
 export async function closeAccount(user: LightPayUser) {
   const envs: Environment[] = ['production', 'sandbox'];
   for (const env of envs) {
-    const [w] = await query(`SELECT * FROM wallets WHERE app_id = 'mainapp' AND account_id = $1 AND environment = $2`, [`user:${user.uid}`, env], env);
-    if (!w) continue;
-    if (BigInt(w.available_balance) !== 0n || BigInt(w.locked_balance) !== 0n) {
-      throw new ConnectError(
-        `Videz d’abord votre wallet${env === 'sandbox' ? ' de test' : ''} : il reste de l’argent disponible ou bloqué.`,
-        'BALANCE_NOT_EMPTY',
-        409
-      );
+    for (const w of await listWallets(env, user.uid)) {
+      const busy = await walletBusy(env, w);
+      if (busy === 'BALANCE_NOT_EMPTY') {
+        throw new ConnectError(
+          `Videz d’abord ${w.is_default ? 'votre wallet' : `le wallet « ${w.label} »`}${env === 'sandbox' ? ' de test' : ''} : il reste de l’argent disponible ou bloqué.`,
+          busy,
+          409
+        );
+      }
+      if (busy) throw busyError(busy);
     }
-    const [pending] = await query(
-      `SELECT 1 FROM holds WHERE (wallet_id = $1 OR payer_wallet_id = $1) AND status IN ('ACTIVE', 'DISPUTED') LIMIT 1`,
-      [w.id],
-      env
-    );
-    if (pending) throw new ConnectError('Des paiements sont encore en attente de validation.', 'PENDING_PAYMENTS', 409);
   }
   for (const env of envs) {
     await query(`UPDATE connections SET status = 'REVOKED', revoked_at = NOW(), updated_at = NOW() WHERE user_uid = $1 AND status = 'ACTIVE'`, [user.uid], env);
-    await query(
-      `UPDATE wallets SET status = 'CLOSED', metadata = metadata || '{"closed": true}'::jsonb, updated_at = NOW() WHERE app_id = 'mainapp' AND account_id = $1`,
-      [`user:${user.uid}`],
-      env
-    );
+    await closeAllWallets(env, user.uid);
   }
   return { closed: true };
 }
@@ -248,6 +242,6 @@ export async function closeAccount(user: LightPayUser) {
 export function quoteWithdrawal(environment: Environment, amountInput: unknown, networkInput: unknown) {
   const amount = positive(amountInput);
   const network = String(networkInput ?? '') as MobileNetwork;
-  if (!MOBILE_NETWORKS.includes(network)) throw new ConnectError(`network: ${MOBILE_NETWORKS.join(', ')}`, 'INVALID_NETWORK');
+  if (!mobileNetworks().includes(network)) throw new ConnectError(`network: ${mobileNetworks().join(', ')}`, 'INVALID_NETWORK');
   return withdrawalQuote(environment, amount, providerFor(environment, network, 'payout').name, 'XAF');
 }

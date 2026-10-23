@@ -1,9 +1,10 @@
 import crypto from 'crypto';
-import type { MobileMoneyProvider, MobileNetwork, RailOperation, RailResult } from './mobile-money.js';
+import type { MobileMoneyProvider, RailOperation, RailResult } from './mobile-money.js';
+import { countryByCode, providerCode, railByNetwork } from '../rails/registry.js';
 import type { Environment } from '../types/index.js';
 
 /**
- * SasPay (https://docs.saspay.me) — Congo-Brazzaville only here (CG, XAF).
+ * SasPay (https://docs.saspay.me) — country and method codes come from the registry (src/rails/registry.ts).
  *
  *   collect   POST /payments/softpay/            -> id, status PENDING (push on the phone)
  *   verify    GET  /payments/{id}/verify/        SUCCESS | PENDING | FAILED | CANCELLED
@@ -17,9 +18,12 @@ import type { Environment } from '../types/index.js';
  *                                  debited from the person's wallet, is taken from our SasPay balance)
  */
 
-const NETWORK_CODES: Record<MobileNetwork, string> = {
-  MTN_MOMO_COG: 'mtn_cg',
-  AIRTEL_COG: 'airtel_cg',
+/** SasPay's country (ISO2) and method code for an operation's rail; refused when SasPay does not serve it. */
+const railCodes = (op: RailOperation) => {
+  const method = providerCode('saspay', op.network);
+  const country = countryByCode(railByNetwork(op.network)?.country ?? '')?.iso2;
+  if (!method || !country) throw new SasPayError(`SasPay does not serve ${op.network}`, 400, 'unsupported_network');
+  return { country, method };
 };
 
 const baseUrl = () => (process.env.SASPAY_API_URL || 'https://api.saspay.me/api/v1').replace(/\/$/, '');
@@ -96,8 +100,8 @@ export class SasPayProvider implements MobileMoneyProvider {
     return {
       amount: `${op.amount.toString()}.00`,
       currency: op.currency,
-      country: 'CG',
-      network: NETWORK_CODES[op.network],
+      country: railCodes(op).country,
+      network: railCodes(op).method,
       customer: customerOf(op),
       description: op.description || 'Paiement LightPay',
       fee_charge_mode: process.env.SASPAY_COLLECTION_FEE_MODE || 'ADD_ON',
@@ -137,8 +141,8 @@ export class SasPayProvider implements MobileMoneyProvider {
         {
           amount: `${op.amount.toString()}.00`,
           currency: op.currency,
-          country: 'CG',
-          method: NETWORK_CODES[op.network],
+          country: railCodes(op).country,
+          method: railCodes(op).method,
           recipient: { msisdn: op.msisdn },
           customer: customerOf(op),
           description: op.description || 'Retrait LightPay',

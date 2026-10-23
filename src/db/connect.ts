@@ -7,6 +7,7 @@ import { LightPayUser } from '../security/user-token.js';
 import { isReservedAppId } from '../security/app-identity.js';
 import { appName, failureOf, logActivity, logDirectSale } from './activity.js';
 import { appLogoUrl } from './avatars.js';
+import { userWallet } from '../wallets/index.js';
 
 /**
  * LIGHTPAY CONNECT — an app acts on a person's wallet only through a connection that
@@ -62,52 +63,7 @@ const DEFAULT_CURRENCY = 'XAF';
 
 // ---------------------------------------------------------------- the person's wallet
 
-/**
- * The person's LightPay wallet (created on first sign-in), per environment.
- * Read first: a plain read never writes (balance polling must not contend with payments);
- * the profile is only rewritten when the name or e-mail actually changed.
- */
-/** The person's LightPay wallet if they opened one, without ever creating it. */
-export async function findUserWallet(environment: Environment, user: LightPayUser, currency = DEFAULT_CURRENCY) {
-  const [existing] = await query(
-    `SELECT available_balance::text, status FROM wallets WHERE app_id = 'mainapp' AND account_id = $1 AND currency = $2 AND environment = $3`,
-    [`user:${user.uid}`, currency, environment],
-    environment
-  );
-  return existing ?? null;
-}
-
-export async function userWallet(environment: Environment, user: LightPayUser, currency = DEFAULT_CURRENCY) {
-  const [existing] = await query(
-    `SELECT * FROM wallets WHERE app_id = 'mainapp' AND account_id = $1 AND currency = $2 AND environment = $3`,
-    [`user:${user.uid}`, currency, environment],
-    environment
-  );
-  if (existing) {
-    const stale =
-      (user.email && existing.metadata?.email !== user.email) ||
-      (user.name && existing.metadata?.name !== user.name) ||
-      (user.picture && existing.metadata?.picture !== user.picture);
-    if (!stale) return existing;
-    const [updated] = await query(
-      `UPDATE wallets SET metadata = metadata || $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
-      [existing.id, JSON.stringify({ email: user.email ?? existing.metadata?.email, name: user.name ?? existing.metadata?.name, picture: user.picture ?? existing.metadata?.picture ?? null })],
-      environment
-    );
-    return updated;
-  }
-  return (
-    await query(
-      `INSERT INTO wallets (app_id, account_id, account_type, currency, environment, metadata)
-       VALUES ('mainapp', $1, 'USER', $2, $3, $4)
-       ON CONFLICT (app_id, account_id, currency, environment)
-       DO UPDATE SET metadata = wallets.metadata || EXCLUDED.metadata, updated_at = NOW()
-       RETURNING *`,
-      [`user:${user.uid}`, currency, environment, JSON.stringify({ email: user.email, name: user.name, picture: user.picture ?? null })],
-      environment
-    )
-  )[0];
-}
+// Finding, creating and choosing a person's wallets: src/wallets (the only way in).
 
 export async function walletStatement(environment: Environment, walletId: string, limit = 50) {
   return query(
