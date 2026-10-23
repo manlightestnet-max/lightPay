@@ -5,7 +5,7 @@ import { Environment } from '../types/index.js';
 import { findRecipient } from './identity.js';
 import { LightPayUser } from '../security/user-token.js';
 import { ConnectError, SCOPES, Scope } from './connect.js';
-import { busyError, closeAllWallets, findDefaultWallet, listWallets, userWallet, walletBusy } from '../wallets/index.js';
+import { busyError, closeAllWallets, findDefaultWallet, listWallets, userWallet, walletBusy, walletOf } from '../wallets/index.js';
 import { route as routeOperation } from '../rails/routing.js';
 import { MobileNetwork, mobileNetworks, networkName } from '../payments/mobile-money.js';
 import { countryOfNetwork, invalidNumberMessage, normalizeMsisdn, numberFitsNetwork } from '../rails/registry.js';
@@ -48,18 +48,19 @@ const positive = (value: unknown, field = 'amount') => {
   return amount;
 };
 
-const activeWallet = async (environment: Environment, user: LightPayUser) => {
-  const wallet = await userWallet(environment, user);
-  if (wallet.status !== 'ACTIVE') throw new ConnectError('This LightPay account is closed', 'ACCOUNT_CLOSED', 403);
+/** The wallet an operation uses: the one named (it must be the person's), the default one otherwise. */
+const activeWallet = async (environment: Environment, user: LightPayUser, walletId?: unknown) => {
+  const wallet = walletId ? await walletOf(environment, user.uid, { id: String(walletId) }) : await userWallet(environment, user);
+  if (wallet.status !== 'ACTIVE') throw new ConnectError(walletId ? 'Ce wallet est fermé ou gelé.' : 'This LightPay account is closed', 'ACCOUNT_CLOSED', 403);
   return wallet;
 };
 
 /** Top-up of my own wallet: a DEPOSIT session paid on the hosted page by mobile money. */
-export async function selfDeposit(environment: Environment, user: LightPayUser, amountInput: unknown, idempotencyKey: string) {
+export async function selfDeposit(environment: Environment, user: LightPayUser, amountInput: unknown, idempotencyKey: string, walletId?: unknown) {
   guardMoney();
   const amount = positive(amountInput);
   if (amount < minMobileMoneyAmount(environment)) throw new ConnectError(`Dépôt minimum : ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
-  const wallet = await activeWallet(environment, user);
+  const wallet = await activeWallet(environment, user, walletId);
   const existing = (
     await query(`SELECT id FROM checkout_sessions WHERE app_id = 'mainapp' AND environment = $1 AND idempotency_key = $2`, [environment, `self:${user.uid}:${idempotencyKey}`], environment)
   )[0];
@@ -75,9 +76,9 @@ export async function selfDeposit(environment: Environment, user: LightPayUser, 
 }
 
 /** Send money to another LightPay user, found by e-mail. */
-export async function sendMoney(environment: Environment, user: LightPayUser, input: { to: unknown; amount: unknown; note?: unknown }, idempotencyKey: string) {
+export async function sendMoney(environment: Environment, user: LightPayUser, input: { to: unknown; amount: unknown; note?: unknown; wallet_id?: unknown }, idempotencyKey: string) {
   await assertNotSuspended(environment, user.uid); // an account suspended for withdrawal attempts sends nothing either
-  const from = await activeWallet(environment, user);
+  const from = await activeWallet(environment, user, input.wallet_id);
   const ref = `send:${user.uid}:${idempotencyKey}`;
   const to = String(input.to ?? '').trim().toLowerCase();
   const note = String(input.note ?? '').slice(0, 140) || undefined;
@@ -115,12 +116,43 @@ export async function sendMoney(environment: Environment, user: LightPayUser, in
   }
 }
 
+/** Between two of the person's own wallets (same franc): instant and free, never another person's. */
+export async function moveBetweenWallets(environment: Environment, user: LightPayUser, input: { from: unknown; to: unknown; amount: unknown }, idempotencyKey: string) {
+  guardMoney();
+  await assertNotSuspended(environment, user.uid);
+  const amount = positive(input.amount);
+  const from = await activeWallet(environment, user, input.from);
+  const to = await activeWallet(environment, user, input.to);
+  if (from.id === to.id) throw new ConnectError('Choisissez deux wallets différents.', 'SAME_WALLET');
+  if (from.currency !== to.currency) throw new ConnectError('Ces deux wallets n’ont pas la même monnaie.', 'CURRENCY_MISMATCH');
+  const ref = `move:${user.uid}:${idempotencyKey}`;
+  const result = await LedgerEngine.executeTransaction({
+    appId: 'mainapp',
+    environment,
+    idempotencyKey: ref,
+    type: 'TRANSFER',
+    amount,
+    currency: from.currency,
+    metadata: { kind: 'OWN_WALLETS', uid: user.uid, from_wallet: from.id, to_wallet: to.id },
+    postings: [
+      { walletId: from.id, direction: 'DEBIT', amount, description: `Vers mon wallet « ${to.label} »` },
+      { walletId: to.id, direction: 'CREDIT', amount, description: `Depuis mon wallet « ${from.label} »` },
+    ],
+  });
+  if (!result.duplicate) {
+    const common = { kind: 'TRANSFER' as const, status: 'SUCCEEDED' as const, amount, total: amount, currency: from.currency, refType: 'move', refId: ref };
+    await logActivity(environment, { ...common, walletId: from.id, direction: 'OUT', counterparty: `Mon wallet « ${to.label} »` });
+    await logActivity(environment, { ...common, walletId: to.id, direction: 'IN', counterparty: `Mon wallet « ${from.label} »` });
+  }
+  return { transaction_id: txId(result), duplicate: result.duplicate, amount: amount.toString(), from: from.id, to: to.id };
+}
+
 /** Withdraw available money to a mobile-money number. Locked money can never leave. */
-export async function withdraw(environment: Environment, user: LightPayUser, input: { amount: unknown; msisdn: unknown; network: unknown }, idempotencyKey: string) {
+export async function withdraw(environment: Environment, user: LightPayUser, input: { amount: unknown; msisdn: unknown; network: unknown; wallet_id?: unknown }, idempotencyKey: string) {
   guardWithdrawals(); // closed by the admin's emergency brake
   await assertNotSuspended(environment, user.uid);
   await recordWithdrawalAttempt(environment, user, idempotencyKey); // too many attempts: the account is suspended
-  const wallet = await activeWallet(environment, user);
+  const wallet = await activeWallet(environment, user, input.wallet_id);
   const refused = async (err: ConnectError) => {
     const phone = normalizeMsisdn(String(input.msisdn ?? ''), countryOfNetwork(String(input.network ?? '')) ?? undefined);
     await logActivity(environment, {

@@ -1,6 +1,7 @@
 import { shell, skeletonRows, topbar } from './shell.js';
 import { iconSvg } from './icons.js';
 import { FLOWS_SCRIPT, FlowFrame, flowScreens } from './flows.js';
+import { WALLETS_SCRIPT, walletScreens } from './wallets.js';
 
 /**
  * /account — the person's LightPay space, simple interface (the default for everyone).
@@ -12,6 +13,7 @@ import { FLOWS_SCRIPT, FlowFrame, flowScreens } from './flows.js';
  * Hash routes:
  *   #/home  #/activity → #/activity/<id>  #/account → #/username ·
  *   #/developer · #/delete · #/apps → #/apps/<id>
+ *   #/wallets → #/wallets/<id> · #/wallet/new · #/move → #/move/done (wallets.ts, flows.ts)
  *   #/deposit → (confirmation sheet) → #/deposit/done  #/send → (confirmation sheet) → #/send/done  #/withdraw → (confirmation sheet) → #/withdraw/done
  * ?env=sandbox for the test wallet (switchable in place) · ?return=<url> shows a way back to the app.
  */
@@ -47,6 +49,7 @@ export const accountPage = (nonce: string, env: string) => {
       </div>
     </div>
     <div class="note warn" id="homeClosed" hidden>${iconSvg('alert')}<p>Ce compte LightPay est fermé : il ne peut plus recevoir ni envoyer d’argent.</p></div>
+    <div id="homeWalletsBox" hidden><div class="section-head"><h2>Mes wallets</h2><a class="link" href="#/wallets">Gérer</a></div><div id="homeWallets"></div></div>
     <div class="section-head sticky"><h2>Activité</h2><a class="link" href="#/activity">Tout voir</a></div>
     <div id="homeActivity" aria-busy="true">${skeletonRows(6, 'div')}</div>
     <a class="home-more" id="homeMore" href="#/activity" hidden>Voir toute l’activité</a>
@@ -55,6 +58,8 @@ export const accountPage = (nonce: string, env: string) => {
 </section>
 
 ${flowScreens(frame)}
+
+${walletScreens(frame)}
 
 <section class="screen" data-screen="activity" hidden>
   ${topbar({ title: 'Activité', back: false, env })}
@@ -128,6 +133,10 @@ ${flowScreens(frame)}
       <li><a class="row" href="#/username"><span class="row-icon">${iconSvg('user')}</span><span class="row-main"><span class="row-title">Nom d’utilisateur</span><span class="row-sub" id="accUsername"></span></span>${iconSvg('chevron-right', 'chev')}</a></li>
       <li><div class="row"><span class="row-icon">${iconSvg('mail')}</span><span class="row-main"><span class="row-title">Compte Google</span><span class="row-sub" id="secEmail"></span></span></div></li>
       <li><label class="row" for="photoSwitch"><span class="row-icon">${iconSvg('user')}</span><span class="row-main"><span class="row-title">Afficher ma photo</span><span class="row-sub" id="photoSub">Vue par les personnes que vous payez ou qui vous paient</span></span><input class="switch" type="checkbox" id="photoSwitch" role="switch"></label></li>
+    </ul>
+    <p class="group-title">Argent</p>
+    <ul class="group">
+      <li><a class="row" href="#/wallets"><span class="row-icon">${iconSvg('wallet')}</span><span class="row-main"><span class="row-title">Mes wallets</span><span class="row-sub" id="accWalletsSub">Ouvrir, nommer, déplacer de l’argent entre eux</span></span>${iconSvg('chevron-right', 'chev')}</a></li>
     </ul>
     <p class="group-title">Autorisations</p>
     <ul class="group">
@@ -282,15 +291,22 @@ ${flowScreens(frame)}
   async function loadMe() {
     me = await LP.api('GET', '/v1/me');
     const name = me.user.name || (me.user.email || '').split('@')[0];
-    amountParts($('homeAvailable'), me.wallet.available_balance, cur());
-    const locked = Number(me.wallet.locked_balance);
+    // Several wallets: the home balance is their total, each one listed under it.
+    const open = (me.wallets || []).filter((w) => w.status === 'ACTIVE');
+    const sum = (k) => open.reduce((t, w) => t + Number(w[k]), 0);
+    const several = open.length > 1;
+    amountParts($('homeAvailable'), several ? sum('available_balance') : me.wallet.available_balance, cur());
+    $('homeWalletsBox').hidden = !several;
+    if (several) walletList($('homeWallets'), open);
+    $('accWalletsSub').textContent = several ? open.length + ' wallets · ouvrir, nommer, déplacer de l’argent entre eux' : 'Ouvrir un autre wallet';
+    const locked = several ? sum('locked_balance') : Number(me.wallet.locked_balance);
     $('homeLockedLine').hidden = !locked;
     $('homeLocked').textContent = LP.money(locked, cur()) + ' bloqués jusqu’à la livraison';
     $('depMin').textContent = 'FCFA · minimum ' + lim('deposit_min').toLocaleString('fr-FR');
     const closed = me.wallet.status !== 'ACTIVE';
     $('homeClosed').hidden = !closed;
     $('homeActions').hidden = closed;
-    amountParts($('compactAmount'), me.wallet.available_balance, cur());
+    amountParts($('compactAmount'), several ? sum('available_balance') : me.wallet.available_balance, cur());
     $('accAvatar').replaceWith(Object.assign(face(me.user.picture, name, 'avatar-lg'), { id: 'accAvatar' }));
     $('photoSwitch').checked = me.user.show_photo !== false;
     $('photoSwitch').disabled = !me.user.picture;
@@ -303,6 +319,7 @@ ${flowScreens(frame)}
   }
   const DEV_SUB = { NONE: 'Sur demande', PENDING: 'Demande en cours d’examen', APPROVED: 'Activé', REJECTED: 'Demande refusée · vous pouvez la refaire' };
   async function enterHome() {
+    flowWallet = null; // the forms opened from home start on the default wallet
     await guarded(async () => {
       await loadMe();
       const act = await LP.api('GET', '/v1/me/activity?limit=30');
@@ -341,6 +358,20 @@ ${flowScreens(frame)}
   }
 
 ${FLOWS_SCRIPT}
+  // ---------------------------------------------------------------- wallets (wallets.ts): rows, as everywhere on the account
+  function walletList(host, wallets) {
+    host.replaceChildren.apply(host, wallets.length ? wallets.map((w) => txRow({
+      icon: 'wallet',
+      amount: LP.money(w.available_balance, w.currency),
+      desc: w.label + (w.is_default ? ' · par défaut' : '') + (w.country_name ? ' · ' + w.country_name : ''),
+      end: Number(w.locked_balance) ? LP.money(w.locked_balance, w.currency) + ' bloqués' : '',
+      href: '#/wallets/' + encodeURIComponent(w.id),
+    })) : [el('p', { class: 'empty', text: 'Aucun wallet.' })]);
+  }
+  function walletActivity(host, list) {
+    host.replaceChildren.apply(host, list.length ? list.slice(0, 20).map((a) => actRow(a, true)) : [el('p', { class: 'empty', text: 'Aucune opération pour l’instant.' })]);
+  }
+${WALLETS_SCRIPT}
   // ---------------------------------------------------------------- activity
   let actCache = null, actFilter = 'all';
   const FILTERS = {
@@ -614,7 +645,7 @@ ${FLOWS_SCRIPT}
   // ---------------------------------------------------------------- navigation
   const nav = createNav({
     root: 'home',
-    resolve: (route) => route.indexOf('apps/') === 0 ? ['app', route.slice(5)] : route.indexOf('activity/') === 0 ? ['activity-item', route.slice(9)] : [route.replace('/', '-'), null],
+    resolve: (route) => route.indexOf('apps/') === 0 ? ['app', route.slice(5)] : route.indexOf('activity/') === 0 ? ['activity-item', route.slice(9)] : route.indexOf('wallets/') === 0 ? ['wallet', route.slice(8)] : [route.replace('/', '-'), null],
     onRootBack: () => { if (returnUrl) location.assign(returnUrl); },
     onEnter: (c) => {
       syncTabs(c);
@@ -625,12 +656,17 @@ ${FLOWS_SCRIPT}
     },
     screens: {
       home: { enter: enterHome },
-      deposit: { parent: 'home', enter: () => { say('depMsg', ''); renderDepFees(); focusAmount('depAmount'); loadMe().then(renderDepFees).catch(() => {}); } },
+      deposit: { parent: 'home', enter: enterDeposit },
       'deposit-done': { parent: 'home', enter: enterDepositDone },
       send: { parent: 'home', enter: enterSend },
       'send-done': { parent: 'home', enter: enterSendDone },
       withdraw: { parent: 'home', enter: enterWithdraw },
       'withdraw-done': { parent: 'home', enter: enterWithdrawDone },
+      move: { parent: 'home', enter: enterMove },
+      'move-done': { parent: 'home', enter: enterMoveDone },
+      wallets: { parent: 'home', enter: enterWallets },
+      wallet: { parent: 'wallets', enter: enterWallet },
+      'wallet-new': { parent: 'wallets', enter: enterWalletNew },
       activity: { enter: enterActivity },
       'activity-item': { parent: 'activity', enter: enterActivityItem },
       apps: { parent: 'account', enter: enterApps },

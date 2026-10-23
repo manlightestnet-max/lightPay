@@ -1,8 +1,24 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { LightPayUser, UserTokenError, isRecentSignIn, verifyUserToken } from '../security/user-token.js';
 import { ConnectError, SCOPE_LABELS, approve, listUserConnections, revokeConnection, walletStatement } from '../db/connect.js';
-import { findDefaultWallet, userWallet } from '../wallets/index.js';
-import { closeAccount, listWithdrawals, quoteWithdrawal, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
+import { closeWallet, findDefaultWallet, listWallets, openWallet, renameWallet, setDefaultWallet, userWallet, walletOf, WalletRow } from '../wallets/index.js';
+import { controlSettings } from '../payments/control-settings.js';
+import { countryByCode } from '../rails/registry.js';
+
+/** What the person's pages see of a wallet (never the internal account id). */
+const walletView = (w: WalletRow) => ({
+  id: w.id,
+  label: w.label ?? 'Principal',
+  country: w.country,
+  country_name: (w.country && countryByCode(w.country)?.name) || null,
+  currency: w.currency,
+  available_balance: String(w.available_balance),
+  locked_balance: String(w.locked_balance),
+  status: w.status,
+  is_default: w.is_default,
+  created_at: w.created_at,
+});
+import { closeAccount, listWithdrawals, moveBetweenWallets, quoteWithdrawal, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
 import { minMobileMoneyAmount, minWithdrawalAmount, quote } from '../payments/fees.js';
 import { getActivity, listActivity } from '../db/activity.js';
 import { mobileNetworks } from '../payments/mobile-money.js';
@@ -83,16 +99,22 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
 
 /**
  * The person's own LightPay space (used by the hosted account and consent pages).
- *   GET    /v1/me                         profile + wallet balances (creates the wallet)
- *   GET    /v1/me/transactions            ledger statement (money that moved)
- *   GET    /v1/me/activity[/:id]          history of every operation: state + reason of a refusal
+ *   GET    /v1/me                         profile + default wallet + every wallet (creates the default one)
+ *   GET    /v1/me/wallets                 my wallets (default first)
+ *   POST   /v1/me/wallets                 { label, country? }  open another wallet (up to the admin's maximum)
+ *   PATCH  /v1/me/wallets/:id             { label }  rename
+ *   POST   /v1/me/wallets/:id/default     receives what names no wallet (transfers to @username, connections…)
+ *   DELETE /v1/me/wallets/:id             close (empty, nothing pending, not the default)
+ *   POST   /v1/me/wallets/move            { from, to, amount }  between my wallets, free (X-LightPay-Pin)
+ *   GET    /v1/me/transactions            ledger statement (money that moved)      ?wallet_id (default: the default wallet)
+ *   GET    /v1/me/activity[/:id]          history of every operation: state + reason of a refusal   ?wallet_id
  *   GET    /v1/me/connections             apps I authorized
  *   DELETE /v1/me/connections/:id         revoke an app
  *   POST   /v1/me/connect/approve         approve an app's request -> redirect URL with code
  *   PATCH  /v1/me/connections/:id         remove permissions / change the charge limit
- *   POST   /v1/me/deposits                top up by mobile money -> hosted page
- *   POST   /v1/me/transfers               send to another LightPay user (X-LightPay-Pin)
- *   POST   /v1/me/withdrawals             withdraw to mobile money (X-LightPay-Pin)
+ *   POST   /v1/me/deposits                top up by mobile money -> hosted page        { amount, wallet_id? }
+ *   POST   /v1/me/transfers               send to another LightPay user (X-LightPay-Pin)   { to, amount, note?, wallet_id? }
+ *   POST   /v1/me/withdrawals             withdraw to mobile money (X-LightPay-Pin)    { amount, msisdn, network, wallet_id? }
  *   PUT    /v1/me/pin                     { pin, current_pin? }  choose / change the 6-digit code
  *                                          (forgotten: recent Google sign-in instead of current_pin)
  *   GET    /v1/me/withdrawals             my withdrawals
@@ -115,6 +137,7 @@ export async function meRoutes(fastify: FastifyInstance) {
   fastify.get('/', async (request) => {
     const user = request.lightpayUser!;
     const wallet = await userWallet(envOf(request), user);
+    const wallets = await listWallets(envOf(request), user.uid);
     return {
       status: 'success',
       user: {
@@ -124,11 +147,14 @@ export async function meRoutes(fastify: FastifyInstance) {
         show_photo: wallet.metadata?.hide_photo !== true,
       },
       wallet: {
+        id: wallet.id,
         currency: wallet.currency,
         available_balance: String(wallet.available_balance),
         locked_balance: String(wallet.locked_balance),
         status: wallet.status,
       },
+      wallets: wallets.map(walletView),
+      max_wallets: controlSettings(envOf(request)).max_wallets,
       // Minimums set by the admin, shown before anything is typed.
       limits: { deposit_min: minMobileMoneyAmount(envOf(request)).toString(), withdrawal_min: minWithdrawalAmount(envOf(request)).toString() },
       environment: envOf(request),
@@ -140,21 +166,90 @@ export async function meRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/transactions', async (request) => {
-    const wallet = await userWallet(envOf(request), request.lightpayUser!);
-    return { status: 'success', entries: await walletStatement(envOf(request), wallet.id, Number((request.query as any).limit ?? 50)) };
+  /** The wallet a reading is about: ?wallet_id (one of mine), else the default one. */
+  const readWallet = (request: FastifyRequest) => {
+    const id = (request.query as any)?.wallet_id;
+    return id ? walletOf(envOf(request), request.lightpayUser!.uid, { id: String(id) }) : userWallet(envOf(request), request.lightpayUser!);
+  };
+
+  fastify.get('/transactions', async (request, reply) => {
+    try {
+      const wallet = await readWallet(request);
+      return { status: 'success', entries: await walletStatement(envOf(request), wallet.id, Number((request.query as any).limit ?? 50)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
   });
 
-  fastify.get('/activity', async (request) => {
-    const wallet = await userWallet(envOf(request), request.lightpayUser!);
-    return { status: 'success', activity: await listActivity(envOf(request), wallet.id, Number((request.query as any).limit ?? 50)) };
+  fastify.get('/activity', async (request, reply) => {
+    try {
+      const wallet = await readWallet(request);
+      return { status: 'success', activity: await listActivity(envOf(request), wallet.id, Number((request.query as any).limit ?? 50)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
   });
 
   fastify.get('/activity/:id', async (request, reply) => {
-    const wallet = await userWallet(envOf(request), request.lightpayUser!);
-    const item = await getActivity(envOf(request), wallet.id, String((request.params as any).id));
-    if (!item) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Opération introuvable.' });
-    return { status: 'success', activity: item };
+    try {
+      const id = String((request.params as any).id);
+      // Without ?wallet_id, the operation is looked for in every wallet of the person (the default first).
+      const wallets = (request.query as any)?.wallet_id ? [await readWallet(request)] : await listWallets(envOf(request), request.lightpayUser!.uid, { includeClosed: true });
+      let item = null;
+      for (const wallet of wallets) if (!item) item = await getActivity(envOf(request), wallet.id, id);
+      if (!item) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Opération introuvable.' });
+      return { status: 'success', activity: item };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  // ---------------------------------------------------------------- my wallets
+  fastify.get('/wallets', async (request) => ({
+    status: 'success',
+    wallets: (await listWallets(envOf(request), request.lightpayUser!.uid)).map(walletView),
+    max_wallets: controlSettings(envOf(request)).max_wallets,
+  }));
+  fastify.post('/wallets', async (request, reply) => {
+    const body = (request.body ?? {}) as any;
+    const country = body.country ? String(body.country).toUpperCase() : undefined;
+    if (country && !countryByCode(country)) return reply.status(400).send({ status: 'error', error: 'BAD_COUNTRY', message: 'Pays inconnu.' });
+    try {
+      const wallet = await openWallet(envOf(request), request.lightpayUser!, { label: body.label, country }, controlSettings(envOf(request)).max_wallets);
+      return { status: 'success', wallet: walletView(wallet) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+  fastify.post('/wallets/move', async (request, reply) => {
+    const key = idem(request, reply);
+    if (!key || !(await pinOk(request, reply))) return;
+    try {
+      return { status: 'success', move: await moveBetweenWallets(envOf(request), request.lightpayUser!, (request.body ?? {}) as any, key) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+  fastify.patch('/wallets/:id', async (request, reply) => {
+    try {
+      return { status: 'success', wallet: walletView(await renameWallet(envOf(request), request.lightpayUser!.uid, String((request.params as any).id), ((request.body ?? {}) as any).label)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+  fastify.post('/wallets/:id/default', async (request, reply) => {
+    try {
+      return { status: 'success', wallet: walletView(await setDefaultWallet(envOf(request), request.lightpayUser!.uid, String((request.params as any).id))) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+  fastify.delete('/wallets/:id', async (request, reply) => {
+    try {
+      return { status: 'success', wallet: walletView(await closeWallet(envOf(request), request.lightpayUser!.uid, String((request.params as any).id))) };
+    } catch (err) {
+      return fail(reply, err);
+    }
   });
 
   fastify.get('/connections', async (request) => {
@@ -182,7 +277,7 @@ export async function meRoutes(fastify: FastifyInstance) {
     const key = idem(request, reply);
     if (!key) return;
     try {
-      return { status: 'success', ...(await selfDeposit(envOf(request), request.lightpayUser!, (request.body as any)?.amount, key)) };
+      return { status: 'success', ...(await selfDeposit(envOf(request), request.lightpayUser!, (request.body as any)?.amount, key, (request.body as any)?.wallet_id)) };
     } catch (err) {
       return fail(reply, err);
     }
@@ -214,17 +309,19 @@ export async function meRoutes(fastify: FastifyInstance) {
   fastify.get('/stream', async (request, reply) => {
     const user = request.lightpayUser!;
     if ((streams.get(user.uid) ?? 0) >= MAX_STREAMS) return reply.status(429).send({ error: 'TOO_MANY_STREAMS', message: 'Trop de pages ouvertes.' });
-    const wallet = await userWallet(envOf(request), user);
+    const wallets = await listWallets(envOf(request), user.uid);
     streams.set(user.uid, (streams.get(user.uid) ?? 0) + 1);
     reply.hijack();
     const res = reply.raw;
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.write(': open\n\n');
     let pending: NodeJS.Timeout | null = null;
-    const off = onWalletChange(envOf(request), wallet.id, () => {
+    // Any of the person's wallets moving refreshes their pages.
+    const offs = wallets.map((w) => onWalletChange(envOf(request), w.id, () => {
       if (pending) return;
       pending = setTimeout(() => { pending = null; res.write('event: change\ndata: {}\n\n'); }, 250);
-    });
+    }));
+    const off = () => offs.forEach((f) => f());
     const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
     const end = setTimeout(() => res.end(), 10 * 60_000);
     let closed = false;

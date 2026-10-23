@@ -17,6 +17,8 @@ export interface ControlSettings {
   withdrawal_attempt_window_minutes: number;
   /** How long the account cannot withdraw or send after too many attempts. */
   withdrawal_suspension_minutes: number;
+  /** Wallets a person may hold open at once (per ledger). */
+  max_wallets: number;
 }
 
 export const DEFAULT_CONTROL_SETTINGS: Readonly<ControlSettings> = Object.freeze({
@@ -25,6 +27,7 @@ export const DEFAULT_CONTROL_SETTINGS: Readonly<ControlSettings> = Object.freeze
   withdrawal_max_attempts: 5,
   withdrawal_attempt_window_minutes: 10,
   withdrawal_suspension_minutes: 30,
+  max_wallets: 5,
 });
 
 const KEYS = Object.keys(DEFAULT_CONTROL_SETTINGS) as (keyof ControlSettings)[];
@@ -35,6 +38,7 @@ export const RANGES: Record<keyof ControlSettings, [number, number]> = {
   withdrawal_max_attempts: [0, 100],
   withdrawal_attempt_window_minutes: [1, 1_440],
   withdrawal_suspension_minutes: [1, 10_080],
+  max_wallets: [1, 20],
 };
 
 const cache: Record<Environment, ControlSettings> = {

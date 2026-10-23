@@ -483,7 +483,7 @@ export async function getUser(env: Environment, walletId: string) {
     env
   );
   if (!w) throw new AdminError('Utilisateur introuvable.', 'NOT_FOUND', 404);
-  const [apps, moves] = await Promise.all([
+  const [apps, moves, wallets] = await Promise.all([
     query(
       `SELECT c.id, c.app_id, a.name AS app_name, c.scopes, c.status, c.created_at, c.revoked_at
        FROM connections c JOIN apps a ON a.id = c.app_id WHERE c.wallet_id = $1 ORDER BY c.created_at DESC`,
@@ -491,8 +491,16 @@ export async function getUser(env: Environment, walletId: string) {
       env
     ),
     walletMoves(env, walletId, 30),
+    // Every wallet of the same person (the default first).
+    query(
+      `SELECT o.id, o.label, o.country, o.currency, o.available_balance::text, o.locked_balance::text, o.status, o.is_default, o.created_at
+       FROM wallets o JOIN wallets me ON me.id = $1 AND o.owner_id = me.owner_id AND o.app_id = me.app_id AND o.environment = me.environment
+       WHERE o.account_type = 'USER' ORDER BY o.is_default DESC, o.created_at`,
+      [walletId],
+      env
+    ),
   ]);
-  return { user: w, apps, moves };
+  return { user: w, apps, moves, wallets };
 }
 
 const walletMoves = (env: Environment, walletId: string, limit: number) =>

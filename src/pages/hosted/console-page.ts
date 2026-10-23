@@ -2,6 +2,7 @@ import { shell, skeletonRows, themeToggle } from './shell.js';
 import { iconSvg } from './icons.js';
 import { CONSOLE_CSS } from './console.js';
 import { FLOWS_SCRIPT, FlowFrame, flowScreens } from './flows.js';
+import { WALLETS_SCRIPT, walletScreens } from './wallets.js';
 
 /**
  * /account/console — the LightPay console (advanced mode): only for people whose request the
@@ -68,6 +69,7 @@ export const consolePage = (nonce: string, env: string) => {
     ${navItem('deposit', 'deposit', 'plus', 'Dépôt')}
     ${navItem('send', 'send', 'send', 'Envoyer')}
     ${navItem('withdraw', 'withdraw', 'withdraw', 'Retirer')}
+    ${navItem('wallets', 'wallets', 'wallet', 'Mes wallets')}
     <div class="nav-label">Autorisations</div>
     ${navItem('apps', 'apps', 'apps', 'Apps connectées', '<span class="nav-count" id="navConnCount" hidden></span>')}
     <div class="nav-label">Développeurs</div>
@@ -118,6 +120,8 @@ ${page('activity-item', 'Opération', `
 `, { back: { href: '#/activity', label: 'Activité' }, narrow: true })}
 
 ${flowScreens(flowFrame)}
+
+${walletScreens(flowFrame)}
 
 ${page('apps', 'Apps connectées', `
   <div class="list-card" id="appsList"><div class="sk-pad">${skeletonRows(2, 'div')}</div></div>
@@ -458,9 +462,12 @@ ${page('dev-app', 'App', `
     $('meMail').textContent = me.user.email || '';
     $('homeTitle').textContent = 'Bonjour ' + name.split(' ')[0];
     $('unInput').value = me.username || '';
-    $('homeAvailable').textContent = LP.money(me.wallet.available_balance, cur());
+    // Several wallets: the totals of the open ones (each listed in Mes wallets).
+    const open = (me.wallets || []).filter((w) => w.status === 'ACTIVE');
+    const total = (k) => (open.length > 1 ? open.reduce((t, w) => t + Number(w[k]), 0) : Number(me.wallet[k]));
+    $('homeAvailable').textContent = LP.money(total('available_balance'), cur());
     $('depMin').textContent = 'FCFA · minimum ' + lim('deposit_min').toLocaleString('fr-FR');
-    $('homeLocked').textContent = LP.money(me.wallet.locked_balance, cur());
+    $('homeLocked').textContent = LP.money(total('locked_balance'), cur());
     const closed = me.wallet.status !== 'ACTIVE';
     $('homeClosed').hidden = !closed;
     $('homeActions').hidden = closed;
@@ -487,6 +494,20 @@ ${page('dev-app', 'App', `
   document.querySelectorAll('[data-home]').forEach((b) => b.addEventListener('click', () => nav.go('home')));
 
 ${FLOWS_SCRIPT}
+  // ---------------------------------------------------------------- wallets (wallets.ts): the console's list is table()
+  function walletList(host, wallets) {
+    table(host, [{ label: 'Wallet' }, { label: 'Pays', cls: 'hide-sm' }, { label: 'Bloqué', cls: 'num hide-md' }, { label: 'Disponible', cls: 'num' }],
+      wallets.map((w) => ({
+        href: '#/wallets/' + encodeURIComponent(w.id),
+        cells: [cellMain(icon('wallet'), w.label, w.is_default ? 'par défaut' : ''), w.country_name || '—', Number(w.locked_balance) ? LP.money(w.locked_balance, w.currency) : '—', LP.money(w.available_balance, w.currency)],
+        keys: [null, null, Number(w.locked_balance), Number(w.available_balance)],
+      })),
+      'Aucun wallet.');
+  }
+  function walletActivity(host, list) {
+    table(host, [{ label: '' }, { label: '', cls: 'num' }], list.slice(0, 20).map((a) => { const c = actCells(a); return { cells: [c[0], c[3]], href: '#/activity/' + encodeURIComponent(a.id) }; }), 'Aucune opération pour l’instant.', true);
+  }
+${WALLETS_SCRIPT}
   // ---------------------------------------------------------------- activity: list + detail
   let activity = [], actFilter = 'all';
   document.querySelectorAll('#actFilter button').forEach((b) => b.addEventListener('click', () => {
@@ -950,7 +971,8 @@ ${FLOWS_SCRIPT}
   const navKeyOf = (c) => c.name === 'dev-app' ? 'app:' + String(c.param || '').split('/')[0]
     : c.name === 'dev-new' ? 'dev'
     : c.name === 'activity-item' ? 'activity' : c.name === 'app' ? 'apps'
-    : c.name.indexOf('send') === 0 ? 'send' : c.name.indexOf('withdraw') === 0 ? 'withdraw' : c.name.indexOf('deposit') === 0 ? 'deposit' : c.name;
+    : c.name.indexOf('send') === 0 ? 'send' : c.name.indexOf('withdraw') === 0 ? 'withdraw' : c.name.indexOf('deposit') === 0 ? 'deposit'
+    : c.name.indexOf('wallet') === 0 || c.name.indexOf('move') === 0 ? 'wallets' : c.name;
   const withNav = (fn) => (param) => { const c = nav.current(); if (c) { highlight(navKeyOf(c)); syncTabs(c); } syncEnvLinks(); return fn(param); };
   const nav = createNav({
     root: 'home',
@@ -958,6 +980,7 @@ ${FLOWS_SCRIPT}
       if (route.indexOf('apps/') === 0) return ['app', route.slice(5)];
       if (route.indexOf('activity/') === 0) return ['activity-item', route.slice(9)];
       if (route === 'dev/new') return ['dev-new', null];
+      if (route.indexOf('wallets/') === 0) return ['wallet', route.slice(8)];
       if (route.indexOf('dev/') === 0) return ['dev-app', route.slice(4)];
       return [route.replace('/', '-'), null];
     },
@@ -966,12 +989,17 @@ ${FLOWS_SCRIPT}
       home: { enter: withNav(enterHome) },
       activity: { enter: withNav(enterActivity) },
       'activity-item': { parent: 'activity', enter: withNav(enterActivityItem) },
-      deposit: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Dépôt'); say('depMsg', ''); renderDepFees(); focusAmount('depAmount'); loadMe().then(renderDepFees).catch(() => {}); }) },
+      deposit: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Dépôt'); enterDeposit(); }) },
       'deposit-done': { parent: 'home', enter: withNav(enterDepositDone) },
       send: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Envoyer'); enterSend(); }) },
       'send-done': { parent: 'home', enter: withNav(enterSendDone) },
       withdraw: { parent: 'home', enter: withNav(() => { crumbs('Mon argent', 'Retirer'); return enterWithdraw(); }) },
       'withdraw-done': { parent: 'home', enter: withNav(enterWithdrawDone) },
+      move: { parent: 'wallets', enter: withNav(() => { crumbs('Mon argent', 'Entre mes wallets'); enterMove(); }) },
+      'move-done': { parent: 'wallets', enter: withNav(enterMoveDone) },
+      wallets: { enter: withNav(() => { crumbs('Mon argent', 'Mes wallets'); flowWallet = null; return enterWallets(); }) },
+      wallet: { parent: 'wallets', enter: withNav((id) => { crumbs('Mes wallets', 'Wallet'); return enterWallet(id); }) },
+      'wallet-new': { parent: 'wallets', enter: withNav(() => { crumbs('Mes wallets', 'Ouvrir un wallet'); enterWalletNew(); }) },
       apps: { enter: withNav(enterApps) },
       app: { parent: 'apps', enter: withNav(enterApp) },
       security: { enter: withNav(enterSecurity) },

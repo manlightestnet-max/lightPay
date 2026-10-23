@@ -12,8 +12,9 @@ import { iconSvg } from './icons.js';
  * Each page frames the screens its own way (top bar on the account, scaffold in the console):
  *   frame({ screen, title, state, content, actions }) -> <section data-screen=…>
  * The page provides: me, loadMe(), cur(), available(), lim(key), guarded(action, msgId), nav,
- * signIn(); countries, operators and numbers come from the shared client (RAILS, loadRails…); routes deposit · deposit/done · send · send/done · withdraw ·
- * withdraw/done, entered with renderDepFees()+focusAmount('depAmount') / enterDepositDone /
+ * signIn(); countries, operators and numbers come from the shared client (RAILS, loadRails…); with several wallets
+ * (me.wallets) each form asks which one, starting from flowWallet (set by a wallet's own screen); routes deposit · deposit/done · send · send/done · withdraw ·
+ * withdraw/done · move · move/done (between my wallets, enterMove / enterMoveDone), entered with enterDeposit / enterDepositDone /
  * enterSend / enterSendDone / enterWithdraw / enterWithdrawDone.
  */
 export type FlowFrame = (o: { screen: string; title: string; state: boolean; content: string; actions: string }) => string;
@@ -21,6 +22,7 @@ export type FlowFrame = (o: { screen: string; title: string; state: boolean; con
 export const flowScreens = (frame: FlowFrame) =>
   [
   frame({ screen: 'deposit', title: 'Dépôt', state: false, content: `
+    <div class="field" id="depWalletField" hidden><span class="label" id="depWalletLabel">Sur le wallet</span><div class="seg" role="group" aria-labelledby="depWalletLabel" id="depWallets"></div></div>
     <label class="label" for="depAmount">Montant à déposer</label>
     <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="depMin">FCFA</div></div>
     <div class="field" id="depCountryField" hidden><span class="label" id="depCountryLabel">Pays</span><div class="seg" role="group" aria-labelledby="depCountryLabel" id="depCountries"></div></div>
@@ -32,6 +34,7 @@ export const flowScreens = (frame: FlowFrame) =>
   frame({ screen: 'deposit-done', title: 'Dépôt', state: true, content: `
 <div class="state"><span class="state-icon" id="depDoneIcon"></span><h2 id="depDoneTitle"></h2><p id="depDoneText"></p></div>`, actions: `<button class="btn btn-secondary" type="button" id="depRetry" hidden>Réessayer</button><button class="btn" type="button" data-home>Terminé</button>` }),
   frame({ screen: 'send', title: 'Envoyer', state: false, content: `
+    <div class="field" id="sendWalletField" hidden><span class="label" id="sendWalletLabel">Depuis</span><div class="seg" role="group" aria-labelledby="sendWalletLabel" id="sendWallets"></div></div>
     <div class="field"><label for="sendTo">Destinataire</label><input id="sendTo" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="@pseudo ou e-mail"><p class="hint" id="sendWho"></p></div>
     <label class="label mt-lg" for="sendAmount">Montant</label>
     <div class="amount-wrap"><input class="amount-input" id="sendAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="sendAvail">FCFA</div></div>
@@ -41,6 +44,7 @@ export const flowScreens = (frame: FlowFrame) =>
   frame({ screen: 'send-done', title: 'Envoi', state: true, content: `
 <div class="state"><span class="state-icon" id="sendDoneIcon"></span><h2 id="sendDoneTitle"></h2><p id="sendDoneText"></p></div>`, actions: `<button class="btn btn-secondary" type="button" id="sendRetry" hidden>Réessayer</button><button class="btn" type="button" data-home>Terminé</button>` }),
   frame({ screen: 'withdraw', title: 'Retirer', state: false, content: `
+    <div class="field" id="wdWalletField" hidden><span class="label" id="wdWalletLabel">Depuis</span><div class="seg" role="group" aria-labelledby="wdWalletLabel" id="wdWallets"></div></div>
     <div class="field" id="wdCountryField" hidden><span class="label" id="wdCountryLabel">Pays</span><div class="seg" role="group" aria-labelledby="wdCountryLabel" id="wdCountries"></div></div>
     <div class="field"><span class="label" id="wdNetLabel">Vers</span><div class="seg" role="group" aria-labelledby="wdNetLabel" id="wdNets"></div></div>
     <div class="field"><label for="wdPhone">Numéro qui reçoit</label><div class="input-prefix"><span id="wdDial">+242</span><input id="wdPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="18"></div></div>
@@ -52,10 +56,49 @@ export const flowScreens = (frame: FlowFrame) =>
     <div id="wdList"></div>`, actions: `<button class="btn" type="button" id="wdNext" disabled>Continuer</button>` }),
   frame({ screen: 'withdraw-done', title: 'Retrait', state: true, content: `
 <div class="state"><span class="state-icon" id="wdDoneIcon"></span><h2 id="wdDoneTitle"></h2><p id="wdDoneText"></p></div>`, actions: `<button class="btn btn-secondary" type="button" id="wdRetry" hidden>Réessayer</button><button class="btn" type="button" data-home>Terminé</button>` }),
+  frame({ screen: 'move', title: 'Entre mes wallets', state: false, content: `
+    <div class="field"><span class="label" id="moveFromWalletLabel">Depuis</span><div class="seg" role="group" aria-labelledby="moveFromWalletLabel" id="moveFromWallets"></div></div>
+    <div class="field"><span class="label" id="moveToWalletLabel">Vers</span><div class="seg" role="group" aria-labelledby="moveToWalletLabel" id="moveToWallets"></div></div>
+    <label class="label mt-lg" for="moveAmount">Montant</label>
+    <div class="amount-wrap"><input class="amount-input" id="moveAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="moveAvail">FCFA</div></div>
+    <div class="msg" id="moveMsg" role="status" aria-live="polite"></div>
+    <div class="note">${iconSvg('bolt')}<p>Gratuit et instantané entre vos wallets.</p></div>`, actions: `<button class="btn" type="button" id="moveNext" disabled>Continuer</button>` }),
+  frame({ screen: 'move-done', title: 'Entre mes wallets', state: true, content: `
+<div class="state"><span class="state-icon" id="moveDoneIcon"></span><h2 id="moveDoneTitle"></h2><p id="moveDoneText"></p></div>`, actions: `<button class="btn btn-secondary" type="button" id="moveRetry" hidden>Réessayer</button><button class="btn" type="button" data-home>Terminé</button>` }),
   ].join('\n\n');
 
 export const FLOWS_SCRIPT = `
   const WD_STATUS = { SUCCEEDED: ['ok', 'envoyé'], PENDING: ['warn', 'en cours'], FAILED: ['err', 'échoué · restitué'] };
+  // ---------------------------------------------------------------- which wallet (shown only when the person has several)
+  // The wallet an action was started from (its own screen), else the default one. Ids: <p>WalletField, <p>Wallets.
+  let flowWallet = null;
+  const myWallets = () => (me && me.wallets ? me.wallets.filter((w) => w.status === 'ACTIVE') : []);
+  function walletPicker(p, changed, opts) {
+    const o = opts || {};
+    let chosen = null;
+    const list = () => myWallets().filter((w) => !o.exclude || w.id !== o.exclude());
+    const current = () => list().filter((w) => w.id === chosen)[0] || null;
+    // fresh: a form being opened starts again from the wallet it was opened from (or the default one).
+    function render(fresh) {
+      if (fresh) chosen = null;
+      const ws = list();
+      if (!ws.some((w) => w.id === chosen)) chosen = ((o.start ? ws.filter((w) => w.id === o.start())[0] : null) || ws.filter((w) => w.id === flowWallet)[0] || ws.filter((w) => w.is_default)[0] || ws[0] || {}).id || null;
+      if (!o.always) $(p + 'WalletField').hidden = myWallets().length < 2;
+      $(p + 'Wallets').replaceChildren.apply($(p + 'Wallets'), ws.map((w) => el('button', {
+        class: 'seg-opt', type: 'button', 'aria-pressed': String(w.id === chosen),
+        on: { click: () => { chosen = w.id; render(); changed(); } },
+      }, [w.label + ' · ' + LP.money(w.available_balance, w.currency)])));
+    }
+    return {
+      render: render,
+      id: () => chosen,
+      // Without a wallet list (older page state), the default wallet's balance.
+      balance: () => { const w = current(); return w ? Number(w.available_balance) : available(); },
+      label: () => { const w = current(); return w ? w.label : ''; },
+      several: () => myWallets().length > 1,
+    };
+  }
+
   // ---------------------------------------------------------------- country, operator and number (deposit and withdrawal)
   // The country shows only when several are open; its operators follow; the number picks its operator (its prefix), and
   // choosing another operator than the number's clears the number. Ids: <p>CountryField, <p>Countries, <p>Nets, <p>Dial, <p>Phone.
@@ -106,6 +149,12 @@ export const FLOWS_SCRIPT = `
   // to the phone straight away (no second payment page, no second choice).
   let depQuotes = null, depBusy = false, depState = null, depResult = null;
   const dep = railPicker('dep', () => renderDepFees());
+  const depW = walletPicker('dep', () => {});
+  // Entering the deposit form: the wallets and minimums as they are now.
+  function enterDeposit() {
+    depW.render(true); say('depMsg', ''); renderDepFees(); focusAmount('depAmount');
+    loadMe().then(() => { depW.render(); renderDepFees(); }).catch(() => {});
+  }
   function renderDepFees() {
     const q = depQuotes && depQuotes[dep.st.network];
     const amount = Number(amountDigits($('depAmount').value));
@@ -150,18 +199,18 @@ export const FLOWS_SCRIPT = `
       amount: approx + LP.money(q.total, cur()),
       rows: [
         ['Depuis', dep.label()],
-        ['Sur votre wallet', LP.money(q.amount, cur())],
+        [depW.several() ? 'Sur « ' + depW.label() + ' »' : 'Sur votre wallet', LP.money(q.amount, cur())],
         ['Frais', approx + LP.money(String(Number(q.total) - Number(q.amount)), cur())],
       ],
       note: 'Une demande arrive sur ce téléphone : validez-la avec votre code secret.',
       confirm: 'Confirmer',
     });
     if (!ok) { depBusy = false; return; }
-    depState = { amount: q.amount, total: approx + LP.money(q.total, cur()), msisdn: dep.msisdn(), shown: dep.shown(), network: dep.st.network, key: LP.uuid() };
+    depState = { amount: q.amount, total: approx + LP.money(q.total, cur()), msisdn: dep.msisdn(), shown: dep.shown(), network: dep.st.network, wallet: depW.id(), key: LP.uuid() };
     depResult = null;
     nav.go('deposit/done');
     await operate('dep', async () => {
-      const r = await LP.api('POST', '/v1/me/deposits', { amount: depState.amount }, depState.key);
+      const r = await LP.api('POST', '/v1/me/deposits', { amount: depState.amount, wallet_id: depState.wallet || undefined }, depState.key);
       const res = await fetch('/v1/checkout/public/sessions/' + encodeURIComponent(r.session_id) + '/mobile-money', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msisdn: depState.msisdn, network: depState.network }), signal: deadline(30000),
       }).catch(() => { throw new Error('Connexion impossible. Vérifiez votre réseau et réessayez.'); });
@@ -213,13 +262,13 @@ export const FLOWS_SCRIPT = `
     $(prefix + 'DoneTitle').textContent = title;
     $(prefix + 'DoneText').textContent = text;
     $(prefix + 'Retry').hidden = kind !== 'err';
-    document.querySelector('[data-screen="' + ({ wd: 'withdraw', send: 'send', dep: 'deposit' })[prefix] + '-done"] [data-home]').hidden = kind === 'wait';
+    document.querySelector('[data-screen="' + ({ wd: 'withdraw', send: 'send', dep: 'deposit', move: 'move' })[prefix] + '-done"] [data-home]').hidden = kind === 'wait';
   }
   // Runs the operation from its result screen: sign-in again if needed, any refusal shown there.
   async function operate(prefix, action) {
     await guarded(async () => {
       try { await action(); }
-      catch (e) { if (e.reauth || e.signIn) throw e; result(prefix, 'err', ({ wd: 'Retrait non effectué', send: 'Envoi non effectué', dep: 'Dépôt non effectué' })[prefix], e.message); }
+      catch (e) { if (e.reauth || e.signIn) throw e; result(prefix, 'err', ({ wd: 'Retrait non effectué', send: 'Envoi non effectué', dep: 'Dépôt non effectué', move: 'Déplacement non effectué' })[prefix], e.message); }
     }, prefix + 'DoneText');
   }
 
@@ -227,8 +276,10 @@ export const FLOWS_SCRIPT = `
   let sendState = null, sendResult = null, sendBusy = false;
   // The amount takes the keyboard as soon as its screen opens (after the slide, so it does not jump).
   const focusAmount = (id) => setTimeout(() => { const i = $(id); if (i && !i.closest('[hidden]')) i.focus(); }, 320);
+  const sendW = walletPicker('send', () => { $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(sendW.balance(), cur()); sendCheck(); });
   function enterSend() {
-    $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur());
+    sendW.render(true);
+    $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(sendW.balance(), cur());
     say('sendMsg', '');
     sendCheck();
     focusAmount($('sendTo').value ? 'sendAmount' : 'sendTo');
@@ -254,8 +305,8 @@ export const FLOWS_SCRIPT = `
   // The button stays off until the form is complete: nothing to correct after the tap.
   function sendCheck() {
     const amount = Number(amountDigits($('sendAmount').value));
-    $('sendAvail').classList.toggle('below', amount > available());
-    $('sendNext').disabled = !sendWho || !amount || amount > available();
+    $('sendAvail').classList.toggle('below', amount > sendW.balance());
+    $('sendNext').disabled = !sendWho || !amount || amount > sendW.balance();
   }
   $('sendAmount').addEventListener('input', sendCheck);
   $('sendNext').addEventListener('click', async () => {
@@ -264,13 +315,13 @@ export const FLOWS_SCRIPT = `
     const w = sendWho || {};
     const who = [w.name, w.username ? '@' + w.username : ''].filter(Boolean).join(' · ') || $('sendTo').value.trim();
     const note = $('sendNote').value.trim();
-    const rows = [['À', who], ['Frais', 'Aucun']].concat(note ? [['Message', note]] : []).concat([['Solde après envoi', LP.money(available() - amount, cur()), true]]);
+    const rows = [['À', who]].concat(sendW.several() ? [['Depuis', sendW.label()]] : []).concat([['Frais', 'Aucun']]).concat(note ? [['Message', note]] : []).concat([['Solde après envoi', LP.money(sendW.balance() - amount, cur()), true]]);
     sendBusy = true;
-    const next = { to: $('sendTo').value.trim(), who: w, amount: String(amount), note: note, key: LP.uuid() };
+    const next = { to: $('sendTo').value.trim(), who: w, amount: String(amount), note: note, wallet: sendW.id(), key: LP.uuid() };
     // « Envoyer » opens the code step; the transfer leaves once, with the 6th digit.
     const done = await confirmSheet({
       title: 'Vous envoyez', amount: LP.money(amount, cur()), rows: rows, confirm: 'Envoyer',
-      pin: (code) => LP.api('POST', '/v1/me/transfers', { to: next.to, amount: next.amount, note: next.note }, next.key, code),
+      pin: (code) => LP.api('POST', '/v1/me/transfers', { to: next.to, amount: next.amount, note: next.note, wallet_id: next.wallet || undefined }, next.key, code),
     });
     if (!done) { sendBusy = false; return; }
     sendState = next;
@@ -300,12 +351,13 @@ export const FLOWS_SCRIPT = `
   let wdQuote = null, wdState = null, wdResult = null, wdSeq = 0, wdBusy = false, wdQuotedNet = null;
   // Another operator can mean another fee: the quote is asked again when the operator changes.
   const wd = railPicker('wd', () => { if (wd.st.network !== wdQuotedNet) loadWdQuote(); else wdCheck(); });
+  const wdW = walletPicker('wd', () => { wdAvailText(); wdCheck(); });
   function wdCheck() {
     const q = wdQuote;
     $('wdNext').disabled = true;
     // Below the minimum or above the balance: the line under the amount says it, the button stays off.
     const below = Boolean(q) && Number(q.amount) < Number(q.minimum);
-    const tooMuch = Boolean(q) && !below && Number(q.total) > available();
+    const tooMuch = Boolean(q) && !below && Number(q.total) > wdW.balance();
     $('wdAvail').classList.toggle('below', below || tooMuch);
     if (!q) return;
     if (below) { $('wdFees').hidden = true; return; }
@@ -338,12 +390,13 @@ export const FLOWS_SCRIPT = `
     if (Number(amountDigits($('wdAmount').value)) >= lim('withdrawal_min')) skRows($('wdFees'), 4);
     loadWdQuote();
   });
-  const wdAvailText = () => { $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR'); };
+  function wdAvailText() { $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(wdW.balance(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR'); }
   async function enterWithdraw() {
     focusAmount('wdAmount');
+    wdW.render(true);
     // Minimums and balance as they are now (the admin may have changed them since the page opened).
-    loadMe().then(() => { wdAvailText(); wdCheck(); }).catch(() => {});
-    $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR');
+    loadMe().then(() => { wdW.render(); wdAvailText(); wdCheck(); }).catch(() => {});
+    wdAvailText();
     wdCheck();
     if (!$('wdList').children.length) { $('wdListHead').hidden = false; skeleton($('wdList'), 3, 'div'); }
     try {
@@ -360,20 +413,21 @@ export const FLOWS_SCRIPT = `
     if (wdBusy || !wdQuote || $('wdNext').disabled) return;
     const q = wdQuote;
     wdBusy = true;
-    const next = { quote: q, network: wd.st.network, msisdn: wd.msisdn(), shown: wd.shown(), key: LP.uuid() };
+    const next = { quote: q, network: wd.st.network, msisdn: wd.msisdn(), shown: wd.shown(), wallet: wdW.id(), key: LP.uuid() };
     // « Retirer » opens the code step; the withdrawal leaves once, with the 6th digit.
     const done = await confirmSheet({
       title: 'Vous retirez',
       amount: LP.money(q.amount, q.currency),
       rows: [
         ['Vers', wd.label()],
+      ].concat(wdW.several() ? [['Depuis', wdW.label()]] : []).concat([
         ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
         ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
         ['Total débité', LP.money(q.total, q.currency), true],
-        ['Solde après retrait', LP.money(available() - Number(q.total), q.currency)],
-      ],
+        ['Solde après retrait', LP.money(wdW.balance() - Number(q.total), q.currency)],
+      ]),
       confirm: 'Retirer',
-      pin: (code) => LP.api('POST', '/v1/me/withdrawals', { amount: next.quote.amount, msisdn: next.msisdn, network: next.network }, next.key, code),
+      pin: (code) => LP.api('POST', '/v1/me/withdrawals', { amount: next.quote.amount, msisdn: next.msisdn, network: next.network, wallet_id: next.wallet || undefined }, next.key, code),
     });
     if (!done) { wdBusy = false; return; }
     wdState = next;
@@ -420,4 +474,50 @@ export const FLOWS_SCRIPT = `
     }, 3000);
   }
 
+
+  // ---------------------------------------------------------------- between my wallets (free, instant, with the code)
+  let moveState = null, moveResult = null, moveBusy = false;
+  const moveFrom = walletPicker('moveFrom', () => { moveTo.render(); moveCheck(); }, { always: true });
+  const moveTo = walletPicker('moveTo', () => moveCheck(), { always: true, exclude: () => moveFrom.id() });
+  function moveCheck() {
+    const amount = Number(amountDigits($('moveAmount').value));
+    $('moveAvail').textContent = 'FCFA · disponible ' + LP.money(moveFrom.balance(), cur());
+    $('moveAvail').classList.toggle('below', amount > moveFrom.balance());
+    $('moveNext').disabled = !moveFrom.id() || !moveTo.id() || !amount || amount > moveFrom.balance();
+  }
+  $('moveAmount').addEventListener('input', moveCheck);
+  function enterMove() {
+    moveFrom.render(true); moveTo.render(true); moveCheck();
+    say('moveMsg', myWallets().length < 2 ? 'Ouvrez un deuxième wallet pour déplacer de l’argent entre vos wallets.' : '');
+    focusAmount('moveAmount');
+  }
+  $('moveNext').addEventListener('click', async () => {
+    if (moveBusy || $('moveNext').disabled) return;
+    const amount = String(Number(amountDigits($('moveAmount').value)));
+    const next = { from: moveFrom.id(), to: moveTo.id(), fromLabel: moveFrom.label(), toLabel: moveTo.label(), amount: amount, key: LP.uuid() };
+    moveBusy = true;
+    const done = await confirmSheet({
+      title: 'Vous déplacez', amount: LP.money(amount, cur()),
+      rows: [['Depuis', next.fromLabel], ['Vers', next.toLabel], ['Frais', 'Aucun']],
+      confirm: 'Déplacer',
+      pin: (code) => LP.api('POST', '/v1/me/wallets/move', { from: next.from, to: next.to, amount: next.amount }, next.key, code),
+    });
+    if (!done) { moveBusy = false; return; }
+    moveState = next; moveResult = null;
+    nav.go('move/done');
+    await operate('move', async () => {
+      if (done.error) throw done.error;
+      moveResult = done.result.move;
+      $('moveAmount').value = '';
+      await loadMe().catch(() => {});
+      enterMoveDone();
+    });
+    moveBusy = false;
+  });
+  $('moveRetry').addEventListener('click', () => nav.go('move', true));
+  function enterMoveDone() {
+    if (moveResult) return result('move', 'ok', 'Argent déplacé', LP.money(moveResult.amount, cur()) + ' de « ' + moveState.fromLabel + ' » vers « ' + moveState.toLabel + ' ».');
+    if (!moveState) return nav.go('home', true);
+    result('move', 'wait', 'Déplacement en cours', LP.money(moveState.amount, cur()) + ' vers « ' + moveState.toLabel + ' »…');
+  }
 `;

@@ -839,7 +839,13 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       box.classList.add('rows');
       const appsHost = items(d.apps.map((a) => ({ href: '#/apps/' + a.app_id, title: a.app_name, sub: 'depuis le ' + fmtDate(a.created_at), end: a.status === 'ACTIVE' ? 'connectée' : 'retirée' })), 'Aucune app connectée.');
       const movesHost = items(d.moves.map((m) => ({ href: '#/moves/' + m.transaction_id, title: m.description || TYPE[m.type] || m.type, sub: fmtDateTime(m.created_at), end: signed(m.direction, m.amount) })), 'Aucun mouvement.');
-      $('userDetail').replaceChildren(detailPanel('Compte', [box]), flushPanel('Apps connectées', appsHost), flushPanel('Derniers mouvements', movesHost));
+      const walletsHost = items(d.wallets.map((x) => ({
+        href: x.id === u.id ? null : '#/users/' + x.id,
+        title: (x.label || 'Principal') + (x.is_default ? ' · par défaut' : ''),
+        sub: [x.country, x.status === 'ACTIVE' ? '' : x.status === 'CLOSED' ? 'fermé' : 'gelé', x.id === u.id ? 'ce wallet' : ''].filter(Boolean).join(' · '),
+        end: money(Number(x.available_balance) + Number(x.locked_balance)),
+      })), 'Aucun wallet.');
+      $('userDetail').replaceChildren(detailPanel('Compte', [box]), flushPanel('Ses wallets', walletsHost), flushPanel('Apps connectées', appsHost), flushPanel('Derniers mouvements', movesHost));
     });
   }
 
@@ -1333,9 +1339,9 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     const min = range ? range[0] : 0, max = range ? range[1] : 1000000;
     return Number.isInteger(n) && n >= min && n <= max ? n : NaN;
   }
-  const UNIT_END = { pct: '%', fcfa: 'FCFA', min: 'min', count: 'fois' };
+  const UNIT_END = { pct: '%', fcfa: 'FCFA', min: 'min', count: 'fois', num: '' };
   const UNIT_ERR = (unit, range) => unit === 'pct' ? 'Pourcentage de 0 à 50, 2 décimales au plus.' : unit === 'fcfa' ? 'Montant entier en FCFA.' : 'Nombre entier de ' + range[0] + ' à ' + range[1] + '.';
-  const shownValue = (v, unit) => unit === 'min' ? v + ' min' : unit === 'count' ? (v === 0 ? 'Aucune limite' : v + (v > 1 ? ' fois' : ' fois')) : shown(v, unit);
+  const shownValue = (v, unit) => unit === 'min' ? v + ' min' : unit === 'count' ? (v === 0 ? 'Aucune limite' : v + (v > 1 ? ' fois' : ' fois')) : unit === 'num' ? String(v) : shown(v, unit);
   /**
    * One value, read as a button; a click turns it into a field (Enter saves, Échap cancels). One code for every settings screen:
    * the store tells where the values are, how a full set is saved and which screen line shows the message.
@@ -1445,6 +1451,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       ['withdrawal_max_attempts', 'Tentatives de retrait autorisées', 'Au-delà, le compte est suspendu (0 : pas de limite)', 'count'],
       ['withdrawal_attempt_window_minutes', 'Durée de comptage', 'Les tentatives sont comptées sur cette durée', 'min'],
       ['withdrawal_suspension_minutes', 'Durée de la suspension', 'Le compte ne peut ni retirer ni envoyer pendant ce temps', 'min'],
+      ['max_wallets', 'Wallets par personne', 'Nombre de wallets qu’une personne peut tenir ouverts à la fois', 'num'],
     ],
   };
   let ctlSet = null, ctlRanges = null;

@@ -117,6 +117,12 @@ Fait (phase A, migration 027) :
 - **Console** : écran « Wallets » (`table()`), détail en écran à part. **Admin** : wallets sur la fiche de la
   personne, gel par wallet.
 - **API** : `wallet_id` facultatif partout (absent → défaut), `GET/POST /wallets`. `/docs` dans la même livraison.
+- Fait (phase F) : `/v1/me/wallets` (lister, ouvrir, renommer, choisir par défaut, fermer), `POST /v1/me/wallets/move`
+  (entre ses wallets, gratuit, avec le code), `wallet_id` sur dépôt, envoi, retrait, activité ; maximum par personne dans
+  « Contrôle » (5 par défaut). Écrans partagés compte / console (`wallets.ts`) : liste, écran d'un wallet (solde,
+  Dépôt / Envoyer / Retirer / Déplacer depuis lui, nom, défaut, fermeture, activité), ouverture ; parcours « Entre mes
+  wallets » dans `flows.ts` ; chaque formulaire demande le wallet quand il y en a plusieurs. Accueil : total et liste des
+  wallets. Admin : wallets de la personne sur sa fiche. L'espace personnel (`/v1/me`) n'est pas dans `/docs`.
 
 ---
 
@@ -292,7 +298,7 @@ change visible. Seuls ces pays portent un risque de change.
 | **C — Routage** ✓ | Règles, simulateur, frais comparés ; SasPay par défaut, pawaPay pour le Congo → Congo. | Moins de frais sur le Congo. |
 | **D — Pays de départ** ✓ | Cameroun, Côte d'Ivoire, Togo : dépôts et retraits, numéro international, choix du pays dans `flows.ts`. | Encaisser et retirer dans 4 pays. |
 | **E — Rééquilibrage** ✓ | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |
-| **F — Plusieurs wallets à l'écran** | Compte, console, admin, API `wallet_id`, ouverture / fermeture. | Une personne gère plusieurs wallets. |
+| **F — Plusieurs wallets à l'écran** ✓ | Compte, console, admin, API `wallet_id`, ouverture / fermeture. | Une personne gère plusieurs wallets. |
 | **G — Suite** | Écrans OTP et redirection (Orange, Wave), autres pays CFA, remboursements natifs pawaPay, puis hors CFA. | Activés dans l'admin. |
 
 `/docs` est mise à jour à chaque phase ; chaque phase garde la compatibilité.
