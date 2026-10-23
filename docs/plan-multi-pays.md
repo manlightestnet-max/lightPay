@@ -1,8 +1,8 @@
 # Plan — LightPay modulaire : plusieurs wallets, plusieurs pays, un seul franc
 
-Révision du 23 octobre 2026 (remplace les versions du 21 et du 22). **Plan seulement : rien n'est codé.**
-Faits fournisseurs : docs.saspay.me, docs.pawapay.io (API v2) et les transferts SasPay faits le 22 octobre
-(historique du tableau de bord SasPay).
+Révision du 23 octobre 2026 (remplace les versions du 21 et du 22). **Phases A à F codées** (voir § 6) ; la phase G
+reste à faire. Faits fournisseurs : docs.saspay.me, docs.pawapay.io (API v2), les transferts SasPay faits le
+22 octobre, et la page de paiement et l'API SasPay de notre compte lues le 23 octobre (opérateurs, OTP, tarifs).
 
 ## 0. Les décisions
 
@@ -299,7 +299,8 @@ change visible. Seuls ces pays portent un risque de change.
 | **D — Pays de départ** ✓ | Cameroun, Côte d'Ivoire, Togo : dépôts et retraits, numéro international, choix du pays dans `flows.ts`. | Encaisser et retirer dans 4 pays. |
 | **E — Rééquilibrage** ✓ | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |
 | **F — Plusieurs wallets à l'écran** ✓ | Compte, console, admin, API `wallet_id`, ouverture / fermeture. | Une personne gère plusieurs wallets. |
-| **G — Suite** | Écrans OTP et redirection (Orange, Wave), autres pays CFA, remboursements natifs pawaPay, puis hors CFA. | Activés dans l'admin. |
+| **Tarifs en direct** ✓ | `rates()` des fournisseurs (SasPay `/pricing/my-rates/`), tableau « Tarifs réels » dans Frais et minimums, tarif sur chaque opérateur, colonne « Pris en vrai » dans le simulateur. | L'admin voit où il perd de l'argent. |
+| **G — Suite** | Écrans OTP (Orange CI, Burkina : code composé avant de payer, instructions déjà dans le registre) et redirection (Wave : `payment_url` puis retour), frais opérateur **par pays** dans Frais et minimums (aidés par les tarifs en direct), autres pays CFA (Sénégal, Bénin, Burkina, Mali, Niger), Djamo, remboursements natifs pawaPay, puis hors CFA. | Activés dans l'admin. |
 
 `/docs` est mise à jour à chaque phase ; chaque phase garde la compatibilité.
 
@@ -308,8 +309,12 @@ change visible. Seuls ces pays portent un risque de change.
 ## 7. À vérifier
 
 - **SasPay** : le 25 XOF → 24 XAF du 22 octobre (arrondi ou taux) ; approbation automatique des transferts sur notre
-  compte ; opérateurs ouverts au Togo.
-- **pawaPay** : grille de frais par opérateur au Congo (pour écrire les règles).
+  compte. Opérateurs du Togo confirmés par notre compte : `togocel`, `moov_tg` (et `mixx_tg`, sans tarif).
+- **Tarifs SasPay de notre compte** (23 octobre, encaissement / envoi) : Congo 5,7 % / 2,2–3,2 % + 50 ; Cameroun
+  3,5 % / 2,2–2,5 % + 50 ; Côte d'Ivoire 3,9 % / 3,2 % + 50 ; Togo 4,1 % / 3,2 % + 50 ; Gabon ~5 % / 1–1,5 % + 700.
+  Les frais opérateur réglés dans l'admin sont encore par fournisseur, pas par pays : à corriger avant d'ouvrir un pays.
+- **Numérotation** : préfixes du Cameroun et du Gabon écrits de mémoire, à confirmer (modifiables dans l'admin).
+- **pawaPay** : grille de frais par opérateur au Congo (pas d'API de tarifs, pour écrire les règles).
 - **Non technique** : cadre légal de chaque pays de départ (monnaie électronique, anti-blanchiment, transferts
   entre CEMAC et UEMOA) et déclarations Google Play ; fonds de départ dans chaque wallet SasPay pays pour que les
   premiers retraits partent sans attendre.

@@ -1,6 +1,7 @@
 # LightPay (LightWallet) — consignes pour Claude
 
-Wallet et paiements mobile money (MTN MoMo, Airtel Money) pour le Congo-Brazzaville, en FCFA (XAF).
+Wallet et paiements mobile money (MTN MoMo, Airtel Money, Orange Money…) pour le Congo-Brazzaville et les pays que l’admin
+ouvre (Cameroun, Côte d’Ivoire, Togo, Gabon…), en FCFA. Plan et état : `docs/plan-multi-pays.md`.
 Fastify + PostgreSQL (deux bases : production et sandbox), grand livre en partie double.
 Pages hébergées en HTML/JS sans framework : `src/pages/hosted/*` (compte, console, admin, paiement).
 
@@ -42,7 +43,11 @@ SaaS (barre latérale, écrans en scaffold). La console ne s’ouvre que depuis 
   appui ; chaque opération a sa clé d’idempotence.
 - **Formulaires de l’admin** (réglages, envoi depuis le main, relevé de solde) : le message s’affiche sous le
   formulaire (`say(…, 'err' | 'ok')`), parce que l’admin doit savoir tout de suite ce qui ne va pas.
-- **Le numéro choisit l’opérateur** (06 MTN, 05/04 Airtel) ; le serveur refuse un mélange.
+- **Le numéro choisit l’opérateur** d’après les préfixes du registre (Congo : 06 MTN, 05/04 Airtel) ; le serveur refuse
+  un mélange. Le pays se choisit avant l’opérateur, seulement quand plusieurs pays sont ouverts ; un numéro part en forme
+  internationale (`242…`, `237…`).
+- **Plusieurs wallets** : un formulaire ne demande « quel wallet » que s’il y en a plusieurs, en partant de celui d’où il
+  a été ouvert ; écrans partagés compte / console dans `wallets.ts`.
 - **Montants** : une sortie affiche ce qui a quitté le wallet, frais compris ; une entrée affiche ce qui est arrivé,
   jamais ce que le téléphone a payé avec les frais.
 - **Les fournisseurs (SasPay, pawaPay) ne se montrent jamais** aux personnes ni aux apps : seulement dans l’admin.
@@ -70,9 +75,16 @@ Google seulement (Firebase Auth, redirection dans le même onglet ; fenêtre seu
   directement ; les frais d’un retrait ou d’un remboursement attendent dans `LIGHTPAY_FEES` (« frais en attente »)
   tant que l’opérateur n’a pas confirmé l’envoi, puis passent au main (un envoi refusé rend ses frais). Chaque frais
   est décrit « Frais LightPay - … » : c’est ainsi que l’admin compte les revenus, où qu’ils soient.
-- **Réserves par fournisseur** (admin → Réserves) : ce qui doit être chez lui = encaissé − versé + envois pas encore
-  partis ; un envoi échoué et sa restitution ne comptent pas (rien n’a bougé chez lui). L’admin relève le vrai solde
-  affiché par le fournisseur (`provider_balance_checks`, une note, aucun argent ne bouge) : l’écart s’affiche.
+- **Réserves par wallet fournisseur** (fournisseur + pays, admin → Réserves) : ce qui doit être chez lui = encaissé −
+  versé + transferts reçus − transferts partis + envois pas encore partis ; un envoi échoué et sa restitution ne comptent
+  pas (rien n’a bougé chez lui). Les soldes réels sont lus par API (SasPay, pawaPay) ou relevés à la main
+  (`provider_balance_checks`, une note, aucun argent ne bouge) : l’écart, le disponible et les alertes s’affichent.
+- **Un seul franc** : XAF et XOF sont la même unité dans LightPay (1 pour 1, parité fixe avec l’euro), les soldes restent
+  en `XAF` ; le fournisseur reçoit la monnaie du pays de l’opérateur. Envoi entre personnes : gratuit, même d’un pays à
+  l’autre.
+- **Rééquilibrage** (`src/payments/rebalance.ts`) : LightPay déplace son propre argent entre les wallets pays de SasPay
+  (`wallet-transfers`, un à la fois, en file) ; un retrait vers un pays à sec attend son transfert ; le coût est écrit en
+  `SYSTEM_PROVIDER_COSTS`. Rien ne passe jamais de pawaPay à SasPay.
 - **Marchand direct** : une session de paiement ou un débit sans `payee` paie le wallet de l’app elle-même, sans
   commission (`fee_amount` exige un vendeur). Le séquestre est alors facultatif (désactivé par défaut).
 - Frais et minimums : **uniquement depuis l’admin** (« Frais et minimums »), par environnement ;
@@ -81,8 +93,14 @@ Google seulement (Firebase Auth, redirection dans le même onglet ; fenêtre seu
   remboursement (un envoi attend, l’admin peut le retenir pour litige / support / autre, le libérer ou l’annuler), nombre de tentatives de
   retrait puis suspension du compte, frein d’urgence à cinq niveaux (`src/security/lockdown.ts`, variable `LIGHTWALLET_LOCKDOWN`).
   Même design que « Frais et minimums » (`settingItem`). Un remboursement coûte comme un retrait (frais opérateur + LightPay).
-- Fournisseur des encaissements et des envois : choisi dans l’admin (« Fournisseurs ») ;
+- Fournisseur des encaissements et des envois : les **règles de routage** de l’admin (« Routage », `src/rails/routing.ts`)
+  choisissent, sinon le fournisseur par défaut (« Fournisseurs ») ; un devis passe par les mêmes règles que l’opération.
   SasPay = réel seulement, simulateur = test seulement.
+- **Pays et opérateurs : uniquement depuis l’admin** (« Pays et opérateurs », registre `src/rails/registry.ts`, tables
+  `countries` et `rails`) : ouvrir un pays, activer un opérateur, ses préfixes et les codes de chaque fournisseur. Un
+  opérateur à code OTP ou à page de redirection reste éteint tant que son écran n’existe pas.
+- **Tarifs réels des fournisseurs** (admin, `src/payments/provider-rates.ts`) : lus en direct, pour comparer ; les
+  personnes paient toujours les frais réglés dans « Frais et minimums ».
 - Un dépôt sans validation est fermé après 5 min ; un succès tardif est quand même crédité.
 
 ## Façon de travailler

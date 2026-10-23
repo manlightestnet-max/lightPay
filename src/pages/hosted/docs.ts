@@ -233,7 +233,8 @@ ${endpoint('GET', '/v1/connections/:id/balance', 'Solde (balance:read).')}
 ${endpoint('GET', '/v1/connections/:id/transactions', 'Mouvements (balance:read).')}
 ${endpoint('POST', '/v1/connections/:id/deposits', 'Dépôt (deposit) → <code>checkout_url</code>.')}
 ${endpoint('POST', '/v1/connections/:id/charges', 'Débit (charge) : <code>{ amount, payee?, fee_amount?, escrow?, reference, description }</code>. Sans <code>payee</code>, vers le wallet de votre app.')}
-${note('Au-dessus de la limite choisie par la personne, le débit est refusé (<code>ABOVE_CHARGE_LIMIT</code>) : créez alors une session de paiement.')}`,
+${note('Au-dessus de la limite choisie par la personne, le débit est refusé (<code>ABOVE_CHARGE_LIMIT</code>) : créez alors une session de paiement.')}
+<p>Une personne peut tenir plusieurs wallets LightPay. Une connexion utilise le wallet qui était son wallet par défaut quand elle a autorisé votre app : le solde, les mouvements, les dépôts et les débits de cette connexion sont ceux de ce wallet.</p>`,
   },
   {
     id: 'frais',
@@ -242,7 +243,7 @@ ${note('Au-dessus de la limite choisie par la personne, le débit est refusé (<
     body: `
 <p>Les frais sont réglés par LightPay et peuvent changer : lisez-les par l’API plutôt que de les écrire en dur.</p>
 <ul>
-  <li><b>Paiement et dépôt par mobile money</b> : les frais de LightPay et de l’opérateur s’ajoutent au montant, payés par la personne. Vous recevez le montant demandé.</li>
+  <li><b>Paiement et dépôt par mobile money</b> : les frais de LightPay et de l’opérateur s’ajoutent au montant, payés par la personne. Vous recevez le montant demandé. Les frais d’opérateur dépendent du pays et de l’opérateur : la page de paiement les affiche pour chacun avant que la personne paie.</li>
   <li><b>Paiement par wallet LightPay</b> : sans frais pour la personne.</li>
   <li><b>Remboursement vers un numéro</b> : il coûte comme un retrait (opérateur + LightPay), déduit du remboursement.</li>
 </ul>`,
