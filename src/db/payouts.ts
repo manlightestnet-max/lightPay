@@ -3,6 +3,7 @@ import { query } from './pool.js';
 import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
 import { numberFitsNetwork } from '../rails/registry.js';
+import { transferForPayout } from '../payments/rebalance.js';
 import { MobileNetwork, networkName, providerByName, providerFor, RailOperation, RailResult } from '../payments/mobile-money.js';
 import { lightpayFeeWallet, settlePayoutFee } from './fee-wallet.js';
 import { isPersonWallet, logActivity, maskPhone, reasonFor, updateActivity } from './activity.js';
@@ -132,14 +133,21 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   // While the emergency brake keeps payouts closed, a refund is still booked but waits until they reopen.
   const settings = controlSettings(env);
   const delayMinutes = input.reason === 'WITHDRAWAL' ? settings.withdrawal_delay_minutes : settings.refund_delay_minutes;
-  const scheduled = delayMinutes > 0 || withdrawalsClosed();
+  // Not enough money at the provider in that country: the payout waits for a transfer from another of its wallets
+  // (released when it arrives, src/payments/rebalance.ts). Programmed for a day at most meanwhile.
+  const waitingTransfer = await transferForPayout(env, provider.name, input.network, input.amount + operatorFee).catch((err) => {
+    console.error('[PAYOUT] rebalancing not asked', payoutId, err?.message);
+    return null;
+  });
+  const scheduled = delayMinutes > 0 || withdrawalsClosed() || waitingTransfer !== null;
   const [row] = await query(
-    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited, release_at, routing_rule)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15::varchar, $10, $11, $12, $13, $14, CASE WHEN $15::varchar = 'SCHEDULED' THEN NOW() + make_interval(mins => $16::int) END, $17)
+    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited, release_at, routing_rule, waiting_transfer)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15::varchar, $10, $11, $12, $13, $14,
+             CASE WHEN $18::varchar IS NOT NULL THEN NOW() + interval '1 day' WHEN $15::varchar = 'SCHEDULED' THEN NOW() + make_interval(mins => $16::int) END, $17, $18)
      ON CONFLICT DO NOTHING RETURNING *`,
     [payoutId, env, input.walletId, provider.name, input.network, input.msisdn, input.amount.toString(), input.currency, input.reason,
       (debit as any).transactionId ?? (debit as any).transaction?.id ?? null, input.reference, operatorFee.toString(), lightpayFee.toString(), total.toString(),
-      scheduled ? 'SCHEDULED' : 'PENDING', delayMinutes, input.routingRule ?? null],
+      scheduled ? 'SCHEDULED' : 'PENDING', delayMinutes, input.routingRule ?? null, waitingTransfer],
     env
   );
   if (row && (await isPersonWallet(env, input.walletId))) {
@@ -305,7 +313,7 @@ export async function holdPayout(env: Environment, id: string, kind: unknown, re
 /** `now`: a held or waiting payout is sent at the next pass (within seconds). */
 export async function releasePayout(env: Environment, id: string): Promise<PayoutRow> {
   const [row] = await query<PayoutRow>(
-    `UPDATE payouts SET status = 'SCHEDULED', release_at = NOW(), hold_kind = NULL, hold_reason = NULL, held_by = NULL, held_at = NULL, updated_at = NOW()
+    `UPDATE payouts SET status = 'SCHEDULED', release_at = NOW(), waiting_transfer = NULL, hold_kind = NULL, hold_reason = NULL, held_by = NULL, held_at = NULL, updated_at = NOW()
      WHERE id = $1 AND status IN ('SCHEDULED', 'HELD') RETURNING *`,
     [id],
     env
@@ -332,7 +340,7 @@ export async function cancelWaitingPayout(env: Environment, id: string): Promise
 }
 
 const ADMIN_COLUMNS = `p.id, p.status, p.reason, p.amount::text, p.operator_fee::text, p.lightpay_fee::text, p.total_debited::text, p.currency, p.network, p.msisdn, p.provider,
-  p.failure_code, p.reference, p.created_at, p.updated_at, p.release_at, p.hold_kind, p.hold_reason, p.held_by, p.held_at,
+  p.failure_code, p.reference, p.created_at, p.updated_at, p.release_at, p.hold_kind, p.hold_reason, p.held_by, p.held_at, p.waiting_transfer,
   w.account_type AS owner_type, w.metadata->>'name' AS owner_name, w.metadata->>'email' AS owner_email`;
 const adminView = (r: any) => ({ ...r, msisdn: maskPhone(r.msisdn) });
 

@@ -243,6 +243,13 @@ Conséquences :
   (réglage « automatique / sur validation de l'admin »).
 - **pawaPay ne se rééquilibre pas** (aucune API de transfert) : il se vide par ses envois (règle 2) ou par le
   versement bancaire réglé dans son tableau de bord.
+- Fait (phase E, migration 031, `src/payments/rebalance.ts`) : transferts SasPay en file (un à la fois, repris s'il
+  y en a déjà un chez SasPay), suivis chaque minute et par le rappel `wallet_transfer.*`. Un retrait vers un pays à sec
+  est programmé et attend le transfert qui le remplit (la personne voit « en cours ») ; il part à l'arrivée, ou tout de
+  suite si le transfert est refusé. Le coût (frais SasPay + arrondi) est écrit en `SYSTEM_PROVIDER_COSTS`, attribué au
+  pays qui reçoit. Admin → Réserves : liste des transferts, proposition sur chaque wallet (source, montant, marge),
+  annulation tant qu'il est en file ; réglages « retrait vers un pays à sec » (activé), « remise à niveau
+  automatique » (désactivée), marge (0,5 %).
 
 ---
 
@@ -284,7 +291,7 @@ change visible. Seuls ces pays portent un risque de change.
 | **B — Réserves par pays + inspection** ✓ | Réserves par (fournisseur, pays) calculées depuis le transit, lecture automatique des soldes (SasPay, pawaPay), écart, disponible, minimum / seuil bas / niveau cible, alertes et compteur, écran par wallet fournisseur. | L'admin voit chaque wallet fournisseur. |
 | **C — Routage** ✓ | Règles, simulateur, frais comparés ; SasPay par défaut, pawaPay pour le Congo → Congo. | Moins de frais sur le Congo. |
 | **D — Pays de départ** ✓ | Cameroun, Côte d'Ivoire, Togo : dépôts et retraits, numéro international, choix du pays dans `flows.ts`. | Encaisser et retirer dans 4 pays. |
-| **E — Rééquilibrage** | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |
+| **E — Rééquilibrage** ✓ | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |
 | **F — Plusieurs wallets à l'écran** | Compte, console, admin, API `wallet_id`, ouverture / fermeture. | Une personne gère plusieurs wallets. |
 | **G — Suite** | Écrans OTP et redirection (Orange, Wave), autres pays CFA, remboursements natifs pawaPay, puis hors CFA. | Activés dans l'admin. |
 

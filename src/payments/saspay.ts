@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { MobileMoneyProvider, ProviderBalance, RailOperation, RailResult } from './mobile-money.js';
+import type { MobileMoneyProvider, ProviderBalance, RailOperation, RailResult, TransferOperation, TransferResult } from './mobile-money.js';
 import { countryByCode, countryByIso2, currencyOfNetwork, providerCode, railByNetwork } from '../rails/registry.js';
 import type { Environment } from '../types/index.js';
 
@@ -11,6 +11,8 @@ import type { Environment } from '../types/index.js';
  *   payout    POST /payouts/initialize/          (API key needs PAYOUT scope + whitelisted IP)
  *   verify    GET  /payouts/{id}/verify/
  *   balances  GET  /merchant-balances/     one wallet per country: available_amount, pending_amount, is_frozen
+ *   transfer  POST /wallet-transfers/      { from_country, to_country, from_amount } -> COMPLETED | PENDING (SasPay's approval) | REJECTED
+ *             GET  /wallet-transfers/{id}/  one transfer at a time per merchant (transfer_already_pending)
  *   webhooks  X-Webhook-Signature = hex HMAC-SHA256(secret, "{X-Webhook-Timestamp}.{raw body}")
  *
  * Env: SASPAY_SECRET_KEY (sk_live_… / sk_test_…), SASPAY_WEBHOOK_SECRET, SASPAY_API_URL,
@@ -57,6 +59,21 @@ const mapStatus = (status: string): RailResult['status'] => {
   if (s === 'SUCCESS' || s === 'SUCCEEDED' || s === 'COMPLETED') return 'SUCCEEDED';
   if (s === 'FAILED' || s === 'CANCELLED' || s === 'CANCELED' || s === 'EXPIRED' || s === 'REJECTED') return 'FAILED';
   return 'PENDING';
+};
+
+/** A wallet transfer as SasPay reports it: arrived (with what arrived, the rate and its fee), waiting, or refused. */
+const transferResult = (r: any): TransferResult => {
+  const s = String(r?.status ?? '').toUpperCase();
+  const status = s === 'COMPLETED' ? 'SUCCEEDED' : s === 'REJECTED' ? 'FAILED' : 'PENDING';
+  return {
+    status,
+    providerReference: r?.id ? String(r.id) : undefined,
+    received: whole(r?.to_amount),
+    receivedCurrency: r?.to_currency ? String(r.to_currency) : undefined,
+    rate: r?.exchange_rate !== undefined && r?.exchange_rate !== null ? String(r.exchange_rate) : undefined,
+    fee: whole(r?.fee_amount),
+    failureCode: status === 'FAILED' ? `PROVIDER_REJECTED${r?.rejection_reason ? `: ${String(r.rejection_reason).slice(0, 40)}` : ''}` : undefined,
+  };
 };
 
 export class SasPayError extends Error {
@@ -164,6 +181,30 @@ export class SasPayProvider implements MobileMoneyProvider {
     const r = await this.call('GET', `/payouts/${encodeURIComponent(op.providerReference)}/verify/`);
     const status = mapStatus(r.status);
     return { status, providerReference: r.id ?? op.providerReference, failureCode: status === 'FAILED' ? `PROVIDER_${String(r.status).toUpperCase()}` : undefined };
+  }
+
+  /** Moves our money between two of our SasPay country wallets (rebalancing). XAF ↔ XOF should come at 1 for 1. */
+  async transfer(op: TransferOperation): Promise<TransferResult> {
+    const iso2 = (code: string) => countryByCode(code)?.iso2 ?? code;
+    try {
+      const r = await this.call(
+        'POST',
+        '/wallet-transfers/',
+        { from_country: iso2(op.fromCountry), to_country: iso2(op.toCountry), from_amount: `${op.amount.toString()}.00` },
+        idempotencyUuid(op.id)
+      );
+      return transferResult(r);
+    } catch (err) {
+      if (err instanceof SasPayError && err.code === 'transfer_already_pending') return { status: 'PENDING', failureCode: 'ALREADY_PENDING' };
+      // Refused (same country, frozen wallet, not enough money…): nothing moved.
+      if (err instanceof SasPayError && err.httpStatus >= 400 && err.httpStatus < 500) return { status: 'FAILED', failureCode: (err.code || 'PROVIDER_REFUSED').toUpperCase() };
+      throw err;
+    }
+  }
+
+  async transferStatus(op: TransferOperation): Promise<TransferResult> {
+    if (!op.providerReference) return { status: 'PENDING' };
+    return transferResult(await this.call('GET', `/wallet-transfers/${encodeURIComponent(op.providerReference)}/`));
   }
 
   /** Our wallet in each country (paginated, 100 per page). A country unknown to the registry keeps SasPay's code. */

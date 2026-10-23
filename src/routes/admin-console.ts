@@ -41,6 +41,7 @@ import { fromTemplate } from '../notify/catalog.js';
 import { sendTest } from '../notify/index.js';
 import { RESERVE_RANGES, ReserveSettingsError, loadReserveSettings, reserveSettings, saveReserveSettings, validateReserveSettings } from '../payments/reserve-settings.js';
 import { readProviderBalances } from '../payments/reserve-watch.js';
+import { RebalanceError, cancelTransfer, canTransfer, getTransfer, listTransfers, planTransfer, requestTransfer, transferSources } from '../payments/rebalance.js';
 import { KIND_OF, OPERATION_TYPES, OperationType, RoutingError, loadRoutingRules, route, routingRules, saveRoutingRules, validateRoutingRules } from '../rails/routing.js';
 import { allCountries, allRails } from '../rails/registry.js';
 import { RegistryError, registryForAdmin, updateCountry, updateRail } from '../rails/registry-admin.js';
@@ -57,7 +58,11 @@ import { query } from '../db/pool.js';
  *   GET  /v1/admin-console/reserves/:key        one provider wallet (saspay:COG): its line, levels and readings
  *   POST /v1/admin-console/reserves/checks      { provider, country, balance, note }   the real balance read at a provider
  *   POST /v1/admin-console/reserves/read        reads every provider wallet now through the providers' APIs
- *   GET  /v1/admin-console/reserves-settings    gap alert, automatic readings, levels per provider wallet (+ ranges)
+ *   GET  /v1/admin-console/reserves/:key/plan   a transfer proposal to refill that provider wallet + the possible sources
+ *   GET  /v1/admin-console/transfers            transfers between a provider's country wallets · /transfers/:id
+ *   POST /v1/admin-console/transfers            { provider, from, to, amount }   recent sign-in; queued, logged
+ *   POST /v1/admin-console/transfers/:id/cancel   a transfer still queued   recent sign-in, logged
+ *   GET  /v1/admin-console/reserves-settings    gap alert, automatic readings, rebalancing, levels per provider wallet (+ ranges)
  *   PUT  /v1/admin-console/reserves-settings    { …all settings }   recent sign-in; applied at once, logged
  *   GET  /v1/admin-console/routing              routing rules (ordered) + what they can name (providers, operators, countries, apps)
  *   PUT  /v1/admin-console/routing              [ …all rules ]   recent sign-in; applied at once, logged
@@ -126,7 +131,7 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
 }
 
 const fail = (reply: FastifyReply, err: any) => {
-  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError || err instanceof ReserveSettingsError || err instanceof RoutingError) {
+  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError || err instanceof ReserveSettingsError || err instanceof RoutingError || err instanceof RebalanceError) {
     return reply.status((err as any).statusCode ?? 400).send({ status: 'error', error: (err as any).code, message: err.message });
   }
   if (err instanceof AdminError) return reply.status(err.statusCode).send({ status: 'error', error: err.code, message: err.message });
@@ -201,6 +206,58 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
       api.get('/reserves/:key', async (request, reply) => {
         try {
           return { status: 'success', ...(await reserveWallet(envOf(request), String((request.params as any).key))) };
+        } catch (e) {
+          return fail(reply, e);
+        }
+      });
+      api.get('/reserves/:key/plan', async (request, reply) => {
+        const env = envOf(request);
+        const [provider, country] = String((request.params as any).key).split(':');
+        if (!provider || !country || !canTransfer(env, provider)) return reply.status(400).send({ status: 'error', error: 'TRANSFER_NOT_SUPPORTED', message: 'Ce wallet ne peut pas être rééquilibré par API.' });
+        const [plan, sources] = await Promise.all([planTransfer(env, provider, country), transferSources(env, provider, country)]);
+        const str = (x: bigint | null) => (x === null ? null : x.toString());
+        return {
+          status: 'success',
+          plan: plan ? { from: plan.from, amount: plan.amount.toString(), surplus: plan.surplus.toString() } : null,
+          sources: sources.map((s) => ({ country: s.country, available: str(s.available), surplus: s.surplus.toString() })),
+        };
+      });
+      api.get('/transfers', async (request) => ({ status: 'success', transfers: await listTransfers(envOf(request), intParam((request.query as any)?.limit, 50, 200)) }));
+      api.get('/transfers/:id', async (request, reply) => {
+        try {
+          return { status: 'success', ...(await getTransfer(envOf(request), String((request.params as any).id))) };
+        } catch (e) {
+          return fail(reply, e);
+        }
+      });
+      api.post('/transfers', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        const admin = adminOf(request);
+        const b = (request.body ?? {}) as any;
+        const raw = String(b.amount ?? '').replace(/\D/g, '');
+        try {
+          const transfer = await requestTransfer(env, {
+            provider: String(b.provider ?? ''),
+            from: String(b.from ?? '').toUpperCase(),
+            to: String(b.to ?? '').toUpperCase(),
+            amount: raw ? BigInt(raw) : 0n,
+            reason: 'manual',
+            by: admin.email || admin.uid,
+          });
+          await auditAction(env, admin, 'TRANSFER_REQUEST', transfer.id, BigInt(transfer.amount), { provider: transfer.provider, from: transfer.from_country, to: transfer.to_country });
+          return { status: 'success', transfer };
+        } catch (e) {
+          return fail(reply, e);
+        }
+      });
+      api.post('/transfers/:id/cancel', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        try {
+          const transfer = await cancelTransfer(env, String((request.params as any).id));
+          await auditAction(env, adminOf(request), 'TRANSFER_CANCEL', transfer.id, BigInt(transfer.amount), { provider: transfer.provider, from: transfer.from_country, to: transfer.to_country });
+          return { status: 'success', transfer };
         } catch (e) {
           return fail(reply, e);
         }

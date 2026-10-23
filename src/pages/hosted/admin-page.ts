@@ -214,7 +214,8 @@ ${page('home', 'Revenus et activité', `
 ${page('reserves', 'Réserves providers', `
   <div class="list-card" id="resTable"></div>
   <p class="small muted mt">Une ligne par wallet chez un fournisseur (un par pays). Attendu = encaissé − versé + envois pas encore partis. Écart = solde réel (disponible + réservé chez lui) − attendu. Disponible = ce qui peut encore partir : solde − envois programmés ou retenus − minimum de sécurité.</p>
-  ${panel('Surveillance', '<ul class="fee-list" id="resSettings"></ul>', { foot: 'Les soldes sont lus chez les fournisseurs qui le permettent (SasPay, pawaPay) : une note à côté du grand livre, aucun argent ne bouge.' })}
+  ${panel('Transferts entre pays', '<div id="transferTable"></div>', { flush: true, foot: 'LightPay déplace son propre argent d’un wallet pays du fournisseur à un autre (SasPay seulement) : les wallets des personnes ne bougent pas. Un seul transfert à la fois : les suivants attendent en file. Ce que le transfert coûte est inscrit en « Frais fournisseurs ».' })}
+  ${panel('Surveillance et rééquilibrage', '<ul class="fee-list" id="resSettings"></ul>', { foot: 'Les soldes sont lus chez les fournisseurs qui le permettent (SasPay, pawaPay) : une note à côté du grand livre, aucun argent ne bouge.' })}
   ${panel('Relever un solde à la main', `
     <form id="checkForm" class="inline-form" novalidate>
       <div class="field"><label for="checkProvider">Provider</label><select id="checkProvider"></select></div>
@@ -442,6 +443,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   ACTION.RESERVES_UPDATE = 'Surveillance des réserves modifiée';
   ACTION.ROUTING_UPDATE = 'Règles de routage modifiées';
   ACTION.COUNTRY_UPDATE = 'Pays modifié';
+  ACTION.TRANSFER_REQUEST = 'Transfert entre pays demandé';
+  ACTION.TRANSFER_CANCEL = 'Transfert entre pays annulé';
   ACTION.RAIL_UPDATE = 'Opérateur modifié';
   ACTION.PROVIDER_BALANCE_CHECK = 'Solde fournisseur relevé';
   ACTION.MESSAGE_UPDATE = 'Message modifié';
@@ -611,20 +614,57 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     $('resCheck').replaceChildren(el('p', { class: 'check ' + (r.balanced ? 'ok' : 'err') }, [icon(r.balanced ? 'check' : 'alert'),
       r.balanced ? 'Couvert : réserves ' + money(r.reserve_total) + ' = wallets ' + money(r.covered) + '.' : 'Écart : réserves ' + money(r.reserve_total) + ', wallets ' + money(r.covered) + '.']));
   }
+  /** A yes / no setting, in the same rows as the values (one tap switches it, saved at once). */
+  function toggleItem(key, label, help, store) {
+    const li = el('li', { class: 'fee-item' });
+    const view = () => {
+      const on = Boolean(store.get()[key]);
+      const btn = el('button', { class: 'fee-val', type: 'button', text: on ? 'Activé' : 'Désactivé', 'aria-pressed': String(on), 'aria-label': label + ' : ' + (on ? 'activé' : 'désactivé') + '. Changer' });
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        await guarded(async () => {
+          const next = Object.assign({}, store.get()); next[key] = !on;
+          store.set(await store.put(next));
+          view(); li.classList.add('saved'); setTimeout(() => li.classList.remove('saved'), 1600);
+        }, store.msg);
+        btn.disabled = false;
+      });
+      li.replaceChildren(el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: label }), el('span', { class: 'fee-help', text: help })]), btn);
+    };
+    view();
+    return li;
+  }
   function renderResSettings() {
     $('resSettings').replaceChildren(
       settingItem(['gap_alert', 'Écart toléré', 'Au-delà, la ligne passe en alerte (0 : le moindre écart)', 'fcfa', resRanges.gap_alert], RES_STORE),
-      settingItem(['auto_check_minutes', 'Lecture automatique des soldes', 'LightPay lit les soldes chez les fournisseurs toutes les N minutes (0 : seulement sur demande)', 'min', resRanges.auto_check_minutes], RES_STORE));
+      settingItem(['auto_check_minutes', 'Lecture automatique des soldes', 'LightPay lit les soldes chez les fournisseurs toutes les N minutes (0 : seulement sur demande)', 'min', resRanges.auto_check_minutes], RES_STORE),
+      toggleItem('rebalance_payouts', 'Retrait vers un pays à sec', 'Le retrait attend un transfert depuis un autre wallet du fournisseur (la personne voit « en cours »)', RES_STORE),
+      toggleItem('rebalance_low', 'Remise à niveau automatique', 'Un wallet sous son seuil bas (avec un niveau cible) est rempli sans attendre un retrait', RES_STORE),
+      settingItem(['transfer_margin_bps', 'Marge d’un transfert', 'Ajoutée au montant pour couvrir les frais du fournisseur et les arrondis', 'pct', resRanges.transfer_margin_bps], RES_STORE));
+  }
+  const TR_STATUS = { QUEUED: ['warn', 'en file'], PENDING: ['warn', 'demandé'], SUCCEEDED: ['ok', 'arrivé'], FAILED: ['err', 'refusé'], CANCELLED: ['', 'annulé'] };
+  const TR_REASON = { manual: 'à la main', low: 'sous le seuil bas', payout: 'pour un retrait' };
+  const trPill = (st) => { const x = TR_STATUS[st] || ['', st]; return el('span', { class: 'pill ' + x[0], text: x[1] }); };
+  const countryLabel = (code) => { const c = resData && resData.countries.filter((x) => x.code === code)[0]; return c ? c.name : code; };
+  let transfers = null;
+  function renderTransfers() {
+    table($('transferTable'), [{ label: 'Transfert' }, { label: 'Montant', cls: 'num' }, { label: 'État' }],
+      transfers.map((t) => ({ href: '#/reserves/' + t.id, cells: [
+        cell(provName(t.provider) + ' · ' + countryLabel(t.from_country) + ' → ' + countryLabel(t.to_country), TR_REASON[t.reason] + ' · ' + fmtDateTime(t.updated_at)),
+        money(t.amount), trPill(t.status),
+      ], keys: [new Date(t.updated_at).getTime(), Number(t.amount), t.status] })),
+      'Aucun transfert pour le moment.');
   }
   async function enterReserves() {
     crumbs('Pilotage', 'Réserves providers');
     // Already seen: the last known state at once, then the server's.
     if (resData) renderReserves(resData); else skeleton($('resTable'), 3, 'div');
     if (resSettings) renderResSettings(); else skeleton($('resSettings'), 2, 'li');
+    if (transfers) renderTransfers(); else skeleton($('transferTable'), 2, 'div');
     await load('reserves', async () => {
-      const [r, st] = await Promise.all([LP.api('GET', '/v1/admin-console/reserves'), LP.api('GET', '/v1/admin-console/reserves-settings')]);
-      resData = r.reserves; resSettings = st.settings; resRanges = st.ranges;
-      renderReserves(resData); renderResSettings();
+      const [r, st, tr] = await Promise.all([LP.api('GET', '/v1/admin-console/reserves'), LP.api('GET', '/v1/admin-console/reserves-settings'), LP.api('GET', '/v1/admin-console/transfers')]);
+      resData = r.reserves; resSettings = st.settings; resRanges = st.ranges; transfers = tr.transfers;
+      renderReserves(resData); renderResSettings(); renderTransfers();
     });
   }
   $('resRead').addEventListener('click', async () => {
@@ -639,7 +679,43 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     $('resRead').disabled = false;
   });
 
+  async function enterTransfer(id) {
+    crumbs('Réserves providers', 'Transfert');
+    $('reserveTitle').textContent = 'Transfert';
+    $('resDetail').replaceChildren(); skeleton($('resDetail'), 5, 'div');
+    await load('reserve', async () => {
+      if (!resData) resData = (await LP.api('GET', '/v1/admin-console/reserves')).reserves;
+      const d = await LP.api('GET', '/v1/admin-console/transfers/' + encodeURIComponent(id));
+      const t = d.transfer;
+      $('reserveTitle').textContent = countryLabel(t.from_country) + ' → ' + countryLabel(t.to_country);
+      const cost = t.status === 'SUCCEEDED' ? Number(t.amount) - Number(t.received || t.amount) + Number(t.fee || 0) : null;
+      const box = el('div', { class: 'rows' });
+      rows(box, [
+        ['Fournisseur', provName(t.provider)], ['Envoyé depuis', countryLabel(t.from_country)], ['Vers', countryLabel(t.to_country)], ['Montant envoyé', money(t.amount), true],
+      ].concat(t.status === 'SUCCEEDED' ? [
+        ['Arrivé', money(t.received) + (t.received_currency ? ' ' + t.received_currency : '')], ['Taux', t.rate || '—'], ['Frais du fournisseur', money(t.fee || 0)], ['Coût du transfert', money(cost), true],
+      ] : []).concat([
+        ['Raison', TR_REASON[t.reason] || t.reason], ['Demandé par', t.requested_by === 'auto' ? 'LightPay (automatique)' : (t.requested_by || '—')],
+        ['Créé le', fmtDateTime(t.created_at)], ['Dernier changement', fmtDateTime(t.updated_at)],
+      ]).concat(t.failure_code ? [['Refus', t.failure_code]] : []).concat(t.provider_reference ? [['Référence fournisseur', t.provider_reference]] : []));
+      const parts = [detailPanel('Transfert', [trPill(t.status), box, el('p', { class: 'mono mt', text: t.id })])];
+      if (d.waiting.length) parts.push(flushPanel('Retraits qui l’attendent', items(d.waiting.map((p) => ({ href: '#/payouts/' + encodeURIComponent(p.id), title: money(p.amount), sub: fmtDateTime(p.created_at), end: 'programmé' })), '')));
+      if (t.status === 'QUEUED') {
+        const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
+        const cancel = el('button', { class: 'btn btn-danger btn-sm', type: 'button', text: 'Annuler ce transfert' });
+        cancel.addEventListener('click', async () => {
+          say(msg, ''); cancel.disabled = true;
+          await guarded(async () => { await LP.api('POST', '/v1/admin-console/transfers/' + encodeURIComponent(t.id) + '/cancel'); transfers = null; await enterTransfer(id); }, msg);
+          cancel.disabled = false;
+        });
+        parts.push(detailPanel('En file', [el('p', { class: 'small muted', text: 'Il n’a pas encore été demandé au fournisseur : il peut être annulé. Les retraits qui l’attendent partent alors comme avant.' }), el('div', { class: 'mt' }, [cancel]), msg]));
+      }
+      $('resDetail').replaceChildren.apply($('resDetail'), parts);
+    });
+  }
+
   async function enterReserve(key) {
+    if (String(key).indexOf('tr_') === 0) return enterTransfer(key);
     crumbs('Réserves providers', 'Réserve');
     $('reserveTitle').textContent = 'Réserve';
     // Another wallet: the shimmer, never the previous one's numbers.
@@ -681,8 +757,39 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       table(history, [{ label: 'Relevé' }, { label: 'Solde', cls: 'num' }, { label: 'Réservé', cls: 'num' }],
         d.history.map((h) => ({ cells: [cell(fmtDateTime(h.checked_at), byWho(h.checked_by) + (h.note ? ' · ' + h.note : '')), money(h.balance), h.pending === null ? '—' : money(h.pending)], keys: [new Date(h.checked_at).getTime(), Number(h.balance), Number(h.pending || 0)] })),
         'Aucun relevé pour ce wallet.');
-      $('resDetail').replaceChildren(detailPanel('Wallet chez le fournisseur', [resState(w), box]), detailPanel('Niveaux', [levelList]), flushPanel('Relevés', history));
+      const parts = [detailPanel('Wallet chez le fournisseur', [resState(w), box]), detailPanel('Niveaux', [levelList])];
+      if (d.transferable) parts.push(await rebalancePanel(w));
+      parts.push(flushPanel('Relevés', history));
+      $('resDetail').replaceChildren.apply($('resDetail'), parts);
     });
+  }
+
+  /** Refill this provider wallet from another of its countries: LightPay's proposal, the admin decides. */
+  async function rebalancePanel(w) {
+    const r = await LP.api('GET', '/v1/admin-console/reserves/' + encodeURIComponent(w.key) + '/plan');
+    const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
+    const field = (label, input) => el('div', { class: 'field' }, [el('label', { text: label }), input]);
+    const from = el('select', { 'aria-label': 'Depuis' }, r.sources.map((src) => el('option', { value: src.country, text: countryLabel(src.country) + ' · peut donner ' + money(src.surplus) + (src.available === null ? ' (jamais relevé)' : '') })));
+    if (r.plan) from.value = r.plan.from;
+    const amount = el('input', { 'data-amount': true, inputmode: 'numeric', autocomplete: 'off', value: r.plan ? r.plan.amount : '', 'aria-label': 'Montant' });
+    const go = el('button', { class: 'btn btn-sm', type: 'button' }, [icon('swap'), 'Demander le transfert']);
+    go.addEventListener('click', async () => {
+      say(msg, '');
+      const a = digits(amount.value);
+      if (!a) return say(msg, 'Indiquez le montant à transférer.', 'err');
+      if (!from.value) return say(msg, 'Aucun autre wallet de ce fournisseur n’est connu.', 'err');
+      go.disabled = true;
+      await guarded(async () => {
+        const t = (await LP.api('POST', '/v1/admin-console/transfers', { provider: w.provider.toLowerCase(), from: from.value, to: w.country, amount: a })).transfer;
+        transfers = null;
+        location.hash = '#/reserves/' + t.id;
+      }, msg);
+      go.disabled = false;
+    });
+    const intro = r.plan
+      ? 'Proposé : ' + money(r.plan.amount) + ' depuis ' + countryLabel(r.plan.from) + ', pour revenir au niveau cible (marge comprise).'
+      : 'Rien à proposer : ce wallet est à son niveau cible, aucun niveau n’est fixé, ou aucun autre pays n’a de surplus.';
+    return detailPanel('Rééquilibrer', [el('p', { class: 'small muted', text: intro }), field('Depuis', from), field('Montant envoyé (FCFA)', amount), el('div', { class: 'btn-row mt' }, [go]), msg]);
   }
 
   $('checkForm').addEventListener('submit', async (e) => {
@@ -1416,7 +1523,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       href: '#/payouts/' + encodeURIComponent(p.id),
       cells: [
         cell(money(p.amount) + ' · ' + (PAY_KIND[p.reason] || p.reason), payOwner(p) + ' · ' + p.msisdn),
-        p.status === 'SCHEDULED' ? until(p.release_at) : p.status === 'HELD' ? 'retenu · ' + (HOLD_LABEL[p.hold_kind] || '') : fmtDateTime(p.created_at),
+        p.status === 'SCHEDULED' ? (p.waiting_transfer ? 'attend un transfert' : until(p.release_at)) : p.status === 'HELD' ? 'retenu · ' + (HOLD_LABEL[p.hold_kind] || '') : fmtDateTime(p.created_at),
         payPill(p.status),
       ],
     })), 'Aucun envoi pour le moment.');
@@ -1452,7 +1559,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
         ['Reçu sur le téléphone', money(p.amount)], ['Frais opérateur', money(p.operator_fee)], ['Frais LightPay', money(p.lightpay_fee)], ['Débité du wallet', money(p.total_debited), true],
         ['Vers', p.msisdn + ' · ' + p.network], ['Demandé le', fmtDateTime(p.created_at)],
       ];
-      if (p.status === 'SCHEDULED') list.push(['Part', fmtDateTime(p.release_at) + ' (' + until(p.release_at) + ')']);
+      if (p.status === 'SCHEDULED' && p.waiting_transfer) list.push(['Part', 'à l’arrivée du transfert ' + p.waiting_transfer + ' (au plus tard ' + fmtDateTime(p.release_at) + ')']);
+      else if (p.status === 'SCHEDULED') list.push(['Part', fmtDateTime(p.release_at) + ' (' + until(p.release_at) + ')']);
       if (p.status === 'SUCCEEDED') list.push(['Arrivé le', fmtDateTime(p.updated_at)], ['Temps total', dur(Math.round((new Date(p.updated_at) - new Date(p.created_at)) / 1000))]);
       if (p.status === 'FAILED') list.push(['Fin', fmtDateTime(p.updated_at) + (p.failure_code ? ' · ' + p.failure_code : '')]);
       if (p.status === 'HELD') list.push(['Retenu par', (p.held_by || '—') + ' · ' + (p.held_at ? fmtDateTime(p.held_at) : '')], ['Motif', (HOLD_LABEL[p.hold_kind] || '') + ' : ' + (p.hold_reason || '')]);

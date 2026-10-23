@@ -65,7 +65,13 @@ export function startReserveWatch() {
       if (!minutes || Date.now() - lastAuto[env] < minutes * 60_000) continue;
       lastAuto[env] = Date.now();
       readProviderBalances(env, 'auto')
-        .then((r) => r.filter((x) => !x.ok).forEach((x) => console.warn('[RESERVES] balance not read', env, x.provider, x.error)))
+        .then(async (r) => {
+          r.filter((x) => !x.ok).forEach((x) => console.warn('[RESERVES] balance not read', env, x.provider, x.error));
+          // Fresh balances: the wallets under their low threshold are refilled when the admin asked for it
+          // (imported here: the rebalancing module reads this one).
+          const { rebalanceLowWallets } = await import('./rebalance.js');
+          await rebalanceLowWallets(env);
+        })
         .catch((err) => console.warn('[RESERVES] balances not read', env, err?.message));
     }
   };

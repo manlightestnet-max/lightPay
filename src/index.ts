@@ -29,6 +29,7 @@ import { refreshRegistry } from './rails/registry.js';
 import { refreshReserveSettings } from './payments/reserve-settings.js';
 import { startReserveWatch } from './payments/reserve-watch.js';
 import { refreshRoutingRules } from './rails/routing.js';
+import { sweepTransfers } from './payments/rebalance.js';
 import { loadTemplates } from './notify/templates.js';
 import { timingSafeCompare } from './middleware/app-auth.js';
 import { registerRateLimits } from './security/rate-limit.js';
@@ -314,6 +315,8 @@ const sweep = async () => {
     for (const env of ['production', 'sandbox'] as const) {
       await purgeOldAttempts(env).catch(() => undefined);
       for (const payout of await pendingPayouts(env)) await resolvePayout(payout).catch((err) => console.error('[SWEEP] payout', payout.id, err?.message));
+      // Transfers between a provider's country wallets: followed, then the next one in line is asked.
+      await sweepTransfers(env).catch((err) => console.error('[SWEEP] transfers', env, err?.message));
     }
   } catch (err: any) {
     console.error('[SWEEP] failed', err?.message);

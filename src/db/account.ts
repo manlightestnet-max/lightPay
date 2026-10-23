@@ -177,7 +177,8 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
 const payoutView = (p: any) => ({
   id: p.id,
   status: p.status === 'SCHEDULED' || p.status === 'HELD' ? 'PENDING' : p.status,
-  release_at: p.status === 'SCHEDULED' ? p.release_at : null,
+  // Waiting for a rebalancing: "in progress" for the person, with no hour to announce.
+  release_at: p.status === 'SCHEDULED' && !p.waiting_transfer ? p.release_at : null,
   amount: String(p.amount),
   operator_fee: String(p.operator_fee ?? 0),
   lightpay_fee: String(p.lightpay_fee ?? 0),

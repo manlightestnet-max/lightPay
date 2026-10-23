@@ -9,6 +9,7 @@ import { providerByName } from '../payments/mobile-money.js';
 import { PROVIDERS_OF } from '../payments/provider-settings.js';
 import { levelsOf, reserveSettings, walletKey } from '../payments/reserve-settings.js';
 import { FCFA } from '../payments/reserve-watch.js';
+import { canTransfer } from '../payments/rebalance.js';
 
 /**
  * LightPay admin console (owner only). Reads the ledger as it is, never rewrites it:
@@ -45,6 +46,7 @@ const SYSTEM_LABELS: Record<string, string> = {
   SYSTEM_GATEWAY_INFLOW: 'Réserve providers',
   SYSTEM_MAIN_TREASURY: 'Wallet main',
   LIGHTPAY_FEES: 'Frais en attente',
+  SYSTEM_PROVIDER_COSTS: 'Frais fournisseurs (transferts)',
   SANDBOX_FAUCET_ISSUE: 'Émission du faucet',
 };
 /** The test ledger names the main wallet after what it is there: the faucet. */
@@ -234,7 +236,7 @@ const ENTRY_PROVIDER = `upper(COALESCE(NULLIF(t.metadata->>'provider', ''),
 const ENTRY_NETWORK = `COALESCE(NULLIF(t.metadata->>'network', ''),
     (SELECT p.network FROM payouts p WHERE p.id = COALESCE(t.metadata->>'payout', t.metadata->>'payout_id')),
     (SELECT a.network FROM collection_attempts a WHERE a.id = t.metadata->>'attempt'))`;
-/** Before several countries, every movement was in Congo: an entry without operator is counted there. */
+/** Before several countries, every movement was in Congo: an entry without operator (nor country) is counted there. */
 const countryOfNetwork = (network: string | null) => (network && railByNetwork(network)?.country) || DEFAULT_COUNTRY;
 
 export type ReserveState = 'unchecked' | 'gap' | 'low' | 'ok';
@@ -247,13 +249,15 @@ export type ReserveState = 'unchecked' | 'gap' | 'low' | 'ok';
  *   expected    collected − sent + waiting = what the provider should show (available + reserved);
  *   checked     the last reading (automatic or typed by the owner) and the gap with expected;
  *   available   what can still be sent from there: the real balance − programmed or held payouts − safety minimum.
+ *   transfers   rebalancing between the provider's own wallets: out of one country, into another (its cost is a transit
+ *               entry of the receiving country); a transfer still asked counts as gone from its source.
  * State: gap above the admin's tolerance, available under the low threshold, never read, or fine.
  * And the check that all client money is covered: the transit account equals every other wallet together.
  */
 export async function reserves(env: Environment) {
-  const [perWallet, waitingRows, checks, balances] = await Promise.all([
+  const [perWallet, waitingRows, checks, balances, transfers, [failedTransfers]] = await Promise.all([
     query(
-      `SELECT ${ENTRY_PROVIDER} AS provider, ${ENTRY_NETWORK} AS network,
+      `SELECT ${ENTRY_PROVIDER} AS provider, ${ENTRY_NETWORK} AS network, NULLIF(t.metadata->>'country', '') AS entry_country,
               COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'DEBIT'), 0)::text AS money_in,
               COALESCE(SUM(le.amount) FILTER (WHERE le.direction = 'CREDIT'), 0)::text AS money_out,
               COUNT(*)::int AS movements, MAX(le.created_at) AS last_at
@@ -261,7 +265,7 @@ export async function reserves(env: Environment) {
        JOIN wallets w ON w.id = le.wallet_id AND w.account_id = 'SYSTEM_GATEWAY_INFLOW' AND w.currency = $1
        JOIN transactions t ON t.id = le.transaction_id
        WHERE ${NOT_CANCELLED}
-       GROUP BY 1, 2`,
+       GROUP BY 1, 2, 3`,
       [CURRENCY],
       env
     ),
@@ -296,17 +300,27 @@ export async function reserves(env: Environment) {
       [CURRENCY],
       env
     ),
+    query(
+      `SELECT upper(provider) AS provider, from_country, to_country, status, COALESCE(SUM(amount), 0)::text AS amount
+       FROM provider_transfers WHERE environment = $1 AND status IN ('PENDING', 'SUCCEEDED') GROUP BY 1, 2, 3, 4`,
+      [env],
+      env
+    ).catch(() => [] as any[]),
+    query(`SELECT COUNT(*)::int AS n FROM provider_transfers WHERE environment = $1 AND status = 'FAILED' AND updated_at > NOW() - INTERVAL '1 day'`, [env], env).catch(() => [{ n: 0 }]),
   ]);
 
-  interface Acc { provider: string; country: string; money_in: bigint; money_out: bigint; movements: number; last_at: Date | null; scheduled: bigint; asked: bigint; waiting_count: number }
+  interface Acc {
+    provider: string; country: string; money_in: bigint; money_out: bigint; movements: number; last_at: Date | null;
+    scheduled: bigint; asked: bigint; waiting_count: number; transfers_in: bigint; transfers_out: bigint; in_transit: bigint;
+  }
   const acc = new Map<string, Acc>();
   const get = (provider: string, country: string) => {
     const key = walletKey(provider, country);
-    if (!acc.has(key)) acc.set(key, { provider, country, money_in: 0n, money_out: 0n, movements: 0, last_at: null, scheduled: 0n, asked: 0n, waiting_count: 0 });
+    if (!acc.has(key)) acc.set(key, { provider, country, money_in: 0n, money_out: 0n, movements: 0, last_at: null, scheduled: 0n, asked: 0n, waiting_count: 0, transfers_in: 0n, transfers_out: 0n, in_transit: 0n });
     return acc.get(key)!;
   };
   for (const r of perWallet) {
-    const a = get(r.provider, countryOfNetwork(r.network));
+    const a = get(r.provider, r.entry_country || countryOfNetwork(r.network));
     a.money_in += BigInt(r.money_in);
     a.money_out += BigInt(r.money_out);
     a.movements += r.movements;
@@ -318,6 +332,13 @@ export async function reserves(env: Environment) {
     else a.scheduled += BigInt(r.amount);
     a.waiting_count += r.count;
   }
+  for (const r of transfers) {
+    const amount = BigInt(r.amount);
+    const from = get(r.provider, String(r.from_country).trim());
+    from.transfers_out += amount;
+    if (r.status === 'PENDING') from.in_transit += amount;
+    else get(r.provider, String(r.to_country).trim()).transfers_in += amount;
+  }
   for (const c of checks) get(c.provider, c.country);
 
   const settings = reserveSettings(env);
@@ -325,7 +346,7 @@ export async function reserves(env: Environment) {
     .sort((x, y) => x.provider.localeCompare(y.provider) || x.country.localeCompare(y.country))
     .map((a) => {
       const c = checks.find((x) => x.provider === a.provider && x.country === a.country);
-      const reserveLedger = a.money_in - a.money_out;
+      const reserveLedger = a.money_in - a.money_out + a.transfers_in - a.transfers_out;
       const waiting = a.scheduled + a.asked;
       const expected = reserveLedger + waiting;
       const levels = levelsOf(env, a.provider, a.country);
@@ -354,6 +375,9 @@ export async function reserves(env: Environment) {
         waiting_scheduled: a.scheduled.toString(),
         waiting_asked: a.asked.toString(),
         waiting_count: a.waiting_count,
+        transfers_in: a.transfers_in.toString(),
+        transfers_out: a.transfers_out.toString(),
+        in_transit: a.in_transit.toString(),
         expected: expected.toString(),
         checked: c ? { balance: c.balance, pending: c.pending, note: c.note, by: c.checked_by, at: c.checked_at, gap: (gap ?? 0n).toString() } : null,
         available: available === null ? null : available.toString(),
@@ -370,7 +394,10 @@ export async function reserves(env: Environment) {
   return {
     currency: CURRENCY,
     wallets,
-    alerts: wallets.filter((w) => w.state === 'gap' || w.state === 'low').length,
+    alerts: wallets.filter((w) => w.state === 'gap' || w.state === 'low').length + Number(failedTransfers?.n ?? 0),
+    failed_transfers: Number(failedTransfers?.n ?? 0),
+    /** Providers that can move money between their country wallets here (SasPay). */
+    transferable: PROVIDERS_OF[env].filter((n) => canTransfer(env, n)),
     settings: { gap_alert: settings.gap_alert, auto_check_minutes: settings.auto_check_minutes },
     /** Countries LightPay knows, for a reading typed by hand. */
     countries: allCountries().map((c) => ({ code: c.code, name: c.name })),
@@ -408,7 +435,7 @@ export async function reserveWallet(env: Environment, key: string) {
     [env, wallet.provider.toLowerCase(), wallet.country, DEFAULT_COUNTRY],
     env
   );
-  return { wallet, history, settings: all.settings };
+  return { wallet, history, settings: all.settings, transferable: canTransfer(env, wallet.provider.toLowerCase()) };
 }
 
 /** The owner read the real balance of a provider wallet (its dashboard): kept to compare with what LightPay expects there. */

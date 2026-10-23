@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { verifySasPayWebhook } from '../payments/saspay.js';
 import { resolveCollectionByProviderReference } from '../db/checkout.js';
 import { findPayoutByProviderReference, resolvePayout } from '../db/payouts.js';
+import { resolveTransferByReference } from '../payments/rebalance.js';
 
 /**
  * Provider notifications. Authenticity is checked (HMAC + timestamp), then the payload is
@@ -23,6 +24,15 @@ export async function providerRoutes(fastify: FastifyInstance) {
     const event = String((request.body as any)?.event ?? request.headers['x-webhook-event'] ?? '');
     const id = String((request.body as any)?.data?.id ?? '');
     request.log.info({ event, id }, '[SASPAY] webhook');
+    if (id && event.startsWith('wallet_transfer.')) {
+      try {
+        await resolveTransferByReference(id);
+      } catch (err: any) {
+        request.log.error({ err: err?.message, id }, '[SASPAY] transfer resolution failed');
+        return reply.status(503).send({ error: 'RETRY_LATER' });
+      }
+      return { received: true };
+    }
     if (!id || !event.startsWith('transaction.')) return { received: true };
 
     try {
