@@ -5,7 +5,6 @@ import { closeWallet, findDefaultWallet, listWallets, openWallet, renameWallet, 
 import { controlSettings } from '../payments/control-settings.js';
 import { cancelCountryRequest, chooseCountry, countryChangeQuote, mustChooseCountry, requestCountryChange } from '../wallets/country.js';
 import { countryByCode, countryOfNetwork } from '../rails/registry.js';
-import { ensureProviderRates } from '../payments/provider-rates.js';
 
 /** The pending request of each wallet, or its last decision of the past week (shown on the wallet). */
 async function countryRequestsOf(env: Environment, wallets: WalletRow[]) {
@@ -495,7 +494,6 @@ export async function meRoutes(fastify: FastifyInstance) {
     const wallet = request.lightpayUser
       ? walletId ? await walletOf(env, request.lightpayUser.uid, { id: walletId }).catch(() => null) : await findDefaultWallet(env, request.lightpayUser.uid)
       : null;
-    await ensureProviderRates(env);
     const quotes = await Promise.all(
       mobileNetworks().map(async (n) => [n, quote(env, amount, (await routeOperation({ env, type: 'deposit', network: n, destination: wallet?.country, appId: 'mainapp', amount })).provider.name, n, swapBetween(env, wallet?.country, countryOfNetwork(n), amount))])
     );

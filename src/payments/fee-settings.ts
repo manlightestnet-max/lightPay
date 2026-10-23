@@ -2,7 +2,8 @@ import { query } from '../db/pool.js';
 import { Environment } from '../types/index.js';
 
 /**
- * Every fee and minimum LightPay applies, per ledger, set by the admin (table fee_settings).
+ * LightPay's own fees, the swap and the minimums, per ledger, set by the admin (table fee_settings). The operator
+ * fees of each provider are in ./provider-fees.ts.
  * Amounts in FCFA, rates in basis points (100 = 1 %). Read from memory (loaded at startup,
  * re-read every minute and right after the admin saves); the defaults only cover the moment
  * before the first read.
@@ -15,12 +16,6 @@ export interface FeeSettings {
   withdrawal_min: number;
   withdrawal_lightpay_fee_min: number;
   withdrawal_lightpay_fee_bps: number;
-  /**
-   * pawaPay: operator fee asked on top of a deposit (covers pawaPay's fee), and on a payout. pawaPay has no prices
-   * API: these stay set by hand. SasPay's come from its live rates (./provider-rates.ts), never from here.
-   */
-  pawapay_deposit_fee_bps: number;
-  pawapay_payout_fee_bps: number;
   /**
    * LightPay's swap fee, whenever money changes country (./fees.ts swapFee): on the amount that crosses, and its
    * minimum. Also taken on the balance of a wallet the admin moves to another country.
@@ -36,8 +31,6 @@ export const DEFAULT_FEE_SETTINGS: Readonly<FeeSettings> = Object.freeze({
   withdrawal_min: 200,
   withdrawal_lightpay_fee_min: 5,
   withdrawal_lightpay_fee_bps: 0,
-  pawapay_deposit_fee_bps: 0,
-  pawapay_payout_fee_bps: 0,
   swap_fee_bps: 100,
   swap_fee_min: 0,
 });

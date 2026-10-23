@@ -110,10 +110,14 @@ Google seulement (Firebase Auth, redirection dans le même onglet ; fenêtre seu
 - **Pays et opérateurs : uniquement depuis l’admin** (« Pays et opérateurs », registre `src/rails/registry.ts`, tables
   `countries` et `rails`) : ouvrir un pays, activer un opérateur, ses préfixes et les codes de chaque fournisseur. Un
   opérateur à code OTP ou à page de redirection reste éteint tant que son écran n’existe pas.
-- **Frais opérateur = le tarif réel du fournisseur** (`src/payments/provider-rates.ts`, relu toutes les 5 min) : SasPay
-  par son API, par opérateur ; jamais saisis à la main (un retrait SasPay sans tarif connu est refusé, jamais deviné).
-  pawaPay n’a pas d’API de tarifs : ses frais restent réglés dans « Frais et minimums ». Les frais LightPay (dépôt,
-  retrait) et le swap se règlent dans « Frais et minimums ».
+- **Frais opérateur : réglés par l’admin, par fournisseur et par opérateur** (« Frais et minimums » → « Frais des
+  opérateurs », `src/payments/provider-fees.ts`, table `provider_fee_settings`) : pourcentage, part fixe, minimum, et un
+  défaut par fournisseur. Jamais appliqués depuis une API toute seule : « Importer depuis SasPay » recopie les
+  pourcentages, puis l’admin corrige. Le « + 50 » de l’API SasPay n’est pas pris (un envoi de 200 à « 3,2 % + 50 » a coûté
+  7, pas 57). SasPay compte le pourcentage **sur le total payé, frais compris** (réglage « Calcul du pourcentage ») :
+  200 → 7, 204 → 13, vérifié sur ses opérations du 23 octobre. Un envoi sans tarif réglé est refusé, jamais deviné.
+  L’API des fournisseurs (`provider-rates.ts`) n’est qu’une indication à côté. Les frais LightPay (dépôt, retrait) et le
+  swap se règlent aussi dans « Frais et minimums ».
 - Un dépôt sans validation est fermé après 5 min ; un succès tardif est quand même crédité.
 
 ## Façon de travailler

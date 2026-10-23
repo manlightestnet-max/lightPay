@@ -26,8 +26,8 @@ import { currencyOfNetwork, providerCode } from '../rails/registry.js';
  *   PAWAPAY_SANDBOX_API_TOKEN  sandbox token             PAWAPAY_SANDBOX_API_URL   (default https://api.sandbox.pawapay.io)
  *
  * Fees: pawaPay takes its fee out of our pawaPay balance. The payer covers it with the
- * operator fee the admin sets for pawaPay (pawapay_deposit_fee_bps), asked on top of the
- * amount; a payout's fee (pawapay_payout_fee_bps) is debited from the person's wallet.
+ * operator fee the admin sets for pawaPay per operator (./provider-fees.ts), asked on top of
+ * the amount; a payout's fee (same table) is debited from the person's wallet.
  */
 
 const CONFIG: Record<Environment, { token: () => string | undefined; url: () => string }> = {

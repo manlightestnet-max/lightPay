@@ -88,6 +88,13 @@ const ADMIN_CSS = `
 .lock-now { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; font-size: 14px; }
 .lock-note { margin-top: 12px; font-size: 13px; color: var(--muted); }
 .fee-item .fee-err { display: block; font-size: 12px; color: var(--danger); margin-top: 2px; }
+.calc-net { margin: 0; min-width: 220px; flex: 1; max-width: 320px; }
+.op-cell { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.op-cell .fee-val { min-width: 120px; }
+.op-cell .fee-val.inherit { color: var(--muted); font-weight: 500; }
+.op-cell .fee-edit input { width: 150px; text-align: left; }
+.op-cell .fee-err { font-size: 12px; color: var(--danger); }
+.op-api { font-size: 12px; color: var(--muted); }
 .calc-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .calc-amount { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line-strong); }
 .calc-amount:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -353,12 +360,13 @@ ${page('fees', 'Frais et minimums', `
         <button type="button" data-kind="deposit" aria-pressed="true">Dépôt</button>
         <button type="button" data-kind="withdrawal" aria-pressed="false">Retrait</button>
       </div>
+      <div class="field calc-net"><select id="calcNet" aria-label="Opérateur"></select></div>
       <label class="calc-amount"><input id="calcAmount" inputmode="numeric" autocomplete="off" value="1000" aria-label="Montant"><span>FCFA</span></label>
     </div>
     <div class="calc-rows" id="calcRows"></div>`)}
-  ${panel('Tarifs réels des fournisseurs', '<div id="ratesTable"></div>', {
+  ${panel('Frais des opérateurs', '<ul class="fee-list" id="opMode"></ul><div id="ratesTable"></div><div class="msg" id="opMsg" role="status" aria-live="polite"></div>', {
     flush: true,
-    actions: '<button class="btn btn-secondary btn-sm" type="button" id="ratesRefresh">' + iconSvg('refresh') + 'Actualiser</button>',
+    actions: '<button class="btn btn-secondary btn-sm" type="button" id="opImport">' + iconSvg('receive') + 'Importer depuis SasPay</button><button class="btn btn-secondary btn-sm" type="button" id="ratesRefresh">' + iconSvg('refresh') + 'Relire l’API</button>',
     foot: '<span id="ratesFoot">Ce que le fournisseur prend en ce moment, lu sur son API (SasPay) toutes les 5 minutes : ce sont les frais opérateur que paient les personnes. pawaPay n’a pas d’API de tarifs : ses frais se règlent ci-dessus.</span>',
   })}
   <p class="hint">Cliquez une valeur pour la modifier : appliquée tout de suite, à cet environnement seulement, et inscrite au journal admin.</p>
@@ -452,6 +460,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     ? { MAIN_SEND: 'Envoi depuis le faucet', FAUCET_ISSUE: 'Émission d’argent de test' }
     : { MAIN_SEND: 'Envoi depuis le wallet main', MAIN_RECHARGE: 'Dépôt sur le wallet main' };
   ACTION.FEES_UPDATE = 'Frais et minimums modifiés';
+  ACTION.PROVIDER_FEES_UPDATE = 'Frais des opérateurs modifiés';
   ACTION.PROVIDERS_UPDATE = 'Fournisseur mobile money changé';
   ACTION.CONTROLS_UPDATE = 'Délais et limites modifiés';
   ACTION.RESERVES_UPDATE = 'Surveillance des réserves modifiée';
@@ -1163,7 +1172,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       const configured = r.fees.filter((f) => f.configured && f.operator_fee !== null);
       const cheapest = configured.length ? configured.reduce((a, b) => (Number(b.operator_fee) < Number(a.operator_fee) ? b : a)) : null;
       const feeHost = el('div', {});
-      // Operator fee: the provider's live price (pawaPay: the rate set in « Frais et minimums »); « — » without a price.
+      // Operator fee: the admin's rate of the provider for this operator (« Frais des opérateurs »); « — » without one.
       table(feeHost, [{ label: 'Fournisseur' }, { label: 'Frais opérateur', cls: 'num' }, { label: 'Frais LightPay', cls: 'num' }, { label: 'Frais de swap', cls: 'num' }, { label: r.fees[0] ? r.fees[0].label : 'Total', cls: 'num' }],
         r.fees.map((f) => ({ cells: [
           cell(provName(f.provider), (f.provider === r.provider ? 'choisi' : '') + (cheapest && f.provider === cheapest.provider ? (f.provider === r.provider ? ' · ' : '') + 'le moins cher' : '') + (f.configured ? '' : 'clés absentes') + (f.error ? ' · tarif indisponible' : '')),
@@ -1325,7 +1334,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     });
   }
 
-  // ---------------------------------------------------------------- providers' live prices
+  // ---------------------------------------------------------------- providers' announced prices (shown beside the rates)
   // "3,5 %", "2,2 % + 50", several bands joined; "—" when the operator is not open there.
   const pctFr = (n) => String(Math.round(n * 100) / 100).replace('.', ',') + ' %';
   const tierText = (side) => !side || !side.available ? '—' : side.tiers.map((t) => pctFr(t.percent) + (t.fixed ? ' + ' + num(t.fixed) : '') + (t.min > 0 || t.max !== null ? ' (' + num(t.min) + (t.max !== null ? ' à ' + num(t.max) : ' et plus') + ')' : '') + (t.floor ? ' min ' + num(t.floor) : '') + (t.cap ? ' max ' + num(t.cap) : '')).join(' · ');
@@ -1335,22 +1344,9 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     return rates;
   }
   const rateOf = (provider, network) => { const p = rates && rates.filter((x) => x.provider === provider)[0]; return p ? p.rates.filter((r) => r.network === network)[0] || null : null; };
-  function renderRates() {
-    const all = [];
-    (rates || []).forEach((p) => p.rates.forEach((r) => all.push(Object.assign({ provider: p.provider }, r))));
-    table($('ratesTable'), [{ label: 'Opérateur' }, { label: 'Encaissement' }, { label: 'Envoi' }],
-      all.map((r) => ({ cells: [
-        cell(r.name, [provName(r.provider), r.country, r.currency, r.network ? '' : 'pas dans le registre', r.collection.otpRequired ? 'code OTP avant paiement' : ''].filter(Boolean).join(' · ')),
-        tierText(r.collection), tierText(r.payout),
-      ], keys: [r.country + ' ' + r.name, r.collection.tiers[0] ? r.collection.tiers[0].percent : -1, r.payout.tiers[0] ? r.payout.tiers[0].percent : -1] })),
-      TEST ? 'Les fournisseurs ne donnent pas leurs tarifs sur le compte de test.' : 'Aucun fournisseur ne donne ses tarifs pour le moment.');
-    const read = (rates || []).filter((p) => p.fetched_at).map((p) => provName(p.provider) + ' lu à ' + fmtDateTime(p.fetched_at));
-    const errors = (rates || []).filter((p) => p.error).map((p) => provName(p.provider) + ' : ' + p.error);
-    $('ratesFoot').textContent = (read.length ? read.join(' · ') + '. ' : '') + (errors.length ? 'Lecture impossible — ' + errors.join(' · ') + '. ' : '') + 'Les frais payés par les personnes restent ceux réglés ci-dessus.';
-  }
   $('ratesRefresh').addEventListener('click', async () => {
     $('ratesRefresh').disabled = true;
-    await guarded(async () => { await loadRates(true); renderRates(); }, 'feesMsg');
+    await guarded(async () => { await loadRates(true); renderOpFees(); }, 'opMsg');
     $('ratesRefresh').disabled = false;
   });
 
@@ -1427,9 +1423,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
 
   // ---------------------------------------------------------------- fees and minimums
   // Read as values; a click on one turns it into a field (Enter saves, Échap cancels). Operator
-  // fees are per provider: SasPay's are its live prices (never typed here), pawaPay's are set here
-  // (no prices API). The one serving this environment is preselected. The calculator uses the same
-  // formulas as the server (fees.ts).
+  // fees are per provider and operator (« Frais des opérateurs »); the provider serving this
+  // environment is preselected. The calculator uses the same formulas as the server (fees.ts).
   const FEE_KEYS = {
     deposit: [
       ['deposit_min', 'Montant minimum', 'Plus petit dépôt ou paiement accepté', 'fcfa'],
@@ -1446,26 +1441,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       ['withdrawal_lightpay_fee_min', 'Frais LightPay minimum', 'Le plus grand des deux s’applique', 'fcfa'],
     ],
   };
-  const OPERATOR_KEYS = {
-    pawapay: {
-      deposit: [['pawapay_deposit_fee_bps', 'Frais opérateur pawaPay', 'Demandés au payeur : couvrent la commission pawaPay', 'pct']],
-      withdrawal: [['pawapay_payout_fee_bps', 'Frais opérateur pawaPay', 'Débités du wallet : couvrent la commission pawaPay', 'pct']],
-    },
-    // SasPay's own prices, read from its API per operator: nothing to set (« Tarifs réels des fournisseurs »).
-    saspay: { deposit: [], withdrawal: [] },
-  };
-  const OPERATOR_INFO = {
-    saspay: {
-      deposit: ['Frais opérateur SasPay', 'Le tarif réel de SasPay pour l’opérateur choisi, lu en direct (Tarifs réels ci-dessous)'],
-      withdrawal: ['Frais opérateur SasPay', 'Le tarif réel de SasPay pour l’opérateur choisi, lu en direct (Tarifs réels ci-dessous)'],
-    },
-  };
-  // A fee LightPay does not set: its line says where it comes from.
-  const infoItem = (def) => el('li', { class: 'fee-item' }, [
-    el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: def[0] }), el('span', { class: 'fee-help', text: def[1] })]),
-    el('span', { class: 'fee-val', text: 'Tarif réel' }),
-  ]);
-  let feeSet = null, feeProv = 'pawapay', calcKind = 'deposit', feeActive = null;
+  let feeSet = null, feeProv = 'pawapay', calcKind = 'deposit', feeActive = null, opFees = null;
   const pctText = (bps) => String(bps / 100).replace('.', ',');
   const shown = (v, unit) => (unit === 'pct' ? pctText(v) + ' %' : money(v));
   function parseFee(raw, unit, range) {
@@ -1535,12 +1511,124 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       b.replaceChildren(PROVIDER[b.dataset.prov.toUpperCase()] || b.dataset.prov);
       if (feeActive && (feeActive.collection === b.dataset.prov || feeActive.payout === b.dataset.prov)) b.append(el('span', { class: 'on-dot', title: 'Actif' }));
     });
-    const info = OPERATOR_INFO[feeProv];
-    $('feeDep').replaceChildren.apply($('feeDep'), FEE_KEYS.deposit.concat(OPERATOR_KEYS[feeProv].deposit).map(feeItem).concat(info ? [infoItem(info.deposit)] : []));
-    $('feeWd').replaceChildren.apply($('feeWd'), FEE_KEYS.withdrawal.concat(OPERATOR_KEYS[feeProv].withdrawal).map(feeItem).concat(info ? [infoItem(info.withdrawal)] : []));
+    $('feeDep').replaceChildren.apply($('feeDep'), FEE_KEYS.deposit.map(feeItem));
+    $('feeWd').replaceChildren.apply($('feeWd'), FEE_KEYS.withdrawal.map(feeItem));
     $('feeSwap').replaceChildren.apply($('feeSwap'), FEE_KEYS.swap.map(feeItem));
+    renderOpFees();
     renderCalc();
   }
+
+  // ---------------------------------------------------------------- operator fees of each provider (set here)
+  // One rate per operator and side (encaissement, envoi), the provider's default for the others. Written « 3,2 »,
+  // « 3,2 + 50 » (fixed FCFA) or « 3,2 min 100 »; empty = the default. Same formulas as the server (provider-fees.ts).
+  const opProv = () => (opFees && opFees[feeProv]) || { on_total: false, default: { collection: null, payout: null }, operators: {} };
+  const rateText = (r) => !r ? 'non réglé' : pctText(r.bps) + ' %' + (r.fixed ? ' + ' + num(r.fixed) : '') + (r.min ? ' · min ' + num(r.min) : '');
+  const rateInput = (r) => !r ? '' : pctText(r.bps) + (r.fixed ? ' + ' + r.fixed : '') + (r.min ? ' min ' + r.min : '');
+  function parseRate(raw) {
+    const t = String(raw).trim().toLowerCase().replace(/%/g, '').replace(/fcfa/g, '').replace(/\\s+/g, ' ');
+    if (!t) return null;
+    const m = /^(\\d+(?:[.,]\\d{1,2})?)(?: ?\\+ ?(\\d+))?(?: ?min ?(\\d+))?$/.exec(t);
+    if (!m) return undefined;
+    const bps = Math.round(Number(m[1].replace(',', '.')) * 100);
+    if (bps > 5000) return undefined;
+    return { bps: bps, fixed: m[2] ? Number(m[2]) : 0, min: m[3] ? Number(m[3]) : 0 };
+  }
+  function opFeeOf(rate, amount, onTotal) {
+    if (!rate) return null;
+    const f = onTotal && rate.bps < 10000 ? Math.ceil((amount * rate.bps + rate.fixed * 10000) / (10000 - rate.bps)) : Math.ceil(amount * rate.bps / 10000) + rate.fixed;
+    return Math.max(f, rate.min);
+  }
+  const opRate = (network, side) => { const p = opProv(), own = network && p.operators[network] && p.operators[network][side]; return own || p.default[side]; };
+  // The operators a provider serves (a code in the registry), open countries first.
+  const opRails = () => !registry ? [] : registry.countries.slice().sort((a, b) => Number(b.enabled) - Number(a.enabled))
+    .reduce((all, c) => all.concat(c.rails.filter((r) => r.provider_codes && r.provider_codes[feeProv]).map((r) => Object.assign({ countryName: c.name, countryOn: c.enabled }, r))), []);
+  async function saveOpFees(next, msgText) {
+    opFees = (await LP.api('PUT', '/v1/admin-console/provider-fees', next)).settings;
+    renderOpFees(); renderCalc();
+    if (msgText) say('opMsg', msgText, 'ok');
+  }
+  // A rate shown as a value; a click turns it into a field (Entrée saves, Échap cancels).
+  function opCell(network, side) {
+    const box = el('span', { class: 'op-cell' });
+    const p = opProv(), own = network ? p.operators[network] && p.operators[network][side] : p.default[side];
+    const inherit = network && !own;
+    const view = () => {
+      const btn = el('button', { class: 'fee-val' + (inherit ? ' inherit' : ''), type: 'button', text: inherit ? 'défaut · ' + rateText(p.default[side]) : rateText(own) });
+      btn.addEventListener('click', edit);
+      box.replaceChildren(btn);
+    };
+    const edit = () => {
+      const input = el('input', { autocomplete: 'off', value: rateInput(own), placeholder: network ? 'vide = défaut' : '3,2 + 50', 'aria-label': side === 'collection' ? 'Encaissement' : 'Envoi' });
+      const err = el('span', { class: 'fee-err', role: 'alert' });
+      const ok = el('button', { class: 'ok', type: 'button', text: 'OK' });
+      const no = el('button', { class: 'no', type: 'button', text: 'Annuler' });
+      const save = async () => {
+        const r = parseRate(input.value);
+        if (r === undefined) { err.textContent = 'Écrivez « 3,2 », « 3,2 + 50 » ou « 3,2 min 100 » (50 % au plus).'; input.focus(); return; }
+        const next = JSON.parse(JSON.stringify(opFees || {}));
+        next[feeProv] = next[feeProv] || { on_total: false, default: { collection: null, payout: null }, operators: {} };
+        const pv = next[feeProv];
+        if (!network) pv.default[side] = r;
+        else {
+          pv.operators[network] = pv.operators[network] || {};
+          if (r) pv.operators[network][side] = r; else delete pv.operators[network][side];
+          if (!pv.operators[network].collection && !pv.operators[network].payout) delete pv.operators[network];
+        }
+        ok.disabled = true;
+        await guarded(() => saveOpFees(next, null), 'opMsg');
+        ok.disabled = false;
+      };
+      ok.addEventListener('click', save);
+      no.addEventListener('click', view);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') view(); });
+      box.replaceChildren(el('span', { class: 'fee-edit' }, [input, no, ok]), err);
+      input.focus(); input.select();
+    };
+    view();
+    return box;
+  }
+  function renderOpFees() {
+    $('opImport').hidden = feeProv !== 'saspay';
+    if (!opFees) return;
+    const p = opProv();
+    // How the percent is counted: on the total paid (fees included, SasPay's way) or on the amount.
+    const modeBtn = el('button', { class: 'fee-val', type: 'button', text: p.on_total ? 'Sur le total' : 'Sur le montant' });
+    modeBtn.addEventListener('click', async () => {
+      const next = JSON.parse(JSON.stringify(opFees));
+      next[feeProv] = next[feeProv] || { on_total: false, default: { collection: null, payout: null }, operators: {} };
+      next[feeProv].on_total = !p.on_total;
+      modeBtn.disabled = true;
+      await guarded(() => saveOpFees(next, null), 'opMsg');
+      modeBtn.disabled = false;
+    });
+    $('opMode').replaceChildren(el('li', { class: 'fee-item' }, [
+      el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: 'Calcul du pourcentage' }), el('span', { class: 'fee-help', text: p.on_total ? 'Pris sur le total payé, frais compris, arrondi au franc supérieur (200 envoyés à 3,2 % → 7)' : 'Pris sur le montant seul, arrondi au franc supérieur (200 à 3,2 % → 7)' })]),
+      modeBtn,
+    ]));
+    const api = (network, side) => { const r = rateOf(feeProv, network); const s = r && (side === 'collection' ? r.collection : r.payout); return s && s.available ? 'API : ' + tierText(s) : ''; };
+    const withApi = (network, side) => { const c = opCell(network, side), a = api(network, side); if (a) c.append(el('span', { class: 'op-api', text: a })); return c; };
+    const rowsOf = [{ cells: [cell('Par défaut', 'Tout opérateur sans tarif à lui'), opCell(null, 'collection'), opCell(null, 'payout')] }]
+      .concat(opRails().map((r) => ({ cells: [cell(r.name, r.countryName + (r.countryOn ? '' : ' · pays fermé') + (r.enabled ? '' : ' · éteint')), withApi(r.network, 'collection'), withApi(r.network, 'payout')], keys: [r.countryName + ' ' + r.name, null, null] })));
+    table($('ratesTable'), [{ label: 'Opérateur' }, { label: 'Encaissement', cls: 'num' }, { label: 'Envoi', cls: 'num' }], rowsOf, 'Aucun opérateur pour ce fournisseur.');
+    const read = (rates || []).filter((p) => p.provider === feeProv && p.fetched_at).map((p) => 'API ' + provName(p.provider) + ' lue à ' + fmtDateTime(p.fetched_at));
+    const errors = (rates || []).filter((p) => p.provider === feeProv && p.error).map((p) => 'lecture impossible : ' + p.error);
+    $('ratesFoot').textContent = read.concat(errors).join(' · ') + (read.length || errors.length ? '. ' : '') + 'Ce tableau est la seule source des frais opérateur payés par les personnes ; l’API n’est qu’une indication.';
+    // The calculator's operators follow the provider shown.
+    const keep = $('calcNet').value;
+    $('calcNet').replaceChildren.apply($('calcNet'), [el('option', { value: '', text: 'Opérateur par défaut' })].concat(opRails().map((r) => el('option', { value: r.network, text: r.name + ' · ' + r.countryName }))));
+    if (keep && opRails().some((r) => r.network === keep)) $('calcNet').value = keep;
+  }
+  $('opImport').addEventListener('click', async () => {
+    say('opMsg', ''); $('opImport').disabled = true;
+    await guarded(async () => {
+      const r = await LP.api('POST', '/v1/admin-console/provider-fees/import-saspay', {});
+      opFees = r.settings;
+      await loadRates(false).catch(() => null);
+      renderOpFees(); renderCalc();
+      say('opMsg', r.imported + ' tarifs importés depuis SasPay (pourcentages).' + (r.ignored.length ? ' Part fixe de l’API laissée de côté sur ' + r.ignored.length + ' tarifs : ajoutez-la à la main si SasPay la prend vraiment.' : ''), 'ok');
+    }, 'opMsg');
+    $('opImport').disabled = false;
+  });
   // Same formulas as the server (src/payments/fees.ts).
   const ceilBps = (a, bps) => Math.ceil(a * bps / 10000);
   function renderCalc() {
@@ -1548,18 +1636,18 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     const s = feeSet, a = Number(String($('calcAmount').value).replace(/\\D/g, '')) || 0;
     document.querySelectorAll('[data-kind]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === calcKind)));
     let cells;
-    // SasPay's operator fee depends on the operator (its live price): the simulator in « Routage » gives it exactly.
-    const sas = feeProv === 'saspay';
+    // The operator's rate of the provider shown (its own, else the default), as the server counts it.
+    const network = $('calcNet').value || null, onTotal = opProv().on_total;
     const swap = a > 0 ? Math.min(a, Math.max(s.swap_fee_min, ceilBps(a, s.swap_fee_bps))) : 0;
     if (calcKind === 'deposit') {
       const lp = Math.max(s.deposit_lightpay_fee_min, ceilBps(a, s.deposit_lightpay_fee_bps));
-      const op = sas ? null : ceilBps(a + lp, s.pawapay_deposit_fee_bps);
-      cells = [['Le client paie', money(a + lp + (op || 0)) + (sas ? ' + opérateur' : ''), true], ['Arrive sur le wallet', money(a)], ['LightPay gagne', money(lp)], ['Opérateur', sas ? 'tarif réel SasPay' : money(op)], ['Swap, depuis un autre pays', '+ ' + money(swap)]];
+      const op = opFeeOf(opRate(network, 'collection'), a + lp, onTotal);
+      cells = [['Le client paie', money(a + lp + (op || 0)), true], ['Arrive sur le wallet', money(a)], ['LightPay gagne', money(lp)], ['Opérateur', op === null ? 'non réglé' : money(op)], ['Swap, depuis un autre pays', '+ ' + money(swap)]];
       if (a && a < s.deposit_min) cells.push(['Refusé', 'Sous le minimum (' + money(s.deposit_min) + ')']);
     } else {
       const lp = Math.max(s.withdrawal_lightpay_fee_min, ceilBps(a, s.withdrawal_lightpay_fee_bps));
-      const op = sas ? null : ceilBps(a, s.pawapay_payout_fee_bps);
-      cells = [['Débité du wallet', money(a + lp + (op || 0)) + (sas ? ' + opérateur' : ''), true], ['Reçu sur le téléphone', money(a)], ['LightPay gagne', money(lp)], ['Opérateur', sas ? 'tarif réel SasPay' : money(op)], ['Swap, vers un autre pays', '+ ' + money(swap)]];
+      const op = opFeeOf(opRate(network, 'payout'), a, onTotal);
+      cells = [['Débité du wallet', op === null ? 'refusé : tarif non réglé' : money(a + lp + op), true], ['Reçu sur le téléphone', money(a)], ['LightPay gagne', money(lp)], ['Opérateur', op === null ? 'non réglé' : money(op)], ['Swap, vers un autre pays', '+ ' + money(swap)]];
       if (a && a < s.withdrawal_min) cells.push(['Refusé', 'Sous le minimum (' + money(s.withdrawal_min) + ')']);
     }
     $('calcRows').replaceChildren.apply($('calcRows'), cells.map((c) => el('div', { class: 'calc-cell' + (c[2] ? ' main' : '') }, [el('span', { text: c[0] }), el('b', { text: c[1] })])));
@@ -1567,14 +1655,21 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   document.querySelectorAll('[data-prov]').forEach((b) => b.addEventListener('click', () => { feeProv = b.dataset.prov; renderFees(); }));
   document.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => { calcKind = b.dataset.kind; renderCalc(); }));
   $('calcAmount').addEventListener('input', renderCalc);
+  $('calcNet').addEventListener('change', renderCalc);
   async function enterFees() {
     crumbs('Réglages', 'Frais et minimums');
-    if (rates) renderRates(); else skeleton($('ratesTable'), 4, 'div');
-    loadRates(false).then(renderRates).catch(() => {});
+    if (!opFees) skeleton($('ratesTable'), 4, 'div');
+    // The providers' announced prices only sit beside the rates (never applied).
+    loadRates(false).then(() => renderOpFees()).catch(() => {});
     if (!feeSet) { skeleton($('feeDep'), 4, 'li'); skeleton($('feeWd'), 4, 'li'); skeleton($('feeSwap'), 2, 'li'); }
     await load('fees', async () => {
-      const [f, p] = await Promise.all([LP.api('GET', '/v1/admin-console/fees'), LP.api('GET', '/v1/admin-console/providers').catch(() => null)]);
+      const [f, p, o, g] = await Promise.all([
+        LP.api('GET', '/v1/admin-console/fees'), LP.api('GET', '/v1/admin-console/providers').catch(() => null),
+        LP.api('GET', '/v1/admin-console/provider-fees'), registry ? Promise.resolve(registry) : LP.api('GET', '/v1/admin-console/countries'),
+      ]);
       feeSet = f.settings;
+      opFees = o.settings;
+      registry = g;
       feeActive = p ? p.current : null;
       // The provider serving new deposits is shown first.
       if (feeActive && (feeActive.collection === 'saspay' || feeActive.collection === 'pawapay')) feeProv = feeActive.collection;

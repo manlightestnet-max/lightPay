@@ -1,25 +1,24 @@
 import { Environment } from '../types/index.js';
 import { DEFAULT_COUNTRY } from '../rails/registry.js';
 import { feeSettings } from './fee-settings.js';
-import { knownProviderFee } from './provider-rates.js';
+import { operatorFee } from './provider-fees.js';
 
 /**
- * Fees and minimums, per ledger. LightPay's own fees come from the admin's settings (./fee-settings.ts, « Frais et
- * minimums »); the operator fees come from the provider's own prices. Nothing comes from the environment.
+ * Fees and minimums, per ledger, all set by the admin in « Frais et minimums »: LightPay's own fees and the swap
+ * (./fee-settings.ts), the operator fees of each provider per operator (./provider-fees.ts). Nothing comes from the
+ * environment, nothing from a provider's API by itself.
  *
  * Deposits and mobile-money payments
  *   LightPay fee   max(deposit_lightpay_fee_min, ceil(amount × deposit_lightpay_fee_bps / 10 000)),
  *                  added on top, paid by the payer
- *   Operator fee   charged on top, per provider:
- *                  SasPay   its live rate for this operator (./provider-rates.ts), shown as an estimate
- *                           until SasPay reports the exact amount debited
- *                  pawaPay  pawapay_deposit_fee_bps (no prices API), asked on top by us (exact): it covers
- *                           the fee pawaPay takes out of our pawaPay balance
+ *   Operator fee   charged on top: the admin's rate of the provider for this operator.
+ *                  SasPay   shown as an estimate until SasPay reports the exact amount debited
+ *                  pawaPay  asked on top by us (exact): it covers the fee pawaPay takes out of our balance
  *   The payee (or the wallet being topped up) always receives the requested amount.
  *
  * Payouts (withdrawals, refunds)
- *   Operator fee   SasPay: its live payout rate for this operator; pawaPay: amount × pawapay_payout_fee_bps.
- *                  Paid from our provider balance. Without a SasPay price LightPay refuses (it would pay the fee)
+ *   Operator fee   the admin's payout rate of the provider for this operator. Paid from our provider balance.
+ *                  Without a rate (none for the operator, no default) LightPay refuses: it would pay the fee
  *   LightPay fee   max(withdrawal_lightpay_fee_min, amount × withdrawal_lightpay_fee_bps)
  *   The person receives exactly the amount asked; the wallet is debited amount + both fees.
  *   Refunds to a guest's phone carry the same two fees as a withdrawal (operator + LightPay), taken out
@@ -45,14 +44,10 @@ export function lightpayCollectionFee(env: Environment, amount: bigint): bigint 
   return atLeast(ceilBps(amount, s.deposit_lightpay_fee_bps), s.deposit_lightpay_fee_min);
 }
 
-/**
- * Operator fee for a provider, on the amount it is asked to collect through this operator. SasPay's is only shown
- * (SasPay takes it from the payer and reports it): 0 while its price is unknown.
- */
+/** Operator fee for a provider, on the amount it is asked to collect through this operator (0 without a rate). */
 export function providerFeeEstimate(env: Environment, provider: string, network: string, collected: bigint): bigint {
-  if (provider === 'saspay') return knownProviderFee(env, 'saspay', network, 'collection', collected) ?? 0n;
-  if (provider === 'pawapay') return ceilBps(collected, feeSettings(env).pawapay_deposit_fee_bps);
-  return 0n;
+  if (provider === 'simulator') return 0n;
+  return operatorFee(env, provider, network, 'collection', collected) ?? 0n;
 }
 
 /** Smallest mobile-money deposit or payment accepted. */
@@ -97,14 +92,13 @@ export function lightpayPayoutFee(env: Environment, amount: bigint): bigint {
 }
 
 /**
- * Operator fee on a payout of `amount` (what the phone receives) through this operator. SasPay's live price; refused
- * when unknown (LightPay would pay the fee out of its own balance).
+ * Operator fee on a payout of `amount` (what the phone receives) through this operator: the admin's rate. Refused
+ * without one (LightPay would pay the fee out of its own balance).
  */
 export function providerPayoutFee(env: Environment, provider: string, network: string, amount: bigint): bigint {
-  if (provider === 'pawapay') return ceilBps(amount, feeSettings(env).pawapay_payout_fee_bps);
-  if (provider !== 'saspay') return 0n;
-  const fee = knownProviderFee(env, 'saspay', network, 'payout', amount);
-  if (fee === null) throw new FeeError('Le tarif de l’opérateur est indisponible pour le moment. Réessayez dans quelques minutes.');
+  if (provider === 'simulator') return 0n;
+  const fee = operatorFee(env, provider, network, 'payout', amount);
+  if (fee === null) throw new FeeError('Le tarif de l’opérateur n’est pas réglé. Réessayez plus tard.');
   return fee;
 }
 

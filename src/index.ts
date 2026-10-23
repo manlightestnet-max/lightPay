@@ -28,7 +28,7 @@ import { refreshProviderSettings } from './payments/provider-settings.js';
 import { refreshRegistry } from './rails/registry.js';
 import { refreshReserveSettings } from './payments/reserve-settings.js';
 import { startReserveWatch } from './payments/reserve-watch.js';
-import { startProviderRatesWatch } from './payments/provider-rates.js';
+import { refreshProviderFees } from './payments/provider-fees.js';
 import { refreshRoutingRules } from './rails/routing.js';
 import { sweepTransfers } from './payments/rebalance.js';
 import { loadTemplates } from './notify/templates.js';
@@ -389,16 +389,16 @@ async function start() {
     await withBypass(() => runMigrations());
     // Fees and minimums come from the admin's settings; re-read every minute.
     await refreshFeeSettings();
+    await refreshProviderFees();
     await refreshProviderSettings();
     await refreshRegistry();
     await refreshReserveSettings();
     startReserveWatch();
-    startProviderRatesWatch();
     await refreshRoutingRules();
     await refreshControlSettings();
     // Texts of the automatic messages, as the admin wrote them (Administration > Messages).
     await loadTemplates();
-    setInterval(() => { void refreshFeeSettings(); void refreshProviderSettings(); void refreshRegistry(); void refreshReserveSettings(); void refreshRoutingRules(); void refreshControlSettings(); void loadTemplates(); }, 60_000).unref();
+    setInterval(() => { void refreshFeeSettings(); void refreshProviderFees(); void refreshProviderSettings(); void refreshRegistry(); void refreshReserveSettings(); void refreshRoutingRules(); void refreshControlSettings(); void loadTemplates(); }, 60_000).unref();
 
     await server.listen({
       port: config.port,

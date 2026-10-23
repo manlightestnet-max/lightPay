@@ -41,7 +41,8 @@ import { fromTemplate } from '../notify/catalog.js';
 import { sendTest } from '../notify/index.js';
 import { RESERVE_RANGES, ReserveSettingsError, loadReserveSettings, reserveSettings, saveReserveSettings, validateReserveSettings } from '../payments/reserve-settings.js';
 import { readProviderBalances } from '../payments/reserve-watch.js';
-import { ensureProviderRates, providerRates } from '../payments/provider-rates.js';
+import { providerRates } from '../payments/provider-rates.js';
+import { importSasPayRates, loadProviderFees, providerFeeSettings, ProviderFeesError, saveProviderFees, validateProviderFees } from '../payments/provider-fees.js';
 import { CountryRequestError, approveCountryRequest, countPendingCountryRequests, getCountryRequest, listCountryRequests, rejectCountryRequest } from '../wallets/country.js';
 import { RebalanceError, cancelTransfer, canTransfer, getTransfer, listTransfers, planTransfer, requestTransfer, transferSources } from '../payments/rebalance.js';
 import { KIND_OF, OPERATION_TYPES, OperationType, RoutingError, loadRoutingRules, route, routingRules, saveRoutingRules, validateRoutingRules } from '../rails/routing.js';
@@ -69,7 +70,10 @@ import { query } from '../db/pool.js';
  *   GET  /v1/admin-console/routing              routing rules (ordered) + what they can name (providers, operators, countries, apps)
  *   PUT  /v1/admin-console/routing              [ …all rules ]   recent sign-in; applied at once, logged
  *   POST /v1/admin-console/routing/simulate     { type, network, destination?, app?, amount }   which rule and provider, fees at each
- *   GET  /v1/admin-console/provider-rates       what each provider charges now, per operator (?refresh=1 reads it again)
+ *   GET  /v1/admin-console/provider-rates       what each provider announces on its API, per operator (?refresh=1 reads it again)
+ *   GET  /v1/admin-console/provider-fees        operator fees of each provider, per operator (the ones people pay)
+ *   PUT  /v1/admin-console/provider-fees        { saspay, pawapay }   recent sign-in; applied at once, logged
+ *   POST /v1/admin-console/provider-fees/import-saspay   SasPay's percents from its API into the SasPay rates (recent sign-in)
  *   GET  /v1/admin-console/countries            every country and operator (both ledgers), providers' codes
  *   GET  /v1/admin-console/country-requests     people asking to move a wallet to another country (?status=PENDING…) · /:id
  *   POST /v1/admin-console/country-requests/:id/approve   recent sign-in: swap fee taken, wallet moved, logged
@@ -443,11 +447,10 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         if (!raw || BigInt(raw) <= 0n) return reply.status(400).send({ status: 'error', error: 'BAD_AMOUNT', message: 'Montant en FCFA entiers.' });
         const amount = BigInt(raw);
         const decision = await route({ env, type, network, destination: b.destination || null, appId: b.app || null, amount });
-        await ensureProviderRates(env);
         const fees = await Promise.all(PROVIDERS_OF[env].map(async (name) => {
           const configured = providerByName(name).configured(env);
-          // The operator fee is the provider's live price (pawaPay: the rate set by hand); the swap fee when the wallet's
-          // country (destination) is not the operator's. Without a price, the provider shows « — ».
+          // The operator fee is the admin's rate of the provider for this operator; the swap fee when the wallet's
+          // country (destination) is not the operator's. Without a rate, the provider shows « — ».
           const swap = type === 'deposit' || type === 'withdrawal' ? swapBetween(env, b.destination || null, countryOfNetwork(network), amount) : 0n;
           try {
             if (KIND_OF[type] === 'collection') {
@@ -505,7 +508,46 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         }
       });
 
-      // ---------------------------------------------------------- providers' live prices (admin only)
+      // ---------------------------------------------------------- operator fees of each provider (set here)
+      const networks = () => allRails().map((r) => r.network);
+      const feesChanged = async (request: any, before: unknown, after: unknown, extra?: Record<string, unknown>) => {
+        if (JSON.stringify(before) !== JSON.stringify(after)) await auditAction(envOf(request), adminOf(request), 'PROVIDER_FEES_UPDATE', null, null, { before, after, ...(extra ?? {}) });
+      };
+      api.get('/provider-fees', async (request) => {
+        const env = envOf(request);
+        return { status: 'success', settings: await loadProviderFees(env).catch(() => providerFeeSettings(env)) };
+      });
+      api.put('/provider-fees', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        let next;
+        try {
+          next = validateProviderFees(request.body, networks());
+        } catch (e) {
+          if (e instanceof ProviderFeesError) return reply.status(400).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
+        const admin = adminOf(request);
+        const { before, after } = await saveProviderFees(env, next, admin.email || admin.uid);
+        await feesChanged(request, before, after);
+        return { status: 'success', settings: after };
+      });
+      api.post('/provider-fees/import-saspay', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        try {
+          const { settings, imported, ignored } = await importSasPayRates(env, await loadProviderFees(env));
+          const admin = adminOf(request);
+          const { before, after } = await saveProviderFees(env, validateProviderFees(settings, networks()), admin.email || admin.uid);
+          await feesChanged(request, before, after, { imported_from: 'saspay' });
+          return { status: 'success', settings: after, imported, ignored };
+        } catch (e) {
+          if (e instanceof ProviderFeesError) return reply.status(400).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
+      });
+
+      // ---------------------------------------------------------- providers' announced prices (admin only)
       api.get('/provider-rates', async (request) => ({
         status: 'success',
         providers: await providerRates(envOf(request), { refresh: String((request.query as any)?.refresh ?? '') === '1' }),

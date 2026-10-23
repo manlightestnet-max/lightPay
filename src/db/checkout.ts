@@ -12,7 +12,6 @@ import { appName, failureOf, logActivity, logDirectSale, reasonFor, updateActivi
 import { appLogoUrl } from './avatars.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
 import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundBreakdown, swapBetween } from '../payments/fees.js';
-import { ensureProviderRates } from '../payments/provider-rates.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { LightPayUser } from '../security/user-token.js';
 import { guardMoney } from '../security/lockdown.js';
@@ -218,7 +217,6 @@ export async function cancelSession(id: string, appId: string) {
 /** What the payer will pay by mobile money through each network, with the provider the rules pick for it. */
 async function feesByNetwork(session: CheckoutSession) {
   const destination = await payeeCountry(session);
-  await ensureProviderRates(session.environment);
   const amount = BigInt(session.amount);
   const pairs = await Promise.all(
     mobileNetworks().map(async (n) => [n, quote(session.environment, amount, (await routeOf(session, n, destination)).provider.name, n, depositSwap(session, destination, n))])
@@ -685,7 +683,6 @@ export async function refundGuestPayer(hold: HoldRecord) {
   const total = BigInt(hold.amount);
   const route = await routeOperation({ env, type: 'refund', network, destination: payer.country, appId: hold.app_id, amount: total });
   const provider = route.provider.name;
-  await ensureProviderRates(env);
   const { sent: sendable, operator_fee: operatorFee, lightpay_fee: lightpayFee } = refundBreakdown(env, total, provider, network);
   if (sendable <= 0n) {
     // Nothing can be sent without losing money: the amount stays in the guest wallet (bound to

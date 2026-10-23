@@ -12,7 +12,6 @@ import { countryOfNetwork, invalidNumberMessage, normalizeMsisdn, numberFitsNetw
 import { sendPayout } from './payouts.js';
 import { failureOf, logActivity } from './activity.js';
 import { FeeError, lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, swapBetween, withdrawalQuote } from '../payments/fees.js';
-import { ensureProviderRates } from '../payments/provider-rates.js';
 import { lightpayRevenueWallet } from './fee-wallet.js';
 import { maskMsisdn } from './checkout.js';
 import { guardMoney, guardWithdrawals } from '../security/lockdown.js';
@@ -219,7 +218,6 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   if (!numberFitsNetwork(msisdn, network)) throw await refused(new ConnectError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH'));
   const route = await routeOperation({ env: environment, type: 'withdrawal', network, destination: wallet.country, appId: 'mainapp', amount });
   const provider = route.provider.name;
-  await ensureProviderRates(environment);
   let operatorFee: bigint;
   try {
     operatorFee = providerPayoutFee(environment, provider, network, amount);
@@ -337,7 +335,6 @@ export async function quoteWithdrawal(environment: Environment, user: LightPayUs
   if (!mobileNetworks().includes(network)) throw new ConnectError(`network: ${mobileNetworks().join(', ')}`, 'INVALID_NETWORK');
   const wallet = walletId ? await walletOf(environment, user.uid, { id: String(walletId) }) : await findDefaultWallet(environment, user.uid);
   const route = await routeOperation({ env: environment, type: 'withdrawal', network, destination: wallet?.country, appId: 'mainapp', amount });
-  await ensureProviderRates(environment);
   try {
     return withdrawalQuote(environment, amount, route.provider.name, network, 'XAF', swapBetween(environment, wallet?.country, countryOfNetwork(network), amount));
   } catch (err: any) {
