@@ -145,3 +145,12 @@ export function refundBreakdown(env: Environment, total: bigint, provider: strin
   const lightpay = lightpayPayoutFee(env, sent);
   return { sent, operator_fee: total - sent - lightpay, lightpay_fee: lightpay };
 }
+
+/** LightPay's fee to move a wallet of this balance to another country (never more than the balance). */
+export function swapFee(env: Environment, balance: bigint): bigint {
+  if (balance <= 0n) return 0n;
+  const s = feeSettings(env);
+  const fee = (balance * BigInt(s.swap_fee_bps) + 9_999n) / 10_000n;
+  const withMin = fee > BigInt(s.swap_fee_min) ? fee : BigInt(s.swap_fee_min);
+  return withMin < balance ? withMin : balance;
+}

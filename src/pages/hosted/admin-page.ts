@@ -167,6 +167,7 @@ export const adminPage = (nonce: string, env: string) => {
     ${navItem('controls', 'controls', 'clock', 'Délais et limites')}
     ${navItem('payouts', 'payouts', 'withdraw', 'Retraits et remboursements')}
     ${navItem('suspensions', 'suspensions', 'shield', 'Comptes suspendus')}
+    ${navItem('country-requests', 'country-requests', 'swap', 'Changements de pays', '<span class="nav-count" id="navCountryCount" hidden></span>')}
     <div class="nav-label">Réglages</div>
     ${navItem('fees', 'fees', 'settings', 'Frais et minimums')}
     ${navItem('providers', 'providers', 'swap', 'Fournisseurs')}
@@ -344,6 +345,7 @@ ${page('fees', 'Frais et minimums', `
   <div class="grid-2">
     ${panel('Dépôts et paiements', '<ul class="fee-list" id="feeDep"></ul>')}
     ${panel('Retraits', '<ul class="fee-list" id="feeWd"></ul>')}
+    ${panel('Changement de pays (swap)', '<ul class="fee-list" id="feeSwap"></ul>')}
   </div>
   ${panel('Calculateur', `
     <div class="calc-top">
@@ -399,6 +401,13 @@ ${page('payouts', 'Retraits et remboursements', `
 
 ${page('payout', 'Envoi', '<div id="payDetail"></div>', '', { back: { href: '#/payouts', label: 'Retraits et remboursements' } })}
 
+${page('country-requests', 'Changements de pays', `
+  <div class="list-card" id="crTable"></div>
+  <p class="small muted mt">Une personne demande à utiliser un de ses wallets dans un autre pays. Accepter prend les frais de changement de pays (Frais et minimums) sur son solde disponible du moment, puis change le pays du wallet. Refuser demande une raison : la personne la voit sur son wallet.</p>
+`, '', { toolbar: seg('crStatus', [['PENDING', 'À traiter'], ['APPROVED', 'Acceptées'], ['REJECTED', 'Refusées'], ['', 'Toutes']]) })}
+
+${page('country-request', 'Demande', '<div class="stack" id="crDetail"></div>', '', { back: { href: '#/country-requests', label: 'Changements de pays' } })}
+
 ${page('suspensions', 'Comptes suspendus', `
   <div class="grid-2">
     ${panel('Suspendus maintenant', '<div id="susTable"></div>', { flush: true, foot: 'Un compte suspendu ne peut ni retirer ni envoyer. Il peut toujours recevoir.' })}
@@ -448,6 +457,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   ACTION.RESERVES_UPDATE = 'Surveillance des réserves modifiée';
   ACTION.ROUTING_UPDATE = 'Règles de routage modifiées';
   ACTION.COUNTRY_UPDATE = 'Pays modifié';
+  ACTION.COUNTRY_CHANGE_APPROVED = 'Changement de pays accepté';
+  ACTION.COUNTRY_CHANGE_REJECTED = 'Changement de pays refusé';
   ACTION.TRANSFER_REQUEST = 'Transfert entre pays demandé';
   ACTION.TRANSFER_CANCEL = 'Transfert entre pays annulé';
   ACTION.RAIL_UPDATE = 'Opérateur modifié';
@@ -1242,6 +1253,73 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     });
   }
 
+  // ---------------------------------------------------------------- wallets moving to another country (the admin decides)
+  const CR_STATUS = { PENDING: ['warn', 'à traiter'], APPROVED: ['ok', 'acceptée'], REJECTED: ['err', 'refusée'], CANCELLED: ['', 'annulée'] };
+  const crPill = (st) => { const x = CR_STATUS[st] || ['', st]; return el('span', { class: 'pill ' + x[0], text: x[1] }); };
+  const crCountry = (code) => code || '—';
+  function setCountryCount(n) { const c = $('navCountryCount'); c.hidden = !n; c.textContent = n ? String(n) : ''; }
+  let crList = null;
+  function renderCountryRequests() {
+    table($('crTable'), [{ label: 'Demande' }, { label: 'Solde', cls: 'num' }, { label: 'État' }],
+      crList.map((r) => ({ href: '#/country-requests/' + encodeURIComponent(r.id), cells: [
+        cell((r.owner_name || r.owner_email || 'Compte LightPay') + ' · ' + crCountry(r.from_country) + ' → ' + crCountry(r.to_country), (r.wallet_label || 'Wallet') + ' · ' + fmtDateTime(r.updated_at)),
+        money(r.available_balance), crPill(r.status),
+      ], keys: [new Date(r.created_at).getTime(), Number(r.available_balance), r.status] })),
+      segValue('crStatus') === 'PENDING' ? 'Aucune demande à traiter.' : 'Aucune demande.');
+  }
+  async function enterCountryRequests() {
+    crumbs('Contrôle', 'Changements de pays');
+    if (crList) renderCountryRequests(); else skeleton($('crTable'), 3, 'div');
+    await load('country-requests', async () => {
+      const r = await LP.api('GET', '/v1/admin-console/country-requests?status=' + encodeURIComponent(segValue('crStatus')));
+      crList = r.requests; setCountryCount(r.pending);
+      renderCountryRequests();
+    });
+  }
+  async function enterCountryRequest(id) {
+    crumbs('Changements de pays', 'Demande');
+    $('country-requestTitle').textContent = 'Demande';
+    $('crDetail').replaceChildren(); skeleton($('crDetail'), 5, 'div');
+    await load('country-request', async () => {
+      const r = (await LP.api('GET', '/v1/admin-console/country-requests/' + encodeURIComponent(id))).request;
+      $('country-requestTitle').textContent = crCountry(r.from_country) + ' → ' + crCountry(r.to_country);
+      const box = el('div', { class: 'rows' });
+      rows(box, [
+        ['Personne', (r.owner_name || '—') + (r.owner_email ? ' · ' + r.owner_email : '')], ['Wallet', r.wallet_label || 'Wallet'],
+        ['Pays actuel', crCountry(r.from_country)], ['Pays demandé', crCountry(r.to_country)],
+        ['Solde disponible', money(r.available_balance)], ['Bloqué (séquestre)', money(r.locked_balance)],
+        [r.status === 'PENDING' ? 'Frais si vous acceptez maintenant' : 'Frais pris', money(r.fee_now || 0), true],
+        ['Demandée le', fmtDateTime(r.created_at)],
+      ].concat(r.reason ? [['Raison donnée', r.reason]] : []).concat(r.decided_at ? [['Décidée le', fmtDateTime(r.decided_at) + (r.decided_by ? ' · ' + r.decided_by : '')]] : []).concat(r.decision_note ? [['Motif du refus', r.decision_note]] : []));
+      const parts = [detailPanel('Demande', [crPill(r.status), box, el('p', { class: 'mono mt', text: r.id })])];
+      if (r.status === 'PENDING') {
+        const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
+        const note = el('input', { maxlength: '300', autocomplete: 'off', placeholder: 'Raison du refus (la personne la verra)', 'aria-label': 'Raison du refus' });
+        const approve = el('button', { class: 'btn', type: 'button' }, [icon('check'), 'Accepter']);
+        const reject = el('button', { class: 'btn btn-danger btn-sm', type: 'button', text: 'Refuser' });
+        const decide = async (button, path, body, done) => {
+          say(msg, ''); button.disabled = true;
+          await guarded(async () => {
+            await LP.api('POST', '/v1/admin-console/country-requests/' + encodeURIComponent(r.id) + path, body);
+            crList = null;
+            await enterCountryRequest(id);
+            say('country-requestMsg', done, 'ok');
+          }, msg);
+          button.disabled = false;
+        };
+        approve.addEventListener('click', () => decide(approve, '/approve', {}, 'Acceptée : le wallet a changé de pays.'));
+        reject.addEventListener('click', () => { if (!note.value.trim()) return say(msg, 'Indiquez la raison du refus.', 'err'); decide(reject, '/reject', { note: note.value.trim() }, 'Refusée.'); });
+        parts.push(detailPanel('Décision', [
+          el('p', { class: 'small muted', text: 'Accepter prend les frais sur le solde disponible du moment, puis change le pays du wallet. Le solde reste en FCFA.' }),
+          el('div', { class: 'btn-row mt' }, [approve]),
+          el('div', { class: 'field mt' }, [el('label', { text: 'Ou refuser' }), note]),
+          el('div', { class: 'mt' }, [reject]), msg,
+        ]));
+      }
+      $('crDetail').replaceChildren.apply($('crDetail'), parts);
+    });
+  }
+
   // ---------------------------------------------------------------- providers' live prices
   // "3,5 %", "2,2 % + 50", several bands joined; "—" when the operator is not open there.
   const pctFr = (n) => String(Math.round(n * 100) / 100).replace('.', ',') + ' %';
@@ -1352,6 +1430,10 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       ['deposit_lightpay_fee_bps', 'Frais LightPay', 'Votre commission, ajoutée au montant', 'pct'],
       ['deposit_lightpay_fee_min', 'Frais LightPay minimum', 'Le plus grand des deux s’applique', 'fcfa'],
     ],
+    swap: [
+      ['swap_fee_bps', 'Frais de changement de pays', 'Pris sur le solde du wallet quand vous acceptez la demande', 'pct'],
+      ['swap_fee_min', 'Frais minimum', 'Le plus grand des deux s’applique (jamais plus que le solde)', 'fcfa'],
+    ],
     withdrawal: [
       ['withdrawal_min', 'Montant minimum', 'Plus petit retrait accepté', 'fcfa'],
       ['withdrawal_lightpay_fee_bps', 'Frais LightPay', 'Votre commission, débitée avec le retrait', 'pct'],
@@ -1443,6 +1525,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     });
     $('feeDep').replaceChildren.apply($('feeDep'), FEE_KEYS.deposit.concat(OPERATOR_KEYS[feeProv].deposit).map(feeItem));
     $('feeWd').replaceChildren.apply($('feeWd'), FEE_KEYS.withdrawal.concat(OPERATOR_KEYS[feeProv].withdrawal).map(feeItem));
+    $('feeSwap').replaceChildren.apply($('feeSwap'), FEE_KEYS.swap.map(feeItem));
     renderCalc();
   }
   // Same formulas as the server (src/payments/fees.ts).
@@ -1472,7 +1555,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     crumbs('Réglages', 'Frais et minimums');
     if (rates) renderRates(); else skeleton($('ratesTable'), 4, 'div');
     loadRates(false).then(renderRates).catch(() => {});
-    if (!feeSet) { skeleton($('feeDep'), 4, 'li'); skeleton($('feeWd'), 4, 'li'); }
+    if (!feeSet) { skeleton($('feeDep'), 4, 'li'); skeleton($('feeWd'), 4, 'li'); skeleton($('feeSwap'), 2, 'li'); }
     await load('fees', async () => {
       const [f, p] = await Promise.all([LP.api('GET', '/v1/admin-console/fees'), LP.api('GET', '/v1/admin-console/providers').catch(() => null)]);
       feeSet = f.settings;
@@ -1818,6 +1901,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     rule: { parent: 'routing', enter: withNav('routing', enterRule) },
     countries: { enter: withNav('countries', enterCountries) },
     country: { parent: 'countries', enter: withNav('countries', enterCountry) },
+    'country-requests': { enter: withNav('country-requests', enterCountryRequests) },
+    'country-request': { parent: 'country-requests', enter: withNav('country-requests', enterCountryRequest) },
     audit: { enter: withNav('audit', enterAudit) },
     lockdown: { enter: withNav('lockdown', enterLockdown) },
     controls: { enter: withNav('controls', enterControls) },
@@ -1832,7 +1917,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     root: 'home',
     // #/users/<id> opens the item screen "user" (and so on): a list and its item never share a screen.
     resolve: (route) => {
-      const ITEM = { reserves: 'reserve', routing: 'rule', countries: 'country', users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
+      const ITEM = { reserves: 'reserve', routing: 'rule', countries: 'country', 'country-requests': 'country-request', users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
       const i = route.indexOf('/');
       if (i < 0) return [route, null];
       const list = route.slice(0, i);
@@ -1865,6 +1950,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       // Reserve alerts show in the menu from the start, whatever screen opens first.
       const first = nav.current();
       if (!first || first.name !== 'reserves') void refreshResCount();
+      // Country changes waiting for a decision show in the menu too.
+      LP.api('GET', '/v1/admin-console/country-requests?status=PENDING').then((r) => setCountryCount(r.pending)).catch(() => {});
     } catch (e) {
       if (e.signIn) return signIn();
       if (e.status === 403) { showOnly(document.querySelector('[data-screen="denied"]')); return; }

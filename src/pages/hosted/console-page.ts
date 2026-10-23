@@ -1000,6 +1000,7 @@ ${WALLETS_SCRIPT}
       wallets: { enter: withNav(() => { crumbs('Mon argent', 'Mes wallets'); flowWallet = null; return enterWallets(); }) },
       wallet: { parent: 'wallets', enter: withNav((id) => { crumbs('Mes wallets', 'Wallet'); return enterWallet(id); }) },
       'wallet-new': { parent: 'wallets', enter: withNav(() => { crumbs('Mes wallets', 'Ouvrir un wallet'); enterWalletNew(); }) },
+      'wallet-country': { parent: 'wallets', enter: withNav(() => { crumbs('Mes wallets', 'Changer de pays'); return enterWalletCountry(); }) },
       apps: { enter: withNav(enterApps) },
       app: { parent: 'apps', enter: withNav(enterApp) },
       security: { enter: withNav(enterSecurity) },

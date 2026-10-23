@@ -42,6 +42,7 @@ import { sendTest } from '../notify/index.js';
 import { RESERVE_RANGES, ReserveSettingsError, loadReserveSettings, reserveSettings, saveReserveSettings, validateReserveSettings } from '../payments/reserve-settings.js';
 import { readProviderBalances } from '../payments/reserve-watch.js';
 import { providerRates, realProviderFee } from '../payments/provider-rates.js';
+import { CountryRequestError, approveCountryRequest, countPendingCountryRequests, getCountryRequest, listCountryRequests, rejectCountryRequest } from '../wallets/country.js';
 import { RebalanceError, cancelTransfer, canTransfer, getTransfer, listTransfers, planTransfer, requestTransfer, transferSources } from '../payments/rebalance.js';
 import { KIND_OF, OPERATION_TYPES, OperationType, RoutingError, loadRoutingRules, route, routingRules, saveRoutingRules, validateRoutingRules } from '../rails/routing.js';
 import { allCountries, allRails } from '../rails/registry.js';
@@ -70,6 +71,9 @@ import { query } from '../db/pool.js';
  *   POST /v1/admin-console/routing/simulate     { type, network, destination?, app?, amount }   which rule and provider, fees at each
  *   GET  /v1/admin-console/provider-rates       what each provider charges now, per operator (?refresh=1 reads it again)
  *   GET  /v1/admin-console/countries            every country and operator (both ledgers), providers' codes
+ *   GET  /v1/admin-console/country-requests     people asking to move a wallet to another country (?status=PENDING…) · /:id
+ *   POST /v1/admin-console/country-requests/:id/approve   recent sign-in: swap fee taken, wallet moved, logged
+ *   POST /v1/admin-console/country-requests/:id/reject    { note }   recent sign-in, logged
  *   PUT  /v1/admin-console/countries/:code      { enabled?, example? }   recent sign-in, logged
  *   PUT  /v1/admin-console/rails/:method        { enabled?, name?, prefixes?, provider_codes? }   recent sign-in, logged
  *   GET  /v1/admin-console/users[?q=&offset=]   LightPay users · /users/:walletId
@@ -133,7 +137,7 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
 }
 
 const fail = (reply: FastifyReply, err: any) => {
-  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError || err instanceof ReserveSettingsError || err instanceof RoutingError || err instanceof RebalanceError) {
+  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError || err instanceof ReserveSettingsError || err instanceof RoutingError || err instanceof RebalanceError || err instanceof CountryRequestError) {
     return reply.status((err as any).statusCode ?? 400).send({ status: 'error', error: (err as any).code, message: err.message });
   }
   if (err instanceof AdminError) return reply.status(err.statusCode).send({ status: 'error', error: err.code, message: err.message });
@@ -455,6 +459,44 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
           return { provider: name, configured, operator_fee: w.operator_fee, real_operator_fee: await real(amount), lightpay_fee: w.lightpay_fee, total: w.total, label: 'Débité du wallet' };
         }));
         return { status: 'success', provider: decision.provider.name, rule: decision.rule, steps: decision.steps, fees };
+      });
+
+      // ---------------------------------------------------------- wallets moving to another country (decided here)
+      api.get('/country-requests', async (request) => {
+        const env = envOf(request);
+        const status = String((request.query as any)?.status ?? 'PENDING').toUpperCase();
+        return { status: 'success', requests: await listCountryRequests(env, ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].includes(status) ? status : ''), pending: await countPendingCountryRequests(env) };
+      });
+      api.get('/country-requests/:id', async (request, reply) => {
+        try {
+          return { status: 'success', request: await getCountryRequest(envOf(request), String((request.params as any).id)) };
+        } catch (e) {
+          return fail(reply, e);
+        }
+      });
+      api.post('/country-requests/:id/approve', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        const admin = adminOf(request);
+        try {
+          const r = await approveCountryRequest(env, String((request.params as any).id), admin.email || admin.uid);
+          await auditAction(env, admin, 'COUNTRY_CHANGE_APPROVED', r.id, r.fee_amount ? BigInt(r.fee_amount) : null, { wallet: r.wallet_id, from: r.from_country, to: r.to_country });
+          return { status: 'success', request: await getCountryRequest(env, r.id) };
+        } catch (e) {
+          return fail(reply, e);
+        }
+      });
+      api.post('/country-requests/:id/reject', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        const admin = adminOf(request);
+        try {
+          const r = await rejectCountryRequest(env, String((request.params as any).id), admin.email || admin.uid, ((request.body ?? {}) as any).note);
+          await auditAction(env, admin, 'COUNTRY_CHANGE_REJECTED', r.id, null, { wallet: r.wallet_id, from: r.from_country, to: r.to_country, note: r.decision_note });
+          return { status: 'success', request: await getCountryRequest(env, r.id) };
+        } catch (e) {
+          return fail(reply, e);
+        }
       });
 
       // ---------------------------------------------------------- providers' live prices (admin only)

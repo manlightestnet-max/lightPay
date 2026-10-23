@@ -22,6 +22,9 @@ export interface FeeSettings {
   /** pawaPay: operator fee asked on top of a deposit (covers pawaPay's fee), and on a payout. */
   pawapay_deposit_fee_bps: number;
   pawapay_payout_fee_bps: number;
+  /** Moving a wallet to another country (decided by the admin): LightPay's swap fee on its balance, and its minimum. */
+  swap_fee_bps: number;
+  swap_fee_min: number;
 }
 
 export const DEFAULT_FEE_SETTINGS: Readonly<FeeSettings> = Object.freeze({
@@ -36,6 +39,8 @@ export const DEFAULT_FEE_SETTINGS: Readonly<FeeSettings> = Object.freeze({
   withdrawal_operator_fee_min: 0,
   pawapay_deposit_fee_bps: 0,
   pawapay_payout_fee_bps: 0,
+  swap_fee_bps: 100,
+  swap_fee_min: 0,
 });
 
 const KEYS = Object.keys(DEFAULT_FEE_SETTINGS) as (keyof FeeSettings)[];

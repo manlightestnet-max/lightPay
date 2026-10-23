@@ -299,6 +299,7 @@ change visible. Seuls ces pays portent un risque de change.
 | **D — Pays de départ** ✓ | Cameroun, Côte d'Ivoire, Togo : dépôts et retraits, numéro international, choix du pays dans `flows.ts`. | Encaisser et retirer dans 4 pays. |
 | **E — Rééquilibrage** ✓ | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |
 | **F — Plusieurs wallets à l'écran** ✓ | Compte, console, admin, API `wallet_id`, ouverture / fermeture. | Une personne gère plusieurs wallets. |
+| **Pays choisi par la personne** ✓ | Écran « Votre pays » obligatoire pour le premier wallet (plus de Congo imposé), demande de changement de pays sur chaque wallet, décision dans l'admin (Contrôle → Changements de pays) avec les frais de swap de « Frais et minimums » (1 % par défaut) pris à l'acceptation. | Chacun est dans son pays ; LightPay valide les déménagements. |
 | **Tarifs en direct** ✓ | `rates()` des fournisseurs (SasPay `/pricing/my-rates/`), tableau « Tarifs réels » dans Frais et minimums, tarif sur chaque opérateur, colonne « Pris en vrai » dans le simulateur. | L'admin voit où il perd de l'argent. |
 | **G — Suite** | Écrans OTP (Orange CI, Burkina : code composé avant de payer, instructions déjà dans le registre) et redirection (Wave : `payment_url` puis retour), frais opérateur **par pays** dans Frais et minimums (aidés par les tarifs en direct), autres pays CFA (Sénégal, Bénin, Burkina, Mali, Niger), Djamo, remboursements natifs pawaPay, puis hors CFA. | Activés dans l'admin. |
 

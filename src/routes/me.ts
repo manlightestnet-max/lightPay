@@ -3,10 +3,24 @@ import { LightPayUser, UserTokenError, isRecentSignIn, verifyUserToken } from '.
 import { ConnectError, SCOPE_LABELS, approve, listUserConnections, revokeConnection, walletStatement } from '../db/connect.js';
 import { closeWallet, findDefaultWallet, listWallets, openWallet, renameWallet, setDefaultWallet, userWallet, walletOf, WalletRow } from '../wallets/index.js';
 import { controlSettings } from '../payments/control-settings.js';
+import { cancelCountryRequest, chooseCountry, countryChangeQuote, mustChooseCountry, requestCountryChange } from '../wallets/country.js';
 import { countryByCode } from '../rails/registry.js';
 
+/** The pending request of each wallet, or its last decision of the past week (shown on the wallet). */
+async function countryRequestsOf(env: Environment, wallets: WalletRow[]) {
+  if (!wallets.length) return new Map<string, any>();
+  const rows = await query(
+    `SELECT DISTINCT ON (wallet_id) wallet_id, status, to_country, decision_note, created_at, decided_at FROM wallet_country_requests
+     WHERE wallet_id = ANY($1) AND (status = 'PENDING' OR (status IN ('APPROVED', 'REJECTED') AND decided_at > NOW() - INTERVAL '7 days'))
+     ORDER BY wallet_id, created_at DESC`,
+    [wallets.map((w) => w.id)],
+    env
+  );
+  return new Map(rows.map((r: any) => [r.wallet_id, { status: r.status, to_country: r.to_country, to_country_name: countryByCode(r.to_country)?.name ?? r.to_country, note: r.decision_note, created_at: r.created_at, decided_at: r.decided_at }]));
+}
+
 /** What the person's pages see of a wallet (never the internal account id). */
-const walletView = (w: WalletRow) => ({
+const walletView = (w: WalletRow, requests?: Map<string, any>) => ({
   id: w.id,
   label: w.label ?? 'Principal',
   country: w.country,
@@ -16,6 +30,7 @@ const walletView = (w: WalletRow) => ({
   locked_balance: String(w.locked_balance),
   status: w.status,
   is_default: w.is_default,
+  country_request: requests?.get(w.id) ?? null,
   created_at: w.created_at,
 });
 import { closeAccount, listWithdrawals, moveBetweenWallets, quoteWithdrawal, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
@@ -24,6 +39,7 @@ import { getActivity, listActivity } from '../db/activity.js';
 import { mobileNetworks } from '../payments/mobile-money.js';
 import { route as routeOperation } from '../rails/routing.js';
 import { Environment } from '../types/index.js';
+import { query } from '../db/pool.js';
 import { onWalletChange } from '../realtime.js';
 import { developerAccess, findRecipient, getUsername, requestDeveloperAccess, setUsername } from '../db/identity.js';
 import { noteSignIn, notifyAccount, registerDevice, removeAllDevices, removeDevice } from '../notify/index.js';
@@ -106,6 +122,9 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   POST   /v1/me/wallets/:id/default     receives what names no wallet (transfers to @username, connections…)
  *   DELETE /v1/me/wallets/:id             close (empty, nothing pending, not the default)
  *   POST   /v1/me/wallets/move            { from, to, amount }  between my wallets, free (X-LightPay-Pin)
+ *   PUT    /v1/me/country                 { country }  the first wallet's country, chosen once (choose_country in /v1/me)
+ *   GET    /v1/me/wallets/:id/country-quote   what moving this wallet to another country would cost now (swap fee)
+ *   POST   /v1/me/wallets/:id/country     { country, reason? }  ask to move it (decided by LightPay's admin) · DELETE cancels
  *   GET    /v1/me/transactions            ledger statement (money that moved)      ?wallet_id (default: the default wallet)
  *   GET    /v1/me/activity[/:id]          history of every operation: state + reason of a refusal   ?wallet_id
  *   GET    /v1/me/connections             apps I authorized
@@ -138,6 +157,7 @@ export async function meRoutes(fastify: FastifyInstance) {
     const user = request.lightpayUser!;
     const wallet = await userWallet(envOf(request), user);
     const wallets = await listWallets(envOf(request), user.uid);
+    const requests = await countryRequestsOf(envOf(request), wallets);
     return {
       status: 'success',
       user: {
@@ -153,8 +173,10 @@ export async function meRoutes(fastify: FastifyInstance) {
         locked_balance: String(wallet.locked_balance),
         status: wallet.status,
       },
-      wallets: wallets.map(walletView),
+      wallets: wallets.map((w) => walletView(w, requests)),
       max_wallets: controlSettings(envOf(request)).max_wallets,
+      // The first wallet's country is chosen once, before using it (when several countries are open).
+      choose_country: mustChooseCountry(wallet),
       // Minimums set by the admin, shown before anything is typed.
       limits: { deposit_min: minMobileMoneyAmount(envOf(request)).toString(), withdrawal_min: minWithdrawalAmount(envOf(request)).toString() },
       environment: envOf(request),
@@ -205,11 +227,45 @@ export async function meRoutes(fastify: FastifyInstance) {
   });
 
   // ---------------------------------------------------------------- my wallets
-  fastify.get('/wallets', async (request) => ({
-    status: 'success',
-    wallets: (await listWallets(envOf(request), request.lightpayUser!.uid)).map(walletView),
-    max_wallets: controlSettings(envOf(request)).max_wallets,
-  }));
+  fastify.get('/wallets', async (request) => {
+    const wallets = await listWallets(envOf(request), request.lightpayUser!.uid);
+    const requests = await countryRequestsOf(envOf(request), wallets);
+    return { status: 'success', wallets: wallets.map((w) => walletView(w, requests)), max_wallets: controlSettings(envOf(request)).max_wallets };
+  });
+  // The first wallet's country, chosen once.
+  fastify.put('/country', async (request, reply) => {
+    try {
+      return { status: 'success', wallet: walletView(await chooseCountry(envOf(request), request.lightpayUser!, ((request.body ?? {}) as any).country)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+  // Moving a wallet to another country: asked here, decided by LightPay's admin (swap fee on approval).
+  fastify.get('/wallets/:id/country-quote', async (request, reply) => {
+    try {
+      const wallet = await walletOf(envOf(request), request.lightpayUser!.uid, { id: String((request.params as any).id) });
+      return { status: 'success', quote: countryChangeQuote(envOf(request), wallet) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+  fastify.post('/wallets/:id/country', async (request, reply) => {
+    const body = (request.body ?? {}) as any;
+    try {
+      const r = await requestCountryChange(envOf(request), request.lightpayUser!, String((request.params as any).id), body.country, body.reason);
+      return { status: 'success', request: { status: r.status, to_country: r.to_country, created_at: r.created_at } };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+  fastify.delete('/wallets/:id/country', async (request, reply) => {
+    try {
+      const r = await cancelCountryRequest(envOf(request), request.lightpayUser!, String((request.params as any).id));
+      return { status: 'success', request: { status: r.status } };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
   fastify.post('/wallets', async (request, reply) => {
     const body = (request.body ?? {}) as any;
     const country = body.country ? String(body.country).toUpperCase() : undefined;

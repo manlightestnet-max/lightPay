@@ -48,6 +48,10 @@ SaaS (barre latérale, écrans en scaffold). La console ne s’ouvre que depuis 
   internationale (`242…`, `237…`).
 - **Plusieurs wallets** : un formulaire ne demande « quel wallet » que s’il y en a plusieurs, en partant de celui d’où il
   a été ouvert ; écrans partagés compte / console dans `wallets.ts`.
+- **Le pays d’un wallet** : la personne le choisit elle-même (écran « Votre pays » après le @nom et le code, quand plusieurs
+  pays sont ouverts ; à l’ouverture d’un autre wallet). Jamais de pays imposé. Le changer ensuite est une **demande que
+  l’admin valide** (Contrôle → « Changements de pays ») ; à l’acceptation, les frais de changement de pays (« Frais et
+  minimums », swap) sont pris sur le solde (`src/wallets/country.ts`).
 - **Montants** : une sortie affiche ce qui a quitté le wallet, frais compris ; une entrée affiche ce qui est arrivé,
   jamais ce que le téléphone a payé avec les frais.
 - **Les fournisseurs (SasPay, pawaPay) ne se montrent jamais** aux personnes ni aux apps : seulement dans l’admin.

@@ -167,6 +167,17 @@ ${walletScreens(frame)}
   <div class="actions-bar"><button class="btn" type="button" id="unGo">Enregistrer</button></div>
 </section>
 
+<section class="screen" data-screen="country" hidden>
+  ${topbar({ title: 'Votre pays', back: false, env })}
+  <div class="content">
+    <h2 class="title mt">Dans quel pays utilisez-vous LightPay ?</h2>
+    <p class="small muted mt">Votre wallet dépose et retire avec les opérateurs de ce pays. Pour en changer ensuite, vous ferez une demande que LightPay valide.</p>
+    <div class="field"><span class="label" id="ctyLabel">Pays</span><div class="seg" role="group" aria-labelledby="ctyLabel" id="ctyCountries"></div></div>
+    <div class="msg" id="ctyMsg" role="status" aria-live="polite"></div>
+  </div>
+  <div class="actions-bar"><button class="btn" type="button" id="ctyGo" disabled>Confirmer</button></div>
+</section>
+
 <section class="screen" data-screen="pin" hidden>
   ${topbar({ title: 'Code LightPay', back: true, env, backId: 'pinBack' })}
   <div class="content">
@@ -568,6 +579,30 @@ ${WALLETS_SCRIPT}
   // Forgotten: the same Google account again, then a new code (no current code needed).
   $('pinForgot').addEventListener('click', async () => { if (await confirmIdentity()) enterPin('forgot'); });
 
+  // The first wallet's country, chosen once before using the wallet (when several countries are open).
+  let ctyChoice = null;
+  function enterCountry() {
+    say('ctyMsg', '');
+    const render = () => {
+      $('ctyCountries').replaceChildren.apply($('ctyCountries'), RAILS.countries.map((c) => el('button', {
+        class: 'seg-opt', type: 'button', 'aria-pressed': String(c.code === ctyChoice), text: c.name,
+        on: { click: () => { ctyChoice = c.code; render(); } },
+      })));
+      $('ctyGo').disabled = !ctyChoice;
+    };
+    render();
+    loadRails().then(render);
+  }
+  $('ctyGo').addEventListener('click', () => guarded(async () => {
+    if (!ctyChoice) return;
+    $('ctyGo').disabled = true;
+    try {
+      await LP.api('PUT', '/v1/me/country', { country: ctyChoice });
+      await loadMe();
+      nav.go('home', true);
+    } finally { $('ctyGo').disabled = !ctyChoice; }
+  }, 'ctyMsg'));
+
   function enterUsername() {
     const first = !me || !me.username;
     $('unBack').hidden = first;
@@ -653,6 +688,8 @@ ${WALLETS_SCRIPT}
       if (me && !me.username && c.name !== 'username') setTimeout(() => nav.go('username', true), 0);
       // Then the 6-digit code (mandatory): asked for every send, withdrawal and wallet payment.
       else if (me && me.username && me.pin_set === false && c.name !== 'pin') setTimeout(() => nav.go('pin', true), 0);
+      // Then the country of the first wallet (once), before using it.
+      else if (me && me.username && me.pin_set !== false && me.choose_country && c.name !== 'country') setTimeout(() => nav.go('country', true), 0);
     },
     screens: {
       home: { enter: enterHome },
@@ -674,6 +711,8 @@ ${WALLETS_SCRIPT}
       account: { enter: enterAccount },
       username: { parent: 'account', enter: enterUsername },
       pin: { parent: 'account', enter: enterPin },
+      country: { enter: enterCountry },
+      'wallet-country': { parent: 'wallets', enter: enterWalletCountry },
       developer: { parent: 'account', enter: enterDeveloper },
       advanced: { parent: 'account' },
       delete: { parent: 'advanced', enter: () => { say('delMsg', ''); $('delConfirm').value = ''; $('delGo').disabled = true; } },

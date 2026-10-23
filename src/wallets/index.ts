@@ -33,6 +33,8 @@ export interface WalletRow {
   label: string | null;
   country: string | null;
   is_default: boolean;
+  /** When the person chose this wallet's country (null: the first wallet, still in Congo by default). */
+  country_confirmed_at: Date | null;
   available_balance: string;
   locked_balance: string;
   status: 'ACTIVE' | 'FROZEN' | 'CLOSED';
@@ -149,8 +151,8 @@ export async function openWallet(
   const open = await listWallets(env, user.uid);
   if (open.length >= max) throw new ConnectError(`Vous avez déjà ${open.length} wallets : c’est le maximum.`, 'TOO_MANY_WALLETS', 409);
   const [w] = await query<WalletRow>(
-    `INSERT INTO wallets (app_id, account_id, owner_id, account_type, currency, environment, label, country, is_default, metadata)
-     VALUES ('${APP}', $1, $2, 'USER', $3, $4, $5, $6, FALSE, $7) RETURNING *`,
+    `INSERT INTO wallets (app_id, account_id, owner_id, account_type, currency, environment, label, country, is_default, metadata, country_confirmed_at)
+     VALUES ('${APP}', $1, $2, 'USER', $3, $4, $5, $6, FALSE, $7, NOW()) RETURNING *`,
     [
       `${ownerOf(user.uid)}/w_${crypto.randomBytes(9).toString('base64url')}`,
       ownerOf(user.uid),
