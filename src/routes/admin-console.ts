@@ -41,6 +41,11 @@ import { fromTemplate } from '../notify/catalog.js';
 import { sendTest } from '../notify/index.js';
 import { RESERVE_RANGES, ReserveSettingsError, loadReserveSettings, reserveSettings, saveReserveSettings, validateReserveSettings } from '../payments/reserve-settings.js';
 import { readProviderBalances } from '../payments/reserve-watch.js';
+import { KIND_OF, OPERATION_TYPES, OperationType, RoutingError, loadRoutingRules, route, routingRules, saveRoutingRules, validateRoutingRules } from '../rails/routing.js';
+import { allCountries, allRails } from '../rails/registry.js';
+import { quote, refundBreakdown, withdrawalQuote } from '../payments/fees.js';
+import { PROVIDERS_OF } from '../payments/provider-settings.js';
+import { query } from '../db/pool.js';
 
 /**
  * Owner's admin console.
@@ -53,6 +58,9 @@ import { readProviderBalances } from '../payments/reserve-watch.js';
  *   POST /v1/admin-console/reserves/read        reads every provider wallet now through the providers' APIs
  *   GET  /v1/admin-console/reserves-settings    gap alert, automatic readings, levels per provider wallet (+ ranges)
  *   PUT  /v1/admin-console/reserves-settings    { …all settings }   recent sign-in; applied at once, logged
+ *   GET  /v1/admin-console/routing              routing rules (ordered) + what they can name (providers, operators, countries, apps)
+ *   PUT  /v1/admin-console/routing              [ …all rules ]   recent sign-in; applied at once, logged
+ *   POST /v1/admin-console/routing/simulate     { type, network, destination?, app?, amount }   which rule and provider, fees at each
  *   GET  /v1/admin-console/users[?q=&offset=]   LightPay users · /users/:walletId
  *   GET  /v1/admin-console/apps                 apps · /apps/:id (attached users)
  *   GET  /v1/admin-console/transactions[?type=&app=&q=&before=] · /transactions/:id (ledger entries)
@@ -114,7 +122,7 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
 }
 
 const fail = (reply: FastifyReply, err: any) => {
-  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError || err instanceof ReserveSettingsError) {
+  if (err instanceof PayoutControlError || err instanceof LockdownError || err instanceof ControlSettingsError || err instanceof ReserveSettingsError || err instanceof RoutingError) {
     return reply.status((err as any).statusCode ?? 400).send({ status: 'error', error: (err as any).code, message: err.message });
   }
   if (err instanceof AdminError) return reply.status(err.statusCode).send({ status: 'error', error: err.code, message: err.message });
@@ -323,6 +331,65 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
           await auditAction(env, admin, 'PROVIDERS_UPDATE', null, null, { from: before, to: after });
         }
         return { status: 'success', current: after };
+      });
+
+      // ---------------------------------------------------------- routing rules
+      api.get('/routing', async (request) => {
+        const env = envOf(request);
+        const apps = await query(`SELECT id, name FROM apps WHERE id <> 'mainapp' ORDER BY name`, [], env);
+        return {
+          status: 'success',
+          rules: await loadRoutingRules(env).catch(() => routingRules(env)),
+          default: { collection: providerFor(env, 'MTN_MOMO_COG', 'collection').name, payout: providerFor(env, 'MTN_MOMO_COG', 'payout').name },
+          options: {
+            providers: PROVIDERS_OF[env].map((name) => ({ name, configured: providerByName(name).configured(env) })),
+            types: OPERATION_TYPES.map((t) => ({ type: t, kind: KIND_OF[t] })),
+            networks: allRails().map((r) => ({ network: r.network, name: r.name, country: r.country, enabled: r.enabled })),
+            countries: allCountries().map((c) => ({ code: c.code, name: c.name, enabled: c.enabled })),
+            apps,
+          },
+        };
+      });
+      api.put('/routing', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const env = envOf(request);
+        let next;
+        try {
+          next = validateRoutingRules(env, (request.body as any)?.rules ?? request.body);
+        } catch (e) {
+          return fail(reply, e);
+        }
+        const admin = adminOf(request);
+        const { before, after } = await saveRoutingRules(env, next, admin.email || admin.uid);
+        if (JSON.stringify(before) !== JSON.stringify(after)) await auditAction(env, admin, 'ROUTING_UPDATE', null, null, { before, after });
+        return { status: 'success', rules: after };
+      });
+      /** Which rule and provider an operation would get now, and what each provider would cost for it. Nothing is sent. */
+      api.post('/routing/simulate', async (request, reply) => {
+        const env = envOf(request);
+        const b = (request.body ?? {}) as any;
+        const type = String(b.type ?? '') as OperationType;
+        if (!(OPERATION_TYPES as readonly string[]).includes(type)) return reply.status(400).send({ status: 'error', error: 'BAD_TYPE', message: 'Type d’opération inconnu.' });
+        const network = String(b.network ?? '');
+        if (!allRails().some((r) => r.network === network)) return reply.status(400).send({ status: 'error', error: 'BAD_NETWORK', message: 'Opérateur inconnu.' });
+        const raw = String(b.amount ?? '').replace(/\D/g, '');
+        if (!raw || BigInt(raw) <= 0n) return reply.status(400).send({ status: 'error', error: 'BAD_AMOUNT', message: 'Montant en FCFA entiers.' });
+        const amount = BigInt(raw);
+        const decision = await route({ env, type, network, destination: b.destination || null, appId: b.app || null, amount });
+        const fees = PROVIDERS_OF[env].map((name) => {
+          const configured = providerByName(name).configured(env);
+          if (KIND_OF[type] === 'collection') {
+            const q = quote(env, amount, name);
+            return { provider: name, configured, operator_fee: q.operator_fee, lightpay_fee: q.lightpay_fee, total: q.total, label: 'Le client paie' };
+          }
+          if (type === 'refund') {
+            const r = refundBreakdown(env, amount, name);
+            return { provider: name, configured, operator_fee: r.operator_fee.toString(), lightpay_fee: r.lightpay_fee.toString(), total: r.sent.toString(), label: 'Rendu au client' };
+          }
+          const w = withdrawalQuote(env, amount, name, 'XAF');
+          return { provider: name, configured, operator_fee: w.operator_fee, lightpay_fee: w.lightpay_fee, total: w.total, label: 'Débité du wallet' };
+        });
+        return { status: 'success', provider: decision.provider.name, rule: decision.rule, steps: decision.steps, fees };
       });
 
       // ---------------------------------------------------------- delays and limits

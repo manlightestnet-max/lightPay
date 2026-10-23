@@ -18,6 +18,8 @@ const ADMIN_CSS = `
 .msg-pill.off { background: var(--danger-soft); color: var(--danger); }
 .msg-switches { display: grid; gap: 4px; }
 .msg-switches .agree { margin-top: 6px; }
+.rule-checks { display: flex; flex-wrap: wrap; gap: 2px 20px; }
+.rule-checks .agree { margin-top: 4px; }
 .vars { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .var-chip { border: 1px solid var(--line-strong); background: transparent; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text); cursor: pointer; }
 .var-chip:hover { border-color: var(--accent); }
@@ -168,6 +170,7 @@ export const adminPage = (nonce: string, env: string) => {
     <div class="nav-label">Réglages</div>
     ${navItem('fees', 'fees', 'settings', 'Frais et minimums')}
     ${navItem('providers', 'providers', 'swap', 'Fournisseurs')}
+    ${navItem('routing', 'routing', 'list', 'Routage')}
     ${navItem('messages', 'messages', 'mail', 'Messages')}
     ${navItem('audit', 'audit', 'clock', 'Journal admin')}
   </nav>
@@ -300,6 +303,24 @@ ${page('providers', 'Fournisseurs mobile money', `
   ${panel('Par fournisseur · 30 derniers jours', '<div id="provStats"></div>', { flush: true })}
 `)}
 
+${page('routing', 'Routage', `
+  <div class="list-card" id="routeTable"></div>
+  <p class="small muted mt">La première règle active qui correspond choisit le fournisseur ; sinon le fournisseur par défaut (Fournisseurs). Une règle d’envoi peut ne servir que si la réserve de ce fournisseur dans ce pays suffit : sinon la règle suivante est essayée. Les personnes et les apps ne voient jamais le fournisseur.</p>
+  ${panel('Simulateur', `
+    <form id="simForm" class="inline-form" novalidate>
+      <div class="field"><label for="simType">Opération</label><select id="simType"></select></div>
+      <div class="field"><label for="simNetwork">Opérateur du téléphone</label><select id="simNetwork"></select></div>
+      <div class="field"><label for="simDest">Pays du wallet</label><select id="simDest"></select></div>
+      <div class="field"><label for="simApp">App</label><select id="simApp"></select></div>
+      <div class="field"><label for="simAmount">Montant (FCFA)</label><input id="simAmount" data-amount inputmode="numeric" autocomplete="off"></div>
+      <div class="msg" id="simMsg" role="status" aria-live="polite"></div>
+      <button class="btn btn-secondary btn-sm mt" type="submit" id="simGo">${iconSvg('bolt')}Simuler</button>
+    </form>
+    <div id="simResult"></div>`, { foot: 'Rien n’est envoyé : le simulateur dit quelle règle et quel fournisseur serviraient cette opération maintenant, et ce que coûterait chaque fournisseur (d’après « Frais et minimums »).' })}
+`, '<a class="btn btn-sm" href="#/routing/new">' + iconSvg('plus') + 'Nouvelle règle</a>')}
+
+${page('rule', 'Règle', '<div class="stack" id="ruleDetail"></div>', '', { back: { href: '#/routing', label: 'Routage' } })}
+
 ${page('fees', 'Frais et minimums', `
   <div class="fee-top">
     <div>
@@ -411,6 +432,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   ACTION.PROVIDERS_UPDATE = 'Fournisseur mobile money changé';
   ACTION.CONTROLS_UPDATE = 'Délais et limites modifiés';
   ACTION.RESERVES_UPDATE = 'Surveillance des réserves modifiée';
+  ACTION.ROUTING_UPDATE = 'Règles de routage modifiées';
   ACTION.PROVIDER_BALANCE_CHECK = 'Solde fournisseur relevé';
   ACTION.MESSAGE_UPDATE = 'Message modifié';
   ACTION.MESSAGE_RESET = 'Message rétabli';
@@ -950,6 +972,143 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     $('provGo').disabled = false;
   });
 
+  // ---------------------------------------------------------------- routing rules (ordered list; one rule = its own screen)
+  const KIND_NAME = { collection: 'Encaissement', payout: 'Envoi' };
+  const TYPE_NAME = { deposit: 'Dépôt', payment: 'Paiement', withdrawal: 'Retrait', refund: 'Remboursement' };
+  let routing = null;
+  const countryName = (c) => { const x = routing.options.countries.filter((o) => o.code === c)[0]; return x ? x.name : c; };
+  const networkLabel = (n) => { const x = routing.options.networks.filter((o) => o.network === n)[0]; return x ? x.name + ' · ' + countryName(x.country) : n; };
+  const appName = (a) => { const x = routing.options.apps.filter((o) => o.id === a)[0]; return x ? x.name : a; };
+  function ruleSummary(r) {
+    const parts = [r.types.length ? r.types.map((t) => TYPE_NAME[t]).join(', ') : (r.kind === 'collection' ? 'Tout encaissement' : 'Tout envoi')];
+    if (r.networks.length) parts.push(r.networks.map(networkLabel).join(', '));
+    else if (r.countries.length) parts.push('depuis ' + r.countries.map(countryName).join(', '));
+    if (r.destinations.length) parts.push('wallet ' + r.destinations.map(countryName).join(', '));
+    if (r.apps.length) parts.push(r.apps.map(appName).join(', '));
+    if (r.require_reserve) parts.push('si sa réserve suffit');
+    return parts.join(' · ');
+  }
+  async function loadRouting() { routing = await LP.api('GET', '/v1/admin-console/routing'); return routing; }
+  async function saveRules(rules) {
+    const r = await LP.api('PUT', '/v1/admin-console/routing', { rules: rules });
+    routing.rules = r.rules;
+    return r.rules;
+  }
+  function renderRouting() {
+    table($('routeTable'), [{ label: 'Ordre', cls: 'num' }, { label: 'Règle' }, { label: 'Fournisseur' }, { label: 'État' }],
+      routing.rules.map((r, i) => ({ href: '#/routing/' + r.id, cells: [num(i + 1), cell(r.name, KIND_NAME[r.kind] + ' · ' + ruleSummary(r)), provName(r.provider), el('span', { class: 'pill ' + (r.enabled ? 'ok' : ''), text: r.enabled ? 'active' : 'désactivée' })] }))
+        .concat([{ fixed: true, cells: ['', cell('Sinon', 'Fournisseur par défaut (Fournisseurs)'), 'Encaissements : ' + provName(routing.default.collection) + ' · envois : ' + provName(routing.default.payout), ''] }]),
+      'Aucune règle.');
+    const opts = (host, list, keep) => { const cur = $(host).value; $(host).replaceChildren.apply($(host), list.map((o) => el('option', { value: o[0], text: o[1] }))); if (keep && cur) $(host).value = cur; };
+    opts('simType', routing.options.types.map((t) => [t.type, TYPE_NAME[t.type]]), true);
+    opts('simNetwork', routing.options.networks.map((n) => [n.network, networkLabel(n.network)]), true);
+    opts('simDest', [['', 'Congo-Brazzaville (par défaut)']].concat(routing.options.countries.map((c) => [c.code, c.name])), true);
+    opts('simApp', [['', 'Compte LightPay (aucune app)']].concat(routing.options.apps.map((a) => [a.id, a.name])), true);
+  }
+  async function enterRouting() {
+    crumbs('Réglages', 'Routage');
+    if (routing) renderRouting(); else skeleton($('routeTable'), 3, 'div');
+    await load('routing', async () => { await loadRouting(); renderRouting(); });
+  }
+  $('simForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); say('simMsg', '');
+    const amount = digits($('simAmount').value);
+    if (!amount) return say('simMsg', 'Indiquez un montant.', 'err');
+    $('simGo').disabled = true;
+    await guarded(async () => {
+      const r = await LP.api('POST', '/v1/admin-console/routing/simulate', { type: $('simType').value, network: $('simNetwork').value, destination: $('simDest').value || undefined, app: $('simApp').value || undefined, amount: amount });
+      const steps = items(r.steps.map((st) => ({ title: st.name, sub: st.skipped ? 'passée : ' + st.skipped : 'choisie', end: st.skipped ? '—' : provName(r.provider) })), 'Aucune règle : le fournisseur par défaut sert.');
+      const configured = r.fees.filter((f) => f.configured);
+      const cheapest = configured.length ? configured.reduce((a, b) => (Number(b.operator_fee) < Number(a.operator_fee) ? b : a)) : null;
+      const feeHost = el('div', {});
+      table(feeHost, [{ label: 'Fournisseur' }, { label: 'Frais opérateur', cls: 'num' }, { label: 'Frais LightPay', cls: 'num' }, { label: r.fees[0] ? r.fees[0].label : 'Total', cls: 'num' }],
+        r.fees.map((f) => ({ cells: [cell(provName(f.provider), (f.provider === r.provider ? 'choisi' : '') + (cheapest && f.provider === cheapest.provider ? (f.provider === r.provider ? ' · ' : '') + 'le moins cher' : '') + (f.configured ? '' : 'clés absentes')), money(f.operator_fee), money(f.lightpay_fee), money(f.total)] })),
+        'Aucun fournisseur sur cet environnement.');
+      $('simResult').replaceChildren(
+        el('p', { class: 'check ok mt' }, [icon('check'), 'Servi par ' + provName(r.provider) + (r.rule ? ' (règle « ' + r.rule.name + ' »).' : ' (fournisseur par défaut).')]),
+        steps, feeHost);
+    }, 'simMsg');
+    $('simGo').disabled = false;
+  });
+
+  async function enterRule(id) {
+    crumbs('Routage', 'Règle');
+    $('ruleTitle').textContent = id === 'new' ? 'Nouvelle règle' : 'Règle';
+    $('ruleDetail').replaceChildren(); skeleton($('ruleDetail'), 5, 'div');
+    await load('rule', async () => {
+      await loadRouting();
+      const index = routing.rules.findIndex((r) => r.id === id);
+      if (id !== 'new' && index < 0) throw new Error('Règle introuvable.');
+      const rule = index >= 0 ? routing.rules[index] : { id: '', name: '', kind: 'collection', types: [], countries: [], networks: [], destinations: [], apps: [], provider: routing.default.collection, require_reserve: false, enabled: true };
+      if (index >= 0) $('ruleTitle').textContent = rule.name;
+      const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
+      const field = (label, input) => el('div', { class: 'field' }, [el('label', { text: label }), input]);
+      const check = (label, on) => { const c = el('input', { type: 'checkbox' }); c.checked = on; return { box: c, row: el('label', { class: 'agree' }, [c, el('span', { text: label })]) }; };
+      const group = (list, chosen) => { const boxes = list.map((o) => Object.assign(check(o[1], chosen.indexOf(o[0]) >= 0), { value: o[0] })); return { boxes: boxes, node: el('div', { class: 'rule-checks' }, boxes.map((b) => b.row)), get: () => boxes.filter((b) => b.box.checked).map((b) => b.value) }; };
+      const name = el('input', { maxlength: '80', autocomplete: 'off', value: rule.name, 'aria-label': 'Nom' });
+      const kind = el('select', {}, [el('option', { value: 'collection', text: 'Encaissement (dépôt, paiement)' }), el('option', { value: 'payout', text: 'Envoi (retrait, remboursement)' })]);
+      kind.value = rule.kind;
+      const provider = el('select', {}, routing.options.providers.map((pr) => el('option', { value: pr.name, text: provName(pr.name) + (pr.configured ? '' : ' (clés absentes)') })));
+      provider.value = rule.provider;
+      const typesHost = el('div', {});
+      let types = null;
+      const renderTypes = () => { types = group(routing.options.types.filter((t) => t.kind === kind.value).map((t) => [t.type, TYPE_NAME[t.type]]), rule.kind === kind.value ? rule.types : []); typesHost.replaceChildren(types.node); };
+      renderTypes();
+      const countries = group(routing.options.countries.map((c) => [c.code, c.name]), rule.countries);
+      const networks = group(routing.options.networks.map((n) => [n.network, networkLabel(n.network)]), rule.networks);
+      const destinations = group(routing.options.countries.map((c) => [c.code, c.name]), rule.destinations);
+      const apps = group([['mainapp', 'Compte LightPay']].concat(routing.options.apps.map((a) => [a.id, a.name])), rule.apps);
+      const reserve = check('Seulement si sa réserve dans ce pays couvre le montant (sinon la règle suivante)', rule.require_reserve);
+      const enabled = check('Règle active', rule.enabled);
+      const syncKind = () => { reserve.row.hidden = kind.value !== 'payout'; };
+      kind.addEventListener('change', () => { renderTypes(); syncKind(); });
+      syncKind();
+      const current = () => ({ id: rule.id || undefined, name: name.value.trim(), kind: kind.value, types: types.get(), countries: countries.get(), networks: networks.get(), destinations: destinations.get(), apps: apps.get(), provider: provider.value, require_reserve: kind.value === 'payout' && reserve.box.checked, enabled: enabled.box.checked });
+      const others = () => routing.rules.filter((r) => r.id !== rule.id);
+      const act = async (button, rules, done, back) => {
+        say(msg, ''); button.disabled = true;
+        await guarded(async () => {
+          const saved = await saveRules(rules);
+          if (back) { location.hash = '#/routing'; return; }
+          const again = saved.filter((r) => r.name === current().name && r.kind === current().kind)[0] || saved[saved.length - 1];
+          if (!rule.id && again) { location.hash = '#/routing/' + again.id; return; }
+          say(msg, done, 'ok');
+        }, msg);
+        button.disabled = false;
+      };
+      const save = el('button', { class: 'btn', type: 'button' }, [icon('check'), 'Enregistrer']);
+      save.addEventListener('click', () => {
+        if (!name.value.trim()) return say(msg, 'Donnez un nom à la règle.', 'err');
+        const list = routing.rules.slice();
+        if (index >= 0) list[index] = current(); else list.push(current());
+        act(save, list, 'Règle enregistrée : elle s’applique tout de suite.');
+      });
+      const move = (delta, label) => {
+        const b = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: label });
+        if (index < 0 || index + delta < 0 || index + delta >= routing.rules.length) b.disabled = true;
+        b.addEventListener('click', () => { const list = routing.rules.slice(); const r = list.splice(index, 1)[0]; list.splice(index + delta, 0, r); act(b, list, 'Ordre enregistré.', true); });
+        return b;
+      };
+      const remove = el('button', { class: 'btn btn-danger btn-sm', type: 'button', text: 'Supprimer la règle' });
+      if (index < 0) remove.hidden = true;
+      remove.addEventListener('click', () => act(remove, others(), 'Règle supprimée.', true));
+      $('ruleDetail').replaceChildren(
+        detailPanel('Règle', [
+          field('Nom', name), field('Sens', kind), field('Fournisseur', provider),
+          el('p', { class: 'hint', text: 'Ce qui n’est pas coché ne restreint rien.' }),
+          field('Opérations', typesHost),
+          field('Pays de l’opérateur du téléphone', countries.node),
+          field('Opérateurs', networks.node),
+          field('Pays du wallet', destinations.node),
+          field('Apps', apps.node),
+          el('div', { class: 'msg-switches' }, [reserve.row, enabled.row]),
+          el('div', { class: 'btn-row mt-lg' }, [save, move(-1, 'Monter'), move(1, 'Descendre')]),
+          el('div', { class: 'mt' }, [remove]),
+          msg,
+        ]));
+    });
+  }
+
   // ---------------------------------------------------------------- fees and minimums
   // Read as values; a click on one turns it into a field (Enter saves, Échap cancels). Operator
   // fees are per provider: the one serving this environment is preselected. The calculator uses
@@ -1418,6 +1577,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     main: { enter: withNav('main', enterMain) },
     fees: { enter: withNav('fees', enterFees) },
     providers: { enter: withNav('providers', enterProviders) },
+    routing: { enter: withNav('routing', enterRouting) },
+    rule: { parent: 'routing', enter: withNav('routing', enterRule) },
     audit: { enter: withNav('audit', enterAudit) },
     lockdown: { enter: withNav('lockdown', enterLockdown) },
     controls: { enter: withNav('controls', enterControls) },
@@ -1432,7 +1593,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     root: 'home',
     // #/users/<id> opens the item screen "user" (and so on): a list and its item never share a screen.
     resolve: (route) => {
-      const ITEM = { reserves: 'reserve', users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
+      const ITEM = { reserves: 'reserve', routing: 'rule', users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
       const i = route.indexOf('/');
       if (i < 0) return [route, null];
       const list = route.slice(0, i);

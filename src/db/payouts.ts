@@ -66,6 +66,10 @@ export interface SendPayoutInput {
   description: string;
   allowGuestDebit?: boolean;
   metadata?: Record<string, any>;
+  /** The provider chosen by the routing rules (the one whose fee was quoted); default: the admin's payout provider. */
+  provider?: string;
+  /** The rule that chose it (admin only). */
+  routingRule?: string | null;
 }
 
 const railOf = (p: PayoutRow): RailOperation => ({
@@ -89,7 +93,7 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   const payoutId = `po_${crypto.randomBytes(18).toString('base64url')}`;
   // Never send to a number of another operator (the provider would fail or misroute it).
   if (networkOfMsisdn(input.msisdn) !== input.network) throw new Error(`Ce numéro n’est pas un numéro ${networkName(input.network)}.`);
-  const provider = providerFor(env, input.network, 'payout');
+  const provider = input.provider ? providerByName(input.provider) : providerFor(env, input.network, 'payout');
   // The simulator pays nobody: real money never "leaves" through it (nothing is debited).
   if (env === 'production' && provider.name === 'simulator') throw new Error('Le mobile money est indisponible pour le moment. Réessayez plus tard.');
   const operatorFee = input.operatorFee ?? 0n;
@@ -129,19 +133,19 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   const delayMinutes = input.reason === 'WITHDRAWAL' ? settings.withdrawal_delay_minutes : settings.refund_delay_minutes;
   const scheduled = delayMinutes > 0 || withdrawalsClosed();
   const [row] = await query(
-    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited, release_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15::varchar, $10, $11, $12, $13, $14, CASE WHEN $15::varchar = 'SCHEDULED' THEN NOW() + make_interval(mins => $16::int) END)
+    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited, release_at, routing_rule)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15::varchar, $10, $11, $12, $13, $14, CASE WHEN $15::varchar = 'SCHEDULED' THEN NOW() + make_interval(mins => $16::int) END, $17)
      ON CONFLICT DO NOTHING RETURNING *`,
     [payoutId, env, input.walletId, provider.name, input.network, input.msisdn, input.amount.toString(), input.currency, input.reason,
       (debit as any).transactionId ?? (debit as any).transaction?.id ?? null, input.reference, operatorFee.toString(), lightpayFee.toString(), total.toString(),
-      scheduled ? 'SCHEDULED' : 'PENDING', delayMinutes],
+      scheduled ? 'SCHEDULED' : 'PENDING', delayMinutes, input.routingRule ?? null],
     env
   );
   if (row && (await isPersonWallet(env, input.walletId))) {
     await logActivity(env, {
       walletId: input.walletId, kind: input.reason === 'WITHDRAWAL' ? 'WITHDRAWAL' : 'REFUND', direction: 'OUT', status: 'PENDING',
       amount: input.amount, fees: operatorFee + lightpayFee, total, currency: input.currency,
-      counterparty: `${input.network === 'AIRTEL_COG' ? 'Airtel Money' : 'MTN MoMo'} · ${maskPhone(input.msisdn)}`, refType: 'payout', refId: payoutId,
+      counterparty: `${networkName(input.network)} · ${maskPhone(input.msisdn)}`, refType: 'payout', refId: payoutId,
     });
   }
   // Waiting: the sweeper sends it at release_at (dispatchDuePayouts).

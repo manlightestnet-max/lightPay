@@ -3,8 +3,9 @@ import { LedgerEngine } from './ledger.js';
 import { Escrow, HoldRecord } from './escrow.js';
 import { query } from './pool.js';
 import { Environment } from '../types/index.js';
-import { MobileNetwork, RailOperation, RailResult, mobileNetworks, networkName, networkOfMsisdn, providerByName, providerFor } from '../payments/mobile-money.js';
+import { MobileNetwork, RailOperation, RailResult, mobileNetworks, networkName, networkOfMsisdn, providerByName } from '../payments/mobile-money.js';
 import { normalizeMsisdn } from '../rails/registry.js';
+import { route as routeOperation } from '../rails/routing.js';
 import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayRevenueWallet } from './fee-wallet.js';
 import { appName, failureOf, logActivity, logDirectSale, reasonFor, updateActivity } from './activity.js';
@@ -213,6 +214,13 @@ export async function cancelSession(id: string, appId: string) {
 }
 
 /** What the payment page may show: no wallet ids, no full phone numbers. */
+/** What the payer will pay by mobile money through each network, with the provider the rules pick for it. */
+async function feesByNetwork(session: CheckoutSession) {
+  const destination = await payeeCountry(session);
+  const pairs = await Promise.all(mobileNetworks().map(async (n) => [n, quote(session.environment, BigInt(session.amount), (await routeOf(session, n, destination)).provider.name)]));
+  return Object.fromEntries(pairs) as Record<MobileNetwork, FeeQuote>;
+}
+
 export async function publicView(id: string) {
   const session = await getSession(id);
   if (!session) return undefined;
@@ -242,8 +250,8 @@ export async function publicView(id: string) {
     return_url: session.status === 'COMPLETED' ? session.return_url : null,
     cancel_url: session.cancel_url,
     expires_at: session.expires_at,
-    // What the payer will pay by mobile money, per network (exact once the operator reports it).
-    fees: Object.fromEntries(mobileNetworks().map((n) => [n, quote(session.environment, BigInt(session.amount), providerFor(session.environment, n).name)])) as Record<MobileNetwork, FeeQuote>,
+    // What the payer will pay by mobile money, per network (exact once the operator reports it), with the provider the rules pick.
+    fees: await feesByNetwork(session),
     last_attempt: attempt
       ? {
           status: attempt.status,
@@ -261,6 +269,22 @@ export async function publicView(id: string) {
 }
 
 // ---------------------------------------------------------------- mobile money
+
+/** The country of the wallet a session pays (null: not set, counted as Congo by the routing). */
+const payeeCountry = async (session: CheckoutSession): Promise<string | null> =>
+  (await query(`SELECT country FROM wallets WHERE id = $1`, [session.payee_wallet_id], session.environment))[0]?.country ?? null;
+
+/** The provider the routing rules pick to collect a session's money through this network (destination: the payee's country). */
+async function routeOf(session: CheckoutSession, network: string, destination?: string | null) {
+  return routeOperation({
+    env: session.environment,
+    type: session.kind === 'DEPOSIT' ? 'deposit' : 'payment',
+    network,
+    destination: destination === undefined ? await payeeCountry(session) : destination,
+    appId: session.app_id,
+    amount: BigInt(session.amount),
+  });
+}
 
 const railOp = (a: Attempt): RailOperation => ({
   id: a.id,
@@ -296,7 +320,8 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   } catch (err: any) {
     throw new CheckoutError(err.message, err.code || 'QUOTA_EXCEEDED', 403);
   }
-  const provider = providerFor(environment, network as MobileNetwork);
+  const route = await routeOf(session, network);
+  const provider = route.provider;
   // The simulator invents money: it never collects for the real ledger.
   if (environment === 'production' && provider.name === 'simulator') {
     throw new CheckoutError('Le mobile money est indisponible pour le moment. Réessayez plus tard.', 'PROVIDER_NOT_CONFIGURED', 503);
@@ -306,10 +331,10 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   try {
     attempt = (
       await query(
-        `INSERT INTO collection_attempts (id, session_id, environment, provider, network, msisdn, amount, currency, lightpay_fee)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        `INSERT INTO collection_attempts (id, session_id, environment, provider, network, msisdn, amount, currency, lightpay_fee, routing_rule)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         // The provider collects the amount + LightPay's fee; the operator fee comes on top.
-        [newId('ca_'), session.id, environment, provider.name, network, msisdn, (BigInt(session.amount) + lightpayFee).toString(), session.currency, lightpayFee.toString()],
+        [newId('ca_'), session.id, environment, provider.name, network, msisdn, (BigInt(session.amount) + lightpayFee).toString(), session.currency, lightpayFee.toString(), route.rule?.id ?? null],
         environment
       )
     )[0];
@@ -622,7 +647,8 @@ export async function refundGuestPayer(hold: HoldRecord) {
   // A refund costs what a withdrawal costs (operator fee + LightPay fee), taken out of the refund itself:
   // the guest gets the largest amount that, fees included, fits in what they paid.
   const total = BigInt(hold.amount);
-  const provider = providerFor(env, network, 'payout').name;
+  const route = await routeOperation({ env, type: 'refund', network, destination: payer.country, appId: hold.app_id, amount: total });
+  const provider = route.provider.name;
   const { sent: sendable, operator_fee: operatorFee, lightpay_fee: lightpayFee } = refundBreakdown(env, total, provider);
   if (sendable <= 0n) {
     // Nothing can be sent without losing money: the amount stays in the guest wallet (bound to
@@ -654,6 +680,8 @@ export async function refundGuestPayer(hold: HoldRecord) {
     description: `Remboursement vers ${maskMsisdn(msisdn)}`,
     allowGuestDebit: true,
     metadata: { hold_id: hold.id },
+    provider,
+    routingRule: route.rule?.id ?? null,
   });
   void dispatchWebhook(hold.app_id, env, 'refund.sent', {
     hold_id: hold.id,

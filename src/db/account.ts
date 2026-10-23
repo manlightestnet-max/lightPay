@@ -5,13 +5,13 @@ import { Environment } from '../types/index.js';
 import { findRecipient } from './identity.js';
 import { LightPayUser } from '../security/user-token.js';
 import { ConnectError, SCOPES, Scope } from './connect.js';
-import { busyError, closeAllWallets, listWallets, userWallet, walletBusy } from '../wallets/index.js';
+import { busyError, closeAllWallets, findDefaultWallet, listWallets, userWallet, walletBusy } from '../wallets/index.js';
+import { route as routeOperation } from '../rails/routing.js';
 import { MobileNetwork, mobileNetworks, networkName, networkOfMsisdn } from '../payments/mobile-money.js';
 import { normalizeMsisdn } from '../rails/registry.js';
 import { sendPayout } from './payouts.js';
 import { failureOf, logActivity } from './activity.js';
 import { lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
-import { providerFor } from '../payments/mobile-money.js';
 import { maskMsisdn } from './checkout.js';
 import { guardMoney, guardWithdrawals } from '../security/lockdown.js';
 import { assertNotSuspended, recordWithdrawalAttempt } from './withdrawal-guard.js';
@@ -142,7 +142,8 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   const msisdn = normalizeMsisdn(String(input.msisdn ?? ''));
   if (!msisdn) throw await refused(new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN'));
   if (networkOfMsisdn(msisdn) !== network) throw await refused(new ConnectError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH'));
-  const provider = providerFor(environment, network, 'payout').name;
+  const route = await routeOperation({ env: environment, type: 'withdrawal', network, destination: wallet.country, appId: 'mainapp', amount });
+  const provider = route.provider.name;
   const operatorFee = providerPayoutFee(environment, provider, amount);
   const lightpayFee = lightpayPayoutFee(environment, amount);
   if (BigInt(wallet.available_balance) < amount + operatorFee + lightpayFee) {
@@ -166,6 +167,8 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
     reason: 'WITHDRAWAL',
     reference: `withdraw:${user.uid}:${idempotencyKey}`,
     description: `Retrait vers ${maskMsisdn(msisdn)}`,
+    provider,
+    routingRule: route.rule?.id ?? null,
   });
   return payoutView(payout);
 }
@@ -238,10 +241,12 @@ export async function closeAccount(user: LightPayUser) {
   return { closed: true };
 }
 
-/** What a withdrawal will cost, before doing it (same computation as withdraw()). */
-export function quoteWithdrawal(environment: Environment, amountInput: unknown, networkInput: unknown) {
+/** What a withdrawal will cost, before doing it (same computation and same routing as withdraw()). */
+export async function quoteWithdrawal(environment: Environment, user: LightPayUser, amountInput: unknown, networkInput: unknown) {
   const amount = positive(amountInput);
   const network = String(networkInput ?? '') as MobileNetwork;
   if (!mobileNetworks().includes(network)) throw new ConnectError(`network: ${mobileNetworks().join(', ')}`, 'INVALID_NETWORK');
-  return withdrawalQuote(environment, amount, providerFor(environment, network, 'payout').name, 'XAF');
+  const wallet = await findDefaultWallet(environment, user.uid);
+  const route = await routeOperation({ env: environment, type: 'withdrawal', network, destination: wallet?.country, appId: 'mainapp', amount });
+  return withdrawalQuote(environment, amount, route.provider.name, 'XAF');
 }

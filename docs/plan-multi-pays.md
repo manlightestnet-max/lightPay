@@ -206,8 +206,12 @@ Exemples :
 
 - **Simulateur** : on décrit une opération, il dit quelle règle, quel fournisseur et quels frais chez chacun.
 - **Frais comparés** par rail : SasPay `GET /pricing/my-rates/` ; pawaPay saisi par l'admin (pas d'API de tarifs).
-- Chaque opération garde la règle qui l'a routée (admin seulement). Règles en base (`routing_rules`), par
-  environnement, chargées en mémoire comme `provider_settings`, modifications dans l'audit admin.
+- Chaque opération garde la règle qui l'a routée (`collection_attempts.routing_rule`, `payouts.routing_rule`, admin
+  seulement). Règles en base (`routing_settings`, la liste ordonnée sur une ligne), par environnement, chargées en
+  mémoire comme `provider_settings`, modifications dans l'audit admin.
+- Fait (phase C) : `src/rails/routing.ts`, admin → Réglages → Routage (liste ordonnée, une règle par écran,
+  simulateur avec les frais de chaque fournisseur d'après « Frais et minimums »). Les devis (dépôt, retrait,
+  remboursement, page de paiement) passent par les mêmes règles que l'opération.
 
 ### 4.3 Le retrait et le rééquilibrage (SasPay)
 
@@ -272,7 +276,7 @@ change visible. Seuls ces pays portent un risque de change.
 |---|---|---|
 | **A — Socle** ✓ | Module `wallets` (porte d'entrée unique, `label` / `country` / `is_default`), registres `countries` et `rails`, interface fournisseur élargie. | Rien ne change pour les gens. |
 | **B — Réserves par pays + inspection** ✓ | Réserves par (fournisseur, pays) calculées depuis le transit, lecture automatique des soldes (SasPay, pawaPay), écart, disponible, minimum / seuil bas / niveau cible, alertes et compteur, écran par wallet fournisseur. | L'admin voit chaque wallet fournisseur. |
-| **C — Routage** | Règles, simulateur, frais comparés ; SasPay par défaut, pawaPay pour le Congo → Congo. | Moins de frais sur le Congo. |
+| **C — Routage** ✓ | Règles, simulateur, frais comparés ; SasPay par défaut, pawaPay pour le Congo → Congo. | Moins de frais sur le Congo. |
 | **D — Pays de départ** | Cameroun, Côte d'Ivoire, Togo : dépôts et retraits, numéro international, choix du pays dans `flows.ts`. | Encaisser et retirer dans 4 pays. |
 | **E — Rééquilibrage** | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |
 | **F — Plusieurs wallets à l'écran** | Compte, console, admin, API `wallet_id`, ouverture / fermeture. | Une personne gère plusieurs wallets. |
