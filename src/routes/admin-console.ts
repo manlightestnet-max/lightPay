@@ -41,6 +41,7 @@ import { fromTemplate } from '../notify/catalog.js';
 import { sendTest } from '../notify/index.js';
 import { RESERVE_RANGES, ReserveSettingsError, loadReserveSettings, reserveSettings, saveReserveSettings, validateReserveSettings } from '../payments/reserve-settings.js';
 import { readProviderBalances } from '../payments/reserve-watch.js';
+import { providerRates, realProviderFee } from '../payments/provider-rates.js';
 import { RebalanceError, cancelTransfer, canTransfer, getTransfer, listTransfers, planTransfer, requestTransfer, transferSources } from '../payments/rebalance.js';
 import { KIND_OF, OPERATION_TYPES, OperationType, RoutingError, loadRoutingRules, route, routingRules, saveRoutingRules, validateRoutingRules } from '../rails/routing.js';
 import { allCountries, allRails } from '../rails/registry.js';
@@ -67,6 +68,7 @@ import { query } from '../db/pool.js';
  *   GET  /v1/admin-console/routing              routing rules (ordered) + what they can name (providers, operators, countries, apps)
  *   PUT  /v1/admin-console/routing              [ …all rules ]   recent sign-in; applied at once, logged
  *   POST /v1/admin-console/routing/simulate     { type, network, destination?, app?, amount }   which rule and provider, fees at each
+ *   GET  /v1/admin-console/provider-rates       what each provider charges now, per operator (?refresh=1 reads it again)
  *   GET  /v1/admin-console/countries            every country and operator (both ledgers), providers' codes
  *   PUT  /v1/admin-console/countries/:code      { enabled?, example? }   recent sign-in, logged
  *   PUT  /v1/admin-console/rails/:method        { enabled?, name?, prefixes?, provider_codes? }   recent sign-in, logged
@@ -437,21 +439,29 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         if (!raw || BigInt(raw) <= 0n) return reply.status(400).send({ status: 'error', error: 'BAD_AMOUNT', message: 'Montant en FCFA entiers.' });
         const amount = BigInt(raw);
         const decision = await route({ env, type, network, destination: b.destination || null, appId: b.app || null, amount });
-        const fees = PROVIDERS_OF[env].map((name) => {
+        const fees = await Promise.all(PROVIDERS_OF[env].map(async (name) => {
           const configured = providerByName(name).configured(env);
+          // What the provider really charges (its live price), beside the fee set in « Frais et minimums ».
+          const real = (on: bigint) => realProviderFee(env, name, network, KIND_OF[type], on).then((f) => (f === null ? null : f.toString())).catch(() => null);
           if (KIND_OF[type] === 'collection') {
             const q = quote(env, amount, name);
-            return { provider: name, configured, operator_fee: q.operator_fee, lightpay_fee: q.lightpay_fee, total: q.total, label: 'Le client paie' };
+            return { provider: name, configured, operator_fee: q.operator_fee, real_operator_fee: await real(amount + BigInt(q.lightpay_fee)), lightpay_fee: q.lightpay_fee, total: q.total, label: 'Le client paie' };
           }
           if (type === 'refund') {
             const r = refundBreakdown(env, amount, name);
-            return { provider: name, configured, operator_fee: r.operator_fee.toString(), lightpay_fee: r.lightpay_fee.toString(), total: r.sent.toString(), label: 'Rendu au client' };
+            return { provider: name, configured, operator_fee: r.operator_fee.toString(), real_operator_fee: await real(r.sent), lightpay_fee: r.lightpay_fee.toString(), total: r.sent.toString(), label: 'Rendu au client' };
           }
           const w = withdrawalQuote(env, amount, name, 'XAF');
-          return { provider: name, configured, operator_fee: w.operator_fee, lightpay_fee: w.lightpay_fee, total: w.total, label: 'Débité du wallet' };
-        });
+          return { provider: name, configured, operator_fee: w.operator_fee, real_operator_fee: await real(amount), lightpay_fee: w.lightpay_fee, total: w.total, label: 'Débité du wallet' };
+        }));
         return { status: 'success', provider: decision.provider.name, rule: decision.rule, steps: decision.steps, fees };
       });
+
+      // ---------------------------------------------------------- providers' live prices (admin only)
+      api.get('/provider-rates', async (request) => ({
+        status: 'success',
+        providers: await providerRates(envOf(request), { refresh: String((request.query as any)?.refresh ?? '') === '1' }),
+      }));
 
       // ---------------------------------------------------------- countries and operators (one list for both ledgers)
       api.get('/countries', async () => ({ status: 'success', ...registryForAdmin() }));

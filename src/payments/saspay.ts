@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import type { MobileMoneyProvider, ProviderBalance, RailOperation, RailResult, TransferOperation, TransferResult } from './mobile-money.js';
-import { countryByCode, countryByIso2, currencyOfNetwork, providerCode, railByNetwork } from '../rails/registry.js';
+import type { MobileMoneyProvider, ProviderBalance, ProviderRate, RailOperation, RailResult, RateSide, RateTier, TransferOperation, TransferResult } from './mobile-money.js';
+import { allRails, countryByCode, countryByIso2, currencyOfNetwork, providerCode, railByNetwork } from '../rails/registry.js';
 import type { Environment } from '../types/index.js';
 
 /**
@@ -11,6 +11,7 @@ import type { Environment } from '../types/index.js';
  *   payout    POST /payouts/initialize/          (API key needs PAYOUT scope + whitelisted IP)
  *   verify    GET  /payouts/{id}/verify/
  *   balances  GET  /merchant-balances/     one wallet per country: available_amount, pending_amount, is_frozen
+ *   rates     GET  /pricing/my-rates/       per operator: payin / payout tiers (percent, fixed, floor, cap), OTP
  *   transfer  POST /wallet-transfers/      { from_country, to_country, from_amount } -> COMPLETED | PENDING (SasPay's approval) | REJECTED
  *             GET  /wallet-transfers/{id}/  one transfer at a time per merchant (transfer_already_pending)
  *   webhooks  X-Webhook-Signature = hex HMAC-SHA256(secret, "{X-Webhook-Timestamp}.{raw body}")
@@ -205,6 +206,43 @@ export class SasPayProvider implements MobileMoneyProvider {
   async transferStatus(op: TransferOperation): Promise<TransferResult> {
     if (!op.providerReference) return { status: 'PENDING' };
     return transferResult(await this.call('GET', `/wallet-transfers/${encodeURIComponent(op.providerReference)}/`));
+  }
+
+  /** Our price, per operator and direction, as SasPay applies it now. Operators are matched to our rails by their SasPay code. */
+  async rates(env: Environment): Promise<ProviderRate[]> {
+    if (!this.configured(env)) return [];
+    const r = await this.call('GET', '/pricing/my-rates/');
+    const list: any[] = Array.isArray(r) ? r : Array.isArray(r?.results) ? r.results : Array.isArray(r?.data) ? r.data : [];
+    const num = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v));
+    const tier = (t: any): RateTier => ({
+      min: num(t?.min_amount) ?? 0,
+      max: num(t?.max_amount),
+      percent: num(t?.percent) ?? 0,
+      fixed: num(t?.fixed) ?? 0,
+      floor: Math.max(num(t?.floor_amount) ?? 0, 0),
+      cap: num(t?.cap_amount),
+      mode: t?.fee_charge_mode ?? null,
+    });
+    const side = (s: any): RateSide => ({
+      available: s?.available !== false && Array.isArray(s?.tiers) && s.tiers.length > 0,
+      tiers: Array.isArray(s?.tiers) ? s.tiers.map(tier) : [],
+      otpRequired: s?.otp_required === true,
+      otpInstructions: s?.otp_instructions || null,
+    });
+    return list.map((x) => {
+      const code = String(x.network_code ?? '');
+      const rail = allRails().find((rl) => rl.providerCodes.saspay === code);
+      const iso2 = String(x.country_code ?? '').toUpperCase();
+      return {
+        country: countryByIso2(iso2)?.code ?? iso2,
+        currency: String(x.currency ?? ''),
+        providerCode: code,
+        network: rail?.network ?? null,
+        name: String(x.network_name ?? code),
+        collection: side(x.payin),
+        payout: side(x.payout),
+      };
+    });
   }
 
   /** Our wallet in each country (paginated, 100 per page). A country unknown to the registry keeps SasPay's code. */

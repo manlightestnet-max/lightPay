@@ -69,6 +69,8 @@ export interface MobileMoneyProvider {
   sync?(env: Environment): Promise<ProviderRailInfo[]>;
   /** The real balance of each of its country wallets (reserve inspection). */
   balances?(env: Environment): Promise<ProviderBalance[]>;
+  /** What it charges us right now, per operator and direction (the admin compares it with the fees it sets). */
+  rates?(env: Environment): Promise<ProviderRate[]>;
   /** Moves our money between two of its country wallets (rebalancing); SasPay only, pawaPay has no API for it. */
   transfer?(op: TransferOperation): Promise<TransferResult>;
   transferStatus?(op: TransferOperation): Promise<TransferResult>;
@@ -89,6 +91,49 @@ export interface ProviderRailInfo {
   maxAmount?: bigint;
   /** OPERATIONAL, DELAYED, CLOSED… when the provider reports it. */
   state?: string;
+}
+
+/** One band of a provider's price: from min to max (whole units), percent + fixed, kept between floor and cap. */
+export interface RateTier {
+  min: number;
+  max: number | null;
+  percent: number;
+  fixed: number;
+  floor: number;
+  cap: number | null;
+  /** ADD_ON: paid on top by the customer · DEDUCTED: taken from the amount. */
+  mode: string | null;
+}
+
+export interface RateSide {
+  available: boolean;
+  tiers: RateTier[];
+  otpRequired?: boolean;
+  otpInstructions?: string | null;
+}
+
+/** A provider's price for one operator, as it reports it. */
+export interface ProviderRate {
+  /** ISO alpha-3 country (the provider's code when the registry does not know it). */
+  country: string;
+  currency: string;
+  /** The provider's code (mtn_cg) and ours when the registry knows it (MTN_MOMO_COG). */
+  providerCode: string;
+  network: string | null;
+  name: string;
+  collection: RateSide;
+  payout: RateSide;
+}
+
+/** What a provider's tiers charge on an amount (rounded up, between floor and cap); null when no band covers it. */
+export function feeFromTiers(amount: bigint, tiers: RateTier[]): bigint | null {
+  const a = Number(amount);
+  const tier = tiers.find((t) => a >= t.min && (t.max === null || a <= t.max));
+  if (!tier) return null;
+  let fee = Math.ceil((a * tier.percent) / 100 + tier.fixed);
+  if (tier.floor > 0) fee = Math.max(fee, Math.ceil(tier.floor));
+  if (tier.cap !== null && tier.cap > 0) fee = Math.min(fee, Math.ceil(tier.cap));
+  return BigInt(Math.max(fee, 0));
 }
 
 /** One of our wallets at a provider (one per country, sometimes per currency). */

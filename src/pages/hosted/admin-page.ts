@@ -318,7 +318,7 @@ ${page('routing', 'Routage', `
       <div class="msg" id="simMsg" role="status" aria-live="polite"></div>
       <button class="btn btn-secondary btn-sm mt" type="submit" id="simGo">${iconSvg('bolt')}Simuler</button>
     </form>
-    <div id="simResult"></div>`, { foot: 'Rien n’est envoyé : le simulateur dit quelle règle et quel fournisseur serviraient cette opération maintenant, et ce que coûterait chaque fournisseur (d’après « Frais et minimums »).' })}
+    <div id="simResult"></div>`, { foot: 'Rien n’est envoyé : le simulateur dit quelle règle et quel fournisseur serviraient cette opération maintenant, et ce que coûterait chaque fournisseur (d’après « Frais et minimums »), et ce qu’il prend en vrai (son tarif du moment, en rouge s’il dépasse).' })}
 `, '<a class="btn btn-sm" href="#/routing/new">' + iconSvg('plus') + 'Nouvelle règle</a>')}
 
 ${page('rule', 'Règle', '<div class="stack" id="ruleDetail"></div>', '', { back: { href: '#/routing', label: 'Routage' } })}
@@ -354,6 +354,11 @@ ${page('fees', 'Frais et minimums', `
       <label class="calc-amount"><input id="calcAmount" inputmode="numeric" autocomplete="off" value="1000" aria-label="Montant"><span>FCFA</span></label>
     </div>
     <div class="calc-rows" id="calcRows"></div>`)}
+  ${panel('Tarifs réels des fournisseurs', '<div id="ratesTable"></div>', {
+    flush: true,
+    actions: '<button class="btn btn-secondary btn-sm" type="button" id="ratesRefresh">' + iconSvg('refresh') + 'Actualiser</button>',
+    foot: '<span id="ratesFoot">Ce que le fournisseur nous prend en ce moment, lu sur son API (SasPay). Les frais payés par les personnes restent ceux réglés ci-dessus.</span>',
+  })}
   <p class="hint">Cliquez une valeur pour la modifier : appliquée tout de suite, à cet environnement seulement, et inscrite au journal admin.</p>
 `)}
 
@@ -1144,8 +1149,13 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       const configured = r.fees.filter((f) => f.configured);
       const cheapest = configured.length ? configured.reduce((a, b) => (Number(b.operator_fee) < Number(a.operator_fee) ? b : a)) : null;
       const feeHost = el('div', {});
-      table(feeHost, [{ label: 'Fournisseur' }, { label: 'Frais opérateur', cls: 'num' }, { label: 'Frais LightPay', cls: 'num' }, { label: r.fees[0] ? r.fees[0].label : 'Total', cls: 'num' }],
-        r.fees.map((f) => ({ cells: [cell(provName(f.provider), (f.provider === r.provider ? 'choisi' : '') + (cheapest && f.provider === cheapest.provider ? (f.provider === r.provider ? ' · ' : '') + 'le moins cher' : '') + (f.configured ? '' : 'clés absentes')), money(f.operator_fee), money(f.lightpay_fee), money(f.total)] })),
+      table(feeHost, [{ label: 'Fournisseur' }, { label: 'Frais opérateur', cls: 'num' }, { label: 'Pris en vrai', cls: 'num' }, { label: 'Frais LightPay', cls: 'num' }, { label: r.fees[0] ? r.fees[0].label : 'Total', cls: 'num' }],
+        r.fees.map((f) => ({ cells: [
+          cell(provName(f.provider), (f.provider === r.provider ? 'choisi' : '') + (cheapest && f.provider === cheapest.provider ? (f.provider === r.provider ? ' · ' : '') + 'le moins cher' : '') + (f.configured ? '' : 'clés absentes')),
+          money(f.operator_fee),
+          f.real_operator_fee === null || f.real_operator_fee === undefined ? '—' : el('span', { class: Number(f.real_operator_fee) > Number(f.operator_fee) ? 'err-text' : '', text: money(f.real_operator_fee) }),
+          money(f.lightpay_fee), money(f.total),
+        ] })),
         'Aucun fournisseur sur cet environnement.');
       $('simResult').replaceChildren(
         el('p', { class: 'check ok mt' }, [icon('check'), 'Servi par ' + provName(r.provider) + (r.rule ? ' (règle « ' + r.rule.name + ' »).' : ' (fournisseur par défaut).')]),
@@ -1232,6 +1242,35 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     });
   }
 
+  // ---------------------------------------------------------------- providers' live prices
+  // "3,5 %", "2,2 % + 50", several bands joined; "—" when the operator is not open there.
+  const pctFr = (n) => String(Math.round(n * 100) / 100).replace('.', ',') + ' %';
+  const tierText = (side) => !side || !side.available ? '—' : side.tiers.map((t) => pctFr(t.percent) + (t.fixed ? ' + ' + num(t.fixed) : '') + (t.min > 0 || t.max !== null ? ' (' + num(t.min) + (t.max !== null ? ' à ' + num(t.max) : ' et plus') + ')' : '') + (t.floor ? ' min ' + num(t.floor) : '') + (t.cap ? ' max ' + num(t.cap) : '')).join(' · ');
+  let rates = null;
+  async function loadRates(refresh) {
+    rates = (await LP.api('GET', '/v1/admin-console/provider-rates' + (refresh ? '?refresh=1' : ''))).providers;
+    return rates;
+  }
+  const rateOf = (provider, network) => { const p = rates && rates.filter((x) => x.provider === provider)[0]; return p ? p.rates.filter((r) => r.network === network)[0] || null : null; };
+  function renderRates() {
+    const all = [];
+    (rates || []).forEach((p) => p.rates.forEach((r) => all.push(Object.assign({ provider: p.provider }, r))));
+    table($('ratesTable'), [{ label: 'Opérateur' }, { label: 'Encaissement' }, { label: 'Envoi' }],
+      all.map((r) => ({ cells: [
+        cell(r.name, [provName(r.provider), r.country, r.currency, r.network ? '' : 'pas dans le registre', r.collection.otpRequired ? 'code OTP avant paiement' : ''].filter(Boolean).join(' · ')),
+        tierText(r.collection), tierText(r.payout),
+      ], keys: [r.country + ' ' + r.name, r.collection.tiers[0] ? r.collection.tiers[0].percent : -1, r.payout.tiers[0] ? r.payout.tiers[0].percent : -1] })),
+      TEST ? 'Les fournisseurs ne donnent pas leurs tarifs sur le compte de test.' : 'Aucun fournisseur ne donne ses tarifs pour le moment.');
+    const read = (rates || []).filter((p) => p.fetched_at).map((p) => provName(p.provider) + ' lu à ' + fmtDateTime(p.fetched_at));
+    const errors = (rates || []).filter((p) => p.error).map((p) => provName(p.provider) + ' : ' + p.error);
+    $('ratesFoot').textContent = (read.length ? read.join(' · ') + '. ' : '') + (errors.length ? 'Lecture impossible — ' + errors.join(' · ') + '. ' : '') + 'Les frais payés par les personnes restent ceux réglés ci-dessus.';
+  }
+  $('ratesRefresh').addEventListener('click', async () => {
+    $('ratesRefresh').disabled = true;
+    await guarded(async () => { await loadRates(true); renderRates(); }, 'feesMsg');
+    $('ratesRefresh').disabled = false;
+  });
+
   // ---------------------------------------------------------------- countries and operators (one list for both ledgers)
   let registry = null;
   function renderCountries() {
@@ -1253,6 +1292,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     $('countryDetail').replaceChildren(); skeleton($('countryDetail'), 5, 'div');
     await load('country', async () => {
       registry = await LP.api('GET', '/v1/admin-console/countries');
+      if (!rates) await loadRates(false).catch(() => null);
       const c = registry.countries.filter((x) => x.code === code)[0];
       if (!c) throw new Error('Pays inconnu.');
       $('countryTitle').textContent = c.name;
@@ -1288,8 +1328,10 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
           await guarded(async () => after(await LP.api('PUT', '/v1/admin-console/rails/' + r.method, { name: name.value.trim(), prefixes: prefixes.value, provider_codes: pc, enabled: on.box.checked }), msg, 'Opérateur enregistré.'), msg);
           save.disabled = false;
         });
+        const live = registry.providers.map((pr) => { const x = rateOf(pr, r.network); return x ? provName(pr) + ' prend : encaissement ' + tierText(x.collection) + ' · envoi ' + tierText(x.payout) : null; }).filter(Boolean);
         parts.push(detailPanel(r.name + ' · ' + r.network, [
           r.instructions ? el('p', { class: 'small muted', text: 'Avant de payer : ' + r.instructions }) : null,
+          live.length ? el('p', { class: 'small muted', text: live.join(' — ') }) : null,
           field('Nom affiché', name),
           field('Préfixes du numéro national (vide : tout numéro du pays)', prefixes),
         ].concat(registry.providers.map((pr) => field('Code ' + provName(pr) + ' (vide : ne sert pas cet opérateur)', codes[pr]))).concat([
@@ -1428,6 +1470,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   $('calcAmount').addEventListener('input', renderCalc);
   async function enterFees() {
     crumbs('Réglages', 'Frais et minimums');
+    if (rates) renderRates(); else skeleton($('ratesTable'), 4, 'div');
+    loadRates(false).then(renderRates).catch(() => {});
     if (!feeSet) { skeleton($('feeDep'), 4, 'li'); skeleton($('feeWd'), 4, 'li'); }
     await load('fees', async () => {
       const [f, p] = await Promise.all([LP.api('GET', '/v1/admin-console/fees'), LP.api('GET', '/v1/admin-console/providers').catch(() => null)]);
