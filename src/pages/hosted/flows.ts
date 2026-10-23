@@ -84,10 +84,11 @@ export const FLOWS_SCRIPT = `
       const ws = list();
       if (!ws.some((w) => w.id === chosen)) chosen = ((o.start ? ws.filter((w) => w.id === o.start())[0] : null) || ws.filter((w) => w.id === flowWallet)[0] || ws.filter((w) => w.is_default)[0] || ws[0] || {}).id || null;
       if (!o.always) $(p + 'WalletField').hidden = myWallets().length < 2;
+      // Each wallet says its country under its name: wallet X is for country X.
       $(p + 'Wallets').replaceChildren.apply($(p + 'Wallets'), ws.map((w) => el('button', {
-        class: 'seg-opt', type: 'button', 'aria-pressed': String(w.id === chosen),
+        class: 'seg-opt seg-stack', type: 'button', 'aria-pressed': String(w.id === chosen),
         on: { click: () => { chosen = w.id; render(); changed(); } },
-      }, [w.label + ' · ' + LP.money(w.available_balance, w.currency)])));
+      }, [el('span', { text: w.label + ' · ' + LP.money(w.available_balance, w.currency) }), el('span', { class: 'seg-sub', text: w.country_name || 'Pays non choisi' })])));
     }
     return {
       render: render,
@@ -95,6 +96,8 @@ export const FLOWS_SCRIPT = `
       // Without a wallet list (older page state), the default wallet's balance.
       balance: () => { const w = current(); return w ? Number(w.available_balance) : available(); },
       label: () => { const w = current(); return w ? w.label : ''; },
+      // "Principal · Congo-Brazzaville": the name with its country, for the confirmation sheets.
+      full: () => { const w = current(); return w ? w.label + (w.country_name ? ' · ' + w.country_name : '') : ''; },
       several: () => myWallets().length > 1,
     };
   }
@@ -199,7 +202,7 @@ export const FLOWS_SCRIPT = `
       amount: approx + LP.money(q.total, cur()),
       rows: [
         ['Depuis', dep.label()],
-        [depW.several() ? 'Sur « ' + depW.label() + ' »' : 'Sur votre wallet', LP.money(q.amount, cur())],
+        [depW.several() ? 'Sur « ' + depW.full() + ' »' : 'Sur votre wallet', LP.money(q.amount, cur())],
         ['Frais', approx + LP.money(String(Number(q.total) - Number(q.amount)), cur())],
       ],
       note: 'Une demande arrive sur ce téléphone : validez-la avec votre code secret.',
@@ -315,7 +318,7 @@ export const FLOWS_SCRIPT = `
     const w = sendWho || {};
     const who = [w.name, w.username ? '@' + w.username : ''].filter(Boolean).join(' · ') || $('sendTo').value.trim();
     const note = $('sendNote').value.trim();
-    const rows = [['À', who]].concat(sendW.several() ? [['Depuis', sendW.label()]] : []).concat([['Frais', 'Aucun']]).concat(note ? [['Message', note]] : []).concat([['Solde après envoi', LP.money(sendW.balance() - amount, cur()), true]]);
+    const rows = [['À', who]].concat(sendW.several() ? [['Depuis', sendW.full()]] : []).concat([['Frais', 'Aucun']]).concat(note ? [['Message', note]] : []).concat([['Solde après envoi', LP.money(sendW.balance() - amount, cur()), true]]);
     sendBusy = true;
     const next = { to: $('sendTo').value.trim(), who: w, amount: String(amount), note: note, wallet: sendW.id(), key: LP.uuid() };
     // « Envoyer » opens the code step; the transfer leaves once, with the 6th digit.
@@ -420,7 +423,7 @@ export const FLOWS_SCRIPT = `
       amount: LP.money(q.amount, q.currency),
       rows: [
         ['Vers', wd.label()],
-      ].concat(wdW.several() ? [['Depuis', wdW.label()]] : []).concat([
+      ].concat(wdW.several() ? [['Depuis', wdW.full()]] : []).concat([
         ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
         ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
         ['Total débité', LP.money(q.total, q.currency), true],
@@ -494,11 +497,11 @@ export const FLOWS_SCRIPT = `
   $('moveNext').addEventListener('click', async () => {
     if (moveBusy || $('moveNext').disabled) return;
     const amount = String(Number(amountDigits($('moveAmount').value)));
-    const next = { from: moveFrom.id(), to: moveTo.id(), fromLabel: moveFrom.label(), toLabel: moveTo.label(), amount: amount, key: LP.uuid() };
+    const next = { from: moveFrom.id(), to: moveTo.id(), fromLabel: moveFrom.label(), toLabel: moveTo.label(), fromFull: moveFrom.full(), toFull: moveTo.full(), amount: amount, key: LP.uuid() };
     moveBusy = true;
     const done = await confirmSheet({
       title: 'Vous déplacez', amount: LP.money(amount, cur()),
-      rows: [['Depuis', next.fromLabel], ['Vers', next.toLabel], ['Frais', 'Aucun']],
+      rows: [['Depuis', next.fromFull], ['Vers', next.toFull], ['Frais', 'Aucun']],
       confirm: 'Déplacer',
       pin: (code) => LP.api('POST', '/v1/me/wallets/move', { from: next.from, to: next.to, amount: next.amount }, next.key, code),
     });

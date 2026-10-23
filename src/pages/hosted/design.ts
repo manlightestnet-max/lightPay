@@ -239,6 +239,8 @@ a.tx:active { background: var(--raised); }
 /* ---------- segmented choice ---------- */
 .seg { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .seg-opt { min-height: 46px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; font-weight: 500; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: border-color .15s, background .15s; }
+.seg-opt.seg-stack { flex-direction: column; gap: 1px; border-radius: 18px; line-height: 1.25; }
+.seg-sub { font-size: 11px; font-weight: 500; color: var(--muted); }
 .seg-opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .op-logo { width: 22px; height: 22px; flex-shrink: 0; border-radius: 6px; background: center / cover no-repeat; }
 .op-logo.mtn { background-image: var(--mtn); }
