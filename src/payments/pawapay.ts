@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { Environment } from '../types/index.js';
 import type { MobileMoneyProvider, ProviderBalance, RailOperation, RailResult } from './mobile-money.js';
 import { providerFeeEstimate } from './fees.js';
-import { providerCode } from '../rails/registry.js';
+import { currencyOfNetwork, providerCode } from '../rails/registry.js';
 
 /**
  * pawaPay Merchant API v2 (https://docs.pawapay.io/v2). Provider codes come from the registry
@@ -134,7 +134,7 @@ export class PawaPayProvider implements MobileMoneyProvider {
       depositId: pawaPayId(op.id),
       payer: { type: 'MMO', accountDetails: { phoneNumber: op.msisdn, provider: providerCode('pawapay', op.network) ?? op.network } },
       amount: (op.amount + fee).toString(),
-      currency: op.currency,
+      currency: currencyOfNetwork(op.network) ?? op.currency,
       clientReferenceId: op.id,
       customerMessage: CUSTOMER_MESSAGE,
       metadata: [{ lightpayId: op.id }],
@@ -155,7 +155,7 @@ export class PawaPayProvider implements MobileMoneyProvider {
       payoutId: pawaPayId(op.id),
       recipient: { type: 'MMO', accountDetails: { phoneNumber: op.msisdn, provider: providerCode('pawapay', op.network) ?? op.network } },
       amount: op.amount.toString(),
-      currency: op.currency,
+      currency: currencyOfNetwork(op.network) ?? op.currency,
       clientReferenceId: op.id,
       customerMessage: CUSTOMER_MESSAGE,
       metadata: [{ lightpayId: op.id }],

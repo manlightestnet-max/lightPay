@@ -314,8 +314,34 @@ export const CLIENT = (env: string) => `
     if (bad && !warn) { warn = el('p', { class: 'amount-bad', role: 'alert', text: 'Montant en FCFA entiers, sans virgule ni point (ex. 1000).' }); box.after(warn); }
     if (!bad && warn) warn.remove();
   }, true);
-  // Congo prefixes: MTN 06, Airtel 05 and 04 (a number only works with its own operator).
-  const networkOf = (national) => (/^06/.test(national) ? 'MTN_MOMO_COG' : /^0[45]/.test(national) ? 'AIRTEL_COG' : null);
+  // Countries and operators open now (GET /v1/checkout/public/rails, never a provider); Congo until it is read.
+  let RAILS = {
+    countries: [{ code: 'COG', name: 'Congo-Brazzaville', dial: '242', pattern: '^0[4-6][0-9]{7}$', example: '06 512 44 81', currency: 'XAF' }],
+    rails: [{ network: 'MTN_MOMO_COG', name: 'MTN MoMo', country: 'COG', prefixes: ['06'], logo: 'mtn' }, { network: 'AIRTEL_COG', name: 'Airtel Money', country: 'COG', prefixes: ['05', '04'], logo: 'airtel' }],
+  };
+  let railsLoading = null;
+  const loadRails = () => railsLoading || (railsLoading = fetch('/v1/checkout/public/rails', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => { if (j && j.countries && j.countries.length) RAILS = { countries: j.countries, rails: j.rails }; return RAILS; })
+    .catch(() => { railsLoading = null; return RAILS; }));
+  const countryOf = (code) => RAILS.countries.filter((c) => c.code === code)[0] || RAILS.countries[0];
+  const railsIn = (code) => RAILS.rails.filter((r) => r.country === code);
+  const railOf = (network) => RAILS.rails.filter((r) => r.network === network)[0] || null;
+  const railName = (network) => { const r = railOf(network); return r ? r.name : network; };
+  // A typed number without its dial code: "+242 06 512 44 81" → "065124481".
+  const nationalOf = (input, code) => { const d = digits(input), dial = countryOf(code).dial; return d.indexOf(dial) === 0 ? d.slice(dial.length) : d; };
+  const numberOk = (national, code) => new RegExp(countryOf(code).pattern).test(national);
+  // The number picks its operator by its prefix (Congo: 06 MTN, 05/04 Airtel); a number only works with its own operator.
+  const networkOf = (national, code) => { const r = railsIn(code || 'COG').filter((x) => x.prefixes.some((p) => national.indexOf(p) === 0))[0]; return r ? r.network : null; };
+  // An operator without prefixes (Wave) takes any number of its country.
+  const fitsNetwork = (national, network) => { const r = railOf(network); return Boolean(r) && numberOk(national, r.country) && (!r.prefixes.length || r.prefixes.some((p) => national.indexOf(p) === 0)); };
+  // "065124481" → "06 512 44 81" in Congo; elsewhere in pairs ("6 71 23 45 67", "07 12 34 56 78").
+  const fmtNational = (national, code) => (!code || code === 'COG'
+    ? national.replace(/^(\\d{2})(\\d{3})(\\d{2})(\\d{2})$/, '$1 $2 $3 $4')
+    : national.replace(/^(\\d?)((?:\\d{2})+)$/, (m, a, b) => (a ? a + ' ' : '') + b.replace(/(\\d{2})(?=\\d)/g, '$1 ')));
+  const intlNumber = (national, code) => '+' + countryOf(code).dial + ' ' + fmtNational(national, code);
+  // The operator's picture when LightPay ships one, its initial otherwise.
+  const opLogo = (rail) => el('span', { class: 'op-logo ' + (rail && rail.logo ? rail.logo : 'initial'), 'aria-hidden': 'true', text: rail && !rail.logo ? rail.name.charAt(0) : '' });
   const debounce = (fn, ms) => { let t = null; return function () { const a = arguments; clearTimeout(t); t = setTimeout(function () { fn.apply(null, a); }, ms); }; };
   function say(target, text, kind) {
     const n = typeof target === 'string' ? $(target) : target;

@@ -3,8 +3,8 @@ import { LedgerEngine } from './ledger.js';
 import { Escrow, HoldRecord } from './escrow.js';
 import { query } from './pool.js';
 import { Environment } from '../types/index.js';
-import { MobileNetwork, RailOperation, RailResult, mobileNetworks, networkName, networkOfMsisdn, providerByName } from '../payments/mobile-money.js';
-import { normalizeMsisdn } from '../rails/registry.js';
+import { MobileNetwork, RailOperation, RailResult, mobileNetworks, networkName, providerByName } from '../payments/mobile-money.js';
+import { countryOfNetwork, invalidNumberMessage, maskNumber, normalizeMsisdn, numberFitsNetwork } from '../rails/registry.js';
 import { route as routeOperation } from '../rails/routing.js';
 import { PayoutRow, sendPayout } from './payouts.js';
 import { lightpayRevenueWallet } from './fee-wallet.js';
@@ -95,7 +95,7 @@ export const environmentOfSession = (id: string): Environment | null =>
 const newId = (prefix: string) => `${prefix}${crypto.randomBytes(18).toString('base64url')}`;
 
 /** "242065124481" -> "+242 06 ••• •• 81" (never the full number outside the ledger). */
-export const maskMsisdn = (msisdn: string) => `+242 ${msisdn.slice(3, 5)} ••• •• ${msisdn.slice(-2)}`;
+export const maskMsisdn = maskNumber;
 
 // ---------------------------------------------------------------- wallets
 
@@ -306,9 +306,9 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   if (session.status !== 'OPEN') throw new CheckoutError(`This payment is ${session.status.toLowerCase()}`, 'SESSION_NOT_OPEN', 409);
   if (!session.methods.includes('mobile_money')) throw new CheckoutError('Mobile money is not accepted for this payment', 'METHOD_NOT_ALLOWED');
   if (!mobileNetworks().includes(network)) throw new CheckoutError(`network: ${mobileNetworks().join(', ')}`, 'INVALID_NETWORK');
-  const msisdn = normalizeMsisdn(msisdnInput);
-  if (!msisdn) throw new CheckoutError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81', 'INVALID_MSISDN');
-  if (networkOfMsisdn(msisdn) !== network) throw new CheckoutError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH');
+  const msisdn = normalizeMsisdn(msisdnInput, countryOfNetwork(network) ?? undefined);
+  if (!msisdn) throw new CheckoutError(invalidNumberMessage(network), 'INVALID_MSISDN');
+  if (!numberFitsNetwork(msisdn, network)) throw new CheckoutError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH');
   if (BigInt(session.amount) < minMobileMoneyAmount(environment)) {
     throw new CheckoutError(`Le mobile money accepte au minimum ${minMobileMoneyAmount(environment)} FCFA.`, 'BELOW_MOBILE_MONEY_MINIMUM');
   }

@@ -5,6 +5,7 @@ import { notifyWallets } from '../realtime.js';
 import { notifyActivity } from '../notify/index.js';
 import { describeActivity } from '../notify/catalog.js';
 import { withAvatars } from './avatars.js';
+import { maskNumber } from '../rails/registry.js';
 
 /**
  * Wallet activity journal — what the person sees in their history: every operation that
@@ -185,8 +186,8 @@ export async function logDirectSale(
   }
 }
 
-/** "242065124481" -> "+242 06 ••• •• 81". */
-export const maskPhone = (msisdn: string) => `+242 ${msisdn.slice(3, 5)} ••• •• ${msisdn.slice(-2)}`;
+/** "242065124481" -> "+242 06 ••• •• 81" (the country's dial code). */
+export const maskPhone = maskNumber;
 
 /** A thrown error as (code, French message) for the journal. */
 export const failureOf = (err: any): { code: string; message: string } => {

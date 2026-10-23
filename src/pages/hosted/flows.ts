@@ -12,7 +12,7 @@ import { iconSvg } from './icons.js';
  * Each page frames the screens its own way (top bar on the account, scaffold in the console):
  *   frame({ screen, title, state, content, actions }) -> <section data-screen=…>
  * The page provides: me, loadMe(), cur(), available(), lim(key), guarded(action, msgId), nav,
- * fmtPhone(digits), signIn(); routes deposit · deposit/done · send · send/done · withdraw ·
+ * signIn(); countries, operators and numbers come from the shared client (RAILS, loadRails…); routes deposit · deposit/done · send · send/done · withdraw ·
  * withdraw/done, entered with renderDepFees()+focusAmount('depAmount') / enterDepositDone /
  * enterSend / enterSendDone / enterWithdraw / enterWithdrawDone.
  */
@@ -23,13 +23,9 @@ export const flowScreens = (frame: FlowFrame) =>
   frame({ screen: 'deposit', title: 'Dépôt', state: false, content: `
     <label class="label" for="depAmount">Montant à déposer</label>
     <div class="amount-wrap"><input class="amount-input" id="depAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="depMin">FCFA</div></div>
-    <div class="field"><span class="label" id="depNetLabel">Payer avec</span>
-      <div class="seg" role="group" aria-labelledby="depNetLabel">
-        <button class="seg-opt" type="button" data-dep-net="MTN_MOMO_COG" aria-pressed="true"><span class="op-logo mtn" aria-hidden="true"></span>MTN MoMo</button>
-        <button class="seg-opt" type="button" data-dep-net="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true"></span>Airtel Money</button>
-      </div>
-    </div>
-    <div class="field"><label for="depPhone">Numéro qui paie</label><div class="input-prefix"><span>+242</span><input id="depPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
+    <div class="field" id="depCountryField" hidden><span class="label" id="depCountryLabel">Pays</span><div class="seg" role="group" aria-labelledby="depCountryLabel" id="depCountries"></div></div>
+    <div class="field"><span class="label" id="depNetLabel">Payer avec</span><div class="seg" role="group" aria-labelledby="depNetLabel" id="depNets"></div></div>
+    <div class="field"><label for="depPhone">Numéro qui paie</label><div class="input-prefix"><span id="depDial">+242</span><input id="depPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="18"></div></div>
     <div class="fees" id="depFees" hidden></div>
     <div class="msg" id="depMsg" role="status" aria-live="polite"></div>
     <div class="note">${iconSvg('info')}<p>Vous validerez le paiement sur votre téléphone. Le montant déposé est crédité dès la confirmation de l’opérateur.</p></div>`, actions: `<button class="btn" type="button" id="depGo" disabled>Déposer</button>` }),
@@ -45,13 +41,9 @@ export const flowScreens = (frame: FlowFrame) =>
   frame({ screen: 'send-done', title: 'Envoi', state: true, content: `
 <div class="state"><span class="state-icon" id="sendDoneIcon"></span><h2 id="sendDoneTitle"></h2><p id="sendDoneText"></p></div>`, actions: `<button class="btn btn-secondary" type="button" id="sendRetry" hidden>Réessayer</button><button class="btn" type="button" data-home>Terminé</button>` }),
   frame({ screen: 'withdraw', title: 'Retirer', state: false, content: `
-    <div class="field"><span class="label" id="wdNetLabel">Vers</span>
-      <div class="seg" role="group" aria-labelledby="wdNetLabel">
-        <button class="seg-opt" type="button" data-wd-net="MTN_MOMO_COG" aria-pressed="true"><span class="op-logo mtn" aria-hidden="true"></span>MTN MoMo</button>
-        <button class="seg-opt" type="button" data-wd-net="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true"></span>Airtel Money</button>
-      </div>
-    </div>
-    <div class="field"><label for="wdPhone">Numéro qui reçoit</label><div class="input-prefix"><span>+242</span><input id="wdPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
+    <div class="field" id="wdCountryField" hidden><span class="label" id="wdCountryLabel">Pays</span><div class="seg" role="group" aria-labelledby="wdCountryLabel" id="wdCountries"></div></div>
+    <div class="field"><span class="label" id="wdNetLabel">Vers</span><div class="seg" role="group" aria-labelledby="wdNetLabel" id="wdNets"></div></div>
+    <div class="field"><label for="wdPhone">Numéro qui reçoit</label><div class="input-prefix"><span id="wdDial">+242</span><input id="wdPhone" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="18"></div></div>
     <label class="label mt-lg" for="wdAmount">Montant à recevoir</label>
     <div class="amount-wrap"><input class="amount-input" id="wdAmount" data-amount inputmode="numeric" autocomplete="off" placeholder="0"><div class="amount-cur" id="wdAvail">FCFA</div></div>
     <div class="fees" id="wdFees" hidden></div>
@@ -64,25 +56,58 @@ export const flowScreens = (frame: FlowFrame) =>
 
 export const FLOWS_SCRIPT = `
   const WD_STATUS = { SUCCEEDED: ['ok', 'envoyé'], PENDING: ['warn', 'en cours'], FAILED: ['err', 'échoué · restitué'] };
+  // ---------------------------------------------------------------- country, operator and number (deposit and withdrawal)
+  // The country shows only when several are open; its operators follow; the number picks its operator (its prefix), and
+  // choosing another operator than the number's clears the number. Ids: <p>CountryField, <p>Countries, <p>Nets, <p>Dial, <p>Phone.
+  function railPicker(p, changed) {
+    const st = { country: RAILS.countries[0].code, network: null };
+    const phone = () => nationalOf($(p + 'Phone').value, st.country);
+    const press = (host, key, value) => $(host).querySelectorAll('[' + key + ']').forEach((o) => o.setAttribute('aria-pressed', String(o.getAttribute(key) === value)));
+    function pickNet(network) { st.network = network; press(p + 'Nets', 'data-net', network); }
+    function render() {
+      if (!RAILS.countries.some((c) => c.code === st.country)) st.country = RAILS.countries[0].code;
+      $(p + 'CountryField').hidden = RAILS.countries.length < 2;
+      $(p + 'Countries').replaceChildren.apply($(p + 'Countries'), RAILS.countries.map((c) =>
+        el('button', { class: 'seg-opt', type: 'button', 'data-country': c.code, 'aria-pressed': String(c.code === st.country), text: c.name, on: { click: () => pickCountry(c.code) } })));
+      const rails = railsIn(st.country);
+      if (!rails.some((r) => r.network === st.network)) st.network = rails.length ? rails[0].network : null;
+      $(p + 'Nets').replaceChildren.apply($(p + 'Nets'), rails.map((r) =>
+        el('button', { class: 'seg-opt', type: 'button', 'data-net': r.network, 'aria-pressed': String(r.network === st.network), on: { click: () => {
+          pickNet(r.network);
+          const n = networkOf(phone(), st.country);
+          if (n && n !== st.network) { $(p + 'Phone').value = ''; $(p + 'Phone').focus(); }
+          changed();
+        } } }, [opLogo(r), r.name])));
+      const c = countryOf(st.country);
+      $(p + 'Dial').textContent = '+' + c.dial;
+      $(p + 'Phone').placeholder = c.example;
+    }
+    function pickCountry(code) {
+      if (code === st.country) return;
+      st.country = code; $(p + 'Phone').value = '';
+      render(); changed();
+    }
+    $(p + 'Phone').addEventListener('input', () => { const n = networkOf(phone(), st.country); if (n && n !== st.network) pickNet(n); changed(); });
+    render();
+    loadRails().then(() => { render(); changed(); });
+    return {
+      st: st,
+      phone: phone,
+      complete: () => Boolean(st.network) && fitsNetwork(phone(), st.network),
+      // Sent to the server in international form; shown as "+237 6 71 23 45 67".
+      msisdn: () => countryOf(st.country).dial + phone(),
+      shown: () => intlNumber(phone(), st.country),
+      label: () => railName(st.network) + ' · ' + intlNumber(phone(), st.country),
+    };
+  }
+
   // ---------------------------------------------------------------- deposit
   // Amount, operator and the paying number are chosen here, once: confirming sends the request
   // to the phone straight away (no second payment page, no second choice).
-  let depNet = 'MTN_MOMO_COG', depQuotes = null, depBusy = false, depState = null, depResult = null;
-  const depPhone = () => digits($('depPhone').value).replace(/^242/, '');
-  const pickDepNet = (net) => { depNet = net; document.querySelectorAll('[data-dep-net]').forEach((o) => o.setAttribute('aria-pressed', String(o.dataset.depNet === net))); };
-  document.querySelectorAll('[data-dep-net]').forEach((b) => b.addEventListener('click', () => {
-    pickDepNet(b.dataset.depNet);
-    const n = networkOf(depPhone());
-    if (n && n !== depNet) { $('depPhone').value = ''; $('depPhone').focus(); }
-    renderDepFees();
-  }));
-  $('depPhone').addEventListener('input', () => {
-    const n = networkOf(depPhone());
-    if (n && n !== depNet) pickDepNet(n);
-    renderDepFees();
-  });
+  let depQuotes = null, depBusy = false, depState = null, depResult = null;
+  const dep = railPicker('dep', () => renderDepFees());
   function renderDepFees() {
-    const q = depQuotes && depQuotes[depNet];
+    const q = depQuotes && depQuotes[dep.st.network];
     const amount = Number(amountDigits($('depAmount').value));
     $('depGo').disabled = true;
     $('depGo').textContent = 'Déposer';
@@ -102,7 +127,7 @@ export const FLOWS_SCRIPT = `
     $('depFees').hidden = false;
     say('depMsg', '');
     $('depGo').textContent = 'Déposer ' + approx + LP.money(q.total, cur());
-    $('depGo').disabled = !(/^0[4-6]\\d{7}$/.test(depPhone()) && networkOf(depPhone()) === depNet);
+    $('depGo').disabled = !dep.complete();
   }
   const loadDepQuote = debounce(async () => {
     const amount = amountDigits($('depAmount').value);
@@ -116,15 +141,15 @@ export const FLOWS_SCRIPT = `
     loadDepQuote();
   });
   $('depGo').addEventListener('click', async () => {
-    const q = depQuotes && depQuotes[depNet];
+    const q = depQuotes && depQuotes[dep.st.network];
     if (depBusy || !q || $('depGo').disabled) return;
-    const msisdn = depPhone(), approx = q.estimated ? '≈ ' : '';
+    const approx = q.estimated ? '≈ ' : '';
     depBusy = true;
     const ok = await confirmSheet({
       title: 'Vous déposez',
       amount: approx + LP.money(q.total, cur()),
       rows: [
-        ['Depuis', (depNet === 'MTN_MOMO_COG' ? 'MTN MoMo' : 'Airtel Money') + ' · +242 ' + fmtPhone(msisdn)],
+        ['Depuis', dep.label()],
         ['Sur votre wallet', LP.money(q.amount, cur())],
         ['Frais', approx + LP.money(String(Number(q.total) - Number(q.amount)), cur())],
       ],
@@ -132,7 +157,7 @@ export const FLOWS_SCRIPT = `
       confirm: 'Confirmer',
     });
     if (!ok) { depBusy = false; return; }
-    depState = { amount: q.amount, total: approx + LP.money(q.total, cur()), msisdn: msisdn, network: depNet, key: LP.uuid() };
+    depState = { amount: q.amount, total: approx + LP.money(q.total, cur()), msisdn: dep.msisdn(), shown: dep.shown(), network: dep.st.network, key: LP.uuid() };
     depResult = null;
     nav.go('deposit/done');
     await operate('dep', async () => {
@@ -155,7 +180,7 @@ export const FLOWS_SCRIPT = `
     if (depResult) return result('dep', depResult[0], depResult[1], depResult[2]);
     if (!depState) return nav.go('home', true);
     result('dep', 'wait', depState.session ? 'Validez sur votre téléphone' : 'Envoi de la demande',
-      (depState.session ? 'Demande envoyée au +242 ' : 'Au +242 ') + fmtPhone(depState.msisdn) + ' pour ' + depState.total + ', frais compris.');
+      (depState.session ? 'Demande envoyée au ' : 'Au ') + depState.shown + ' pour ' + depState.total + ', frais compris.');
   }
   // The deposit is followed until the operator answers (the server closes it after a few minutes).
   let depFollow = null;
@@ -272,17 +297,10 @@ export const FLOWS_SCRIPT = `
   }
 
   // ---------------------------------------------------------------- withdraw
-  let wdNet = 'MTN_MOMO_COG', wdQuote = null, wdState = null, wdResult = null, wdSeq = 0, wdBusy = false;
-  const pickWdNet = (net) => { wdNet = net; document.querySelectorAll('[data-wd-net]').forEach((o) => o.setAttribute('aria-pressed', String(o.dataset.wdNet === net))); };
-  document.querySelectorAll('[data-wd-net]').forEach((b) => b.addEventListener('click', () => {
-    pickWdNet(b.dataset.wdNet);
-    // Another operator than the number typed: the number goes.
-    const n = networkOf(digits($('wdPhone').value).replace(/^242/, ''));
-    if (n && n !== wdNet) { $('wdPhone').value = ''; $('wdPhone').focus(); }
-    loadWdQuote();
-  }));
+  let wdQuote = null, wdState = null, wdResult = null, wdSeq = 0, wdBusy = false, wdQuotedNet = null;
+  // Another operator can mean another fee: the quote is asked again when the operator changes.
+  const wd = railPicker('wd', () => { if (wd.st.network !== wdQuotedNet) loadWdQuote(); else wdCheck(); });
   function wdCheck() {
-    const phone = digits($('wdPhone').value).replace(/^242/, '');
     const q = wdQuote;
     $('wdNext').disabled = true;
     // Below the minimum or above the balance: the line under the amount says it, the button stays off.
@@ -291,7 +309,7 @@ export const FLOWS_SCRIPT = `
     $('wdAvail').classList.toggle('below', below || tooMuch);
     if (!q) return;
     if (below) { $('wdFees').hidden = true; return; }
-    if (tooMuch || !/^0[4-6]\\d{7}$/.test(phone) || networkOf(phone) !== wdNet) return;
+    if (tooMuch || !wd.complete() || wdQuotedNet !== wd.st.network) return;
     $('wdNext').disabled = false;
   }
   function renderWdFees() {
@@ -307,24 +325,18 @@ export const FLOWS_SCRIPT = `
   }
   const loadWdQuote = debounce(async () => {
     const amount = amountDigits($('wdAmount').value);
-    const seq = ++wdSeq;
-    if (!amount) { wdQuote = null; renderWdFees(); wdCheck(); say('wdMsg', ''); return; }
+    const seq = ++wdSeq, network = wd.st.network;
+    if (!amount || !network) { wdQuote = null; wdQuotedNet = null; renderWdFees(); wdCheck(); say('wdMsg', ''); return; }
     try {
-      const r = await LP.api('GET', '/v1/me/withdrawals/quote?amount=' + amount + '&network=' + wdNet);
+      const r = await LP.api('GET', '/v1/me/withdrawals/quote?amount=' + amount + '&network=' + encodeURIComponent(network));
       if (seq !== wdSeq) return;
-      wdQuote = r.quote; renderWdFees(); wdCheck();
+      wdQuote = r.quote; wdQuotedNet = network; renderWdFees(); wdCheck();
     } catch (e) { if (e.signIn) signIn(); }
   }, 300);
   $('wdAmount').addEventListener('input', () => {
     $('wdNext').disabled = true;
     if (Number(amountDigits($('wdAmount').value)) >= lim('withdrawal_min')) skRows($('wdFees'), 4);
     loadWdQuote();
-  });
-  // The number picks its operator (06 MTN, 05/04 Airtel).
-  $('wdPhone').addEventListener('input', () => {
-    const n = networkOf(digits($('wdPhone').value).replace(/^242/, ''));
-    if (n && n !== wdNet) { pickWdNet(n); loadWdQuote(); }
-    wdCheck();
   });
   const wdAvailText = () => { $('wdAvail').textContent = 'FCFA · disponible ' + LP.money(available(), cur()) + ' · minimum ' + lim('withdrawal_min').toLocaleString('fr-FR'); };
   async function enterWithdraw() {
@@ -347,15 +359,14 @@ export const FLOWS_SCRIPT = `
   $('wdNext').addEventListener('click', async () => {
     if (wdBusy || !wdQuote || $('wdNext').disabled) return;
     const q = wdQuote;
-    const msisdn = digits($('wdPhone').value).replace(/^242/, '');
     wdBusy = true;
-    const next = { quote: q, network: wdNet, msisdn: msisdn, key: LP.uuid() };
+    const next = { quote: q, network: wd.st.network, msisdn: wd.msisdn(), shown: wd.shown(), key: LP.uuid() };
     // « Retirer » opens the code step; the withdrawal leaves once, with the 6th digit.
     const done = await confirmSheet({
       title: 'Vous retirez',
       amount: LP.money(q.amount, q.currency),
       rows: [
-        ['Vers', (wdNet === 'MTN_MOMO_COG' ? 'MTN MoMo' : 'Airtel Money') + ' · +242 ' + fmtPhone(msisdn)],
+        ['Vers', wd.label()],
         ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
         ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
         ['Total débité', LP.money(q.total, q.currency), true],
@@ -383,7 +394,7 @@ export const FLOWS_SCRIPT = `
   function enterWithdrawDone() {
     if (!wdResult) {
       if (!wdState) return nav.go('home', true);
-      return result('wd', 'wait', 'Retrait en cours', 'Envoi de ' + LP.money(wdState.quote.amount, wdState.quote.currency) + ' vers +242 ' + fmtPhone(wdState.msisdn) + '…');
+      return result('wd', 'wait', 'Retrait en cours', 'Envoi de ' + LP.money(wdState.quote.amount, wdState.quote.currency) + ' vers ' + wdState.shown + '…');
     }
     const w = wdResult;
     if (w.status === 'FAILED') result('wd', 'err', 'Retrait échoué', (w.reason || 'L’opérateur a refusé l’envoi.') + ' Les ' + LP.money(w.total, w.currency) + ' ont été restitués sur votre wallet.');

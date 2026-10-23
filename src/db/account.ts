@@ -7,8 +7,8 @@ import { LightPayUser } from '../security/user-token.js';
 import { ConnectError, SCOPES, Scope } from './connect.js';
 import { busyError, closeAllWallets, findDefaultWallet, listWallets, userWallet, walletBusy } from '../wallets/index.js';
 import { route as routeOperation } from '../rails/routing.js';
-import { MobileNetwork, mobileNetworks, networkName, networkOfMsisdn } from '../payments/mobile-money.js';
-import { normalizeMsisdn } from '../rails/registry.js';
+import { MobileNetwork, mobileNetworks, networkName } from '../payments/mobile-money.js';
+import { countryOfNetwork, invalidNumberMessage, normalizeMsisdn, numberFitsNetwork } from '../rails/registry.js';
 import { sendPayout } from './payouts.js';
 import { failureOf, logActivity } from './activity.js';
 import { lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
@@ -122,7 +122,7 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   await recordWithdrawalAttempt(environment, user, idempotencyKey); // too many attempts: the account is suspended
   const wallet = await activeWallet(environment, user);
   const refused = async (err: ConnectError) => {
-    const phone = normalizeMsisdn(String(input.msisdn ?? ''));
+    const phone = normalizeMsisdn(String(input.msisdn ?? ''), countryOfNetwork(String(input.network ?? '')) ?? undefined);
     await logActivity(environment, {
       walletId: wallet.id, kind: 'WITHDRAWAL', direction: 'OUT', status: 'FAILED', amount: safeAmount(input.amount), currency: wallet.currency,
       counterparty: phone ? maskMsisdn(phone) : null, reasonCode: err.code, reason: err.message, refType: 'withdraw_request', refId: `withdraw:${user.uid}:${idempotencyKey}`,
@@ -139,9 +139,9 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   if (amount < minimum) throw await refused(new ConnectError(`Retrait minimum : ${minimum} FCFA.`, 'BELOW_MINIMUM'));
   const network = String(input.network ?? '') as MobileNetwork;
   if (!mobileNetworks().includes(network)) throw await refused(new ConnectError(`network: ${mobileNetworks().join(', ')}`, 'INVALID_NETWORK'));
-  const msisdn = normalizeMsisdn(String(input.msisdn ?? ''));
-  if (!msisdn) throw await refused(new ConnectError('Numéro invalide : 9 chiffres, par exemple 06 512 44 81.', 'INVALID_MSISDN'));
-  if (networkOfMsisdn(msisdn) !== network) throw await refused(new ConnectError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH'));
+  const msisdn = normalizeMsisdn(String(input.msisdn ?? ''), countryOfNetwork(network) ?? undefined);
+  if (!msisdn) throw await refused(new ConnectError(invalidNumberMessage(network), 'INVALID_MSISDN'));
+  if (!numberFitsNetwork(msisdn, network)) throw await refused(new ConnectError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH'));
   const route = await routeOperation({ env: environment, type: 'withdrawal', network, destination: wallet.country, appId: 'mainapp', amount });
   const provider = route.provider.name;
   const operatorFee = providerPayoutFee(environment, provider, amount);

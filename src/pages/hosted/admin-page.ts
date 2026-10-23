@@ -171,6 +171,7 @@ export const adminPage = (nonce: string, env: string) => {
     ${navItem('fees', 'fees', 'settings', 'Frais et minimums')}
     ${navItem('providers', 'providers', 'swap', 'Fournisseurs')}
     ${navItem('routing', 'routing', 'list', 'Routage')}
+    ${navItem('countries', 'countries', 'phone', 'Pays et opérateurs')}
     ${navItem('messages', 'messages', 'mail', 'Messages')}
     ${navItem('audit', 'audit', 'clock', 'Journal admin')}
   </nav>
@@ -321,6 +322,13 @@ ${page('routing', 'Routage', `
 
 ${page('rule', 'Règle', '<div class="stack" id="ruleDetail"></div>', '', { back: { href: '#/routing', label: 'Routage' } })}
 
+${page('countries', 'Pays et opérateurs', `
+  <div class="list-card" id="countryTable"></div>
+  <p class="small muted mt">Un pays ouvert propose ses opérateurs actifs dans les formulaires de dépôt, de retrait et de paiement. Une seule liste pour le réel et le test. Le numéro choisit l’opérateur d’après ses préfixes ; les codes des fournisseurs restent ici, jamais montrés aux personnes.</p>
+`)}
+
+${page('country', 'Pays', '<div class="stack" id="countryDetail"></div>', '', { back: { href: '#/countries', label: 'Pays et opérateurs' } })}
+
 ${page('fees', 'Frais et minimums', `
   <div class="fee-top">
     <div>
@@ -433,6 +441,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
   ACTION.CONTROLS_UPDATE = 'Délais et limites modifiés';
   ACTION.RESERVES_UPDATE = 'Surveillance des réserves modifiée';
   ACTION.ROUTING_UPDATE = 'Règles de routage modifiées';
+  ACTION.COUNTRY_UPDATE = 'Pays modifié';
+  ACTION.RAIL_UPDATE = 'Opérateur modifié';
   ACTION.PROVIDER_BALANCE_CHECK = 'Solde fournisseur relevé';
   ACTION.MESSAGE_UPDATE = 'Message modifié';
   ACTION.MESSAGE_RESET = 'Message rétabli';
@@ -1109,6 +1119,73 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     });
   }
 
+  // ---------------------------------------------------------------- countries and operators (one list for both ledgers)
+  let registry = null;
+  function renderCountries() {
+    table($('countryTable'), [{ label: 'Pays' }, { label: 'Opérateurs actifs', cls: 'num' }, { label: 'État' }],
+      registry.countries.map((c) => {
+        const on = c.rails.filter((r) => r.enabled).length;
+        return { href: '#/countries/' + c.code, cells: [cell(c.name, '+' + c.dial + ' · ' + c.currency + ' · ' + c.rails.map((r) => r.name).join(', ')), num(on) + ' / ' + num(c.rails.length), el('span', { class: 'pill ' + (c.enabled ? 'ok' : ''), text: c.enabled ? 'ouvert' : 'fermé' })], keys: [null, on, c.enabled ? 1 : 0] };
+      }),
+      'Aucun pays.');
+  }
+  async function enterCountries() {
+    crumbs('Réglages', 'Pays et opérateurs');
+    if (registry) renderCountries(); else skeleton($('countryTable'), 4, 'div');
+    await load('countries', async () => { registry = await LP.api('GET', '/v1/admin-console/countries'); renderCountries(); });
+  }
+  async function enterCountry(code) {
+    crumbs('Pays et opérateurs', 'Pays');
+    $('countryTitle').textContent = 'Pays';
+    $('countryDetail').replaceChildren(); skeleton($('countryDetail'), 5, 'div');
+    await load('country', async () => {
+      registry = await LP.api('GET', '/v1/admin-console/countries');
+      const c = registry.countries.filter((x) => x.code === code)[0];
+      if (!c) throw new Error('Pays inconnu.');
+      $('countryTitle').textContent = c.name;
+      const field = (label, input) => el('div', { class: 'field' }, [el('label', { text: label }), input]);
+      const check = (label, on) => { const b = el('input', { type: 'checkbox' }); b.checked = on; return { box: b, row: el('label', { class: 'agree' }, [b, el('span', { text: label })]) }; };
+      const after = async (r, msg, text) => { registry = r; say(msg, text, 'ok'); };
+      // The country: open or closed, and how a number is written there.
+      const cMsg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
+      const open = check('Ouvert aux personnes (dépôts, retraits, paiements)', c.enabled);
+      const example = el('input', { maxlength: '30', autocomplete: 'off', value: c.example || '', 'aria-label': 'Exemple de numéro' });
+      const cSave = el('button', { class: 'btn btn-sm', type: 'button' }, [icon('check'), 'Enregistrer']);
+      cSave.addEventListener('click', async () => {
+        say(cMsg, ''); cSave.disabled = true;
+        await guarded(async () => after(await LP.api('PUT', '/v1/admin-console/countries/' + c.code, { enabled: open.box.checked, example: example.value.trim() }), cMsg, open.box.checked ? 'Pays ouvert.' : 'Pays fermé.'), cMsg);
+        cSave.disabled = false;
+      });
+      const head = el('div', { class: 'rows' });
+      rows(head, [['Indicatif', '+' + c.dial], ['Monnaie', c.currency + (c.currency === 'XOF' ? ' (1 XOF = 1 FCFA dans LightPay)' : '')]]);
+      const parts = [detailPanel('Pays', [head, field('Exemple de numéro (affiché dans les formulaires)', example), el('div', { class: 'msg-switches' }, [open.row]), el('div', { class: 'btn-row mt' }, [cSave]), cMsg])];
+      // Each operator: on or off, prefixes, providers' codes.
+      c.rails.forEach((r) => {
+        const msg = el('div', { class: 'msg', role: 'status', 'aria-live': 'polite' });
+        const name = el('input', { maxlength: '40', autocomplete: 'off', value: r.name, 'aria-label': 'Nom' });
+        const prefixes = el('input', { autocomplete: 'off', value: r.prefixes.join(', '), placeholder: 'ex. 06, 05', 'aria-label': 'Préfixes' });
+        const codes = {};
+        registry.providers.forEach((pr) => { codes[pr] = el('input', { autocomplete: 'off', value: r.provider_codes[pr] || '', 'aria-label': 'Code ' + provName(pr) }); });
+        const on = check('Actif', r.enabled);
+        if (!r.supported) { on.box.disabled = true; on.row.append(el('span', { class: 'muted', text: r.auth === 'otp' ? ' · code avant paiement : écran à venir' : ' · page de l’opérateur : écran à venir' })); }
+        const save = el('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, [icon('check'), 'Enregistrer']);
+        save.addEventListener('click', async () => {
+          say(msg, ''); save.disabled = true;
+          const pc = {}; Object.keys(codes).forEach((k) => { pc[k] = codes[k].value.trim(); });
+          await guarded(async () => after(await LP.api('PUT', '/v1/admin-console/rails/' + r.method, { name: name.value.trim(), prefixes: prefixes.value, provider_codes: pc, enabled: on.box.checked }), msg, 'Opérateur enregistré.'), msg);
+          save.disabled = false;
+        });
+        parts.push(detailPanel(r.name + ' · ' + r.network, [
+          field('Nom affiché', name),
+          field('Préfixes du numéro national (vide : tout numéro du pays)', prefixes),
+        ].concat(registry.providers.map((pr) => field('Code ' + provName(pr) + ' (vide : ne sert pas cet opérateur)', codes[pr]))).concat([
+          el('div', { class: 'msg-switches' }, [on.row]), el('div', { class: 'btn-row mt' }, [save]), msg,
+        ])));
+      });
+      $('countryDetail').replaceChildren.apply($('countryDetail'), parts);
+    });
+  }
+
   // ---------------------------------------------------------------- fees and minimums
   // Read as values; a click on one turns it into a field (Enter saves, Échap cancels). Operator
   // fees are per provider: the one serving this environment is preselected. The calculator uses
@@ -1579,6 +1656,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     providers: { enter: withNav('providers', enterProviders) },
     routing: { enter: withNav('routing', enterRouting) },
     rule: { parent: 'routing', enter: withNav('routing', enterRule) },
+    countries: { enter: withNav('countries', enterCountries) },
+    country: { parent: 'countries', enter: withNav('countries', enterCountry) },
     audit: { enter: withNav('audit', enterAudit) },
     lockdown: { enter: withNav('lockdown', enterLockdown) },
     controls: { enter: withNav('controls', enterControls) },
@@ -1593,7 +1672,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     root: 'home',
     // #/users/<id> opens the item screen "user" (and so on): a list and its item never share a screen.
     resolve: (route) => {
-      const ITEM = { reserves: 'reserve', routing: 'rule', users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
+      const ITEM = { reserves: 'reserve', routing: 'rule', countries: 'country', users: 'user', apps: 'app', developers: 'developer', moves: 'move', payouts: 'payout', messages: 'message' };
       const i = route.indexOf('/');
       if (i < 0) return [route, null];
       const list = route.slice(0, i);

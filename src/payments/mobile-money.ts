@@ -17,12 +17,12 @@ import { Environment } from '../types/index.js';
 import { SasPayProvider } from './saspay.js';
 import { PawaPayProvider } from './pawapay.js';
 import { RailKind, providerSettings, servesLedger } from './provider-settings.js';
-import { enabledRails, railByNetwork, railOfMsisdn } from '../rails/registry.js';
+import { railByNetwork, railOfMsisdn, usableRails } from '../rails/registry.js';
 
 /** A rail's network code (MTN_MOMO_COG…), from the registry (src/rails/registry.ts). */
 export type MobileNetwork = string;
-/** The networks people can use now (enabled rails), in display order. */
-export const mobileNetworks = (): MobileNetwork[] => enabledRails().map((r) => r.network);
+/** The networks people can use now (usable rails of the open countries), in display order. */
+export const mobileNetworks = (): MobileNetwork[] => usableRails().map((r) => r.network);
 
 export type RailStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED';
 

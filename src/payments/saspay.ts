@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { MobileMoneyProvider, ProviderBalance, RailOperation, RailResult } from './mobile-money.js';
-import { countryByCode, countryByIso2, providerCode, railByNetwork } from '../rails/registry.js';
+import { countryByCode, countryByIso2, currencyOfNetwork, providerCode, railByNetwork } from '../rails/registry.js';
 import type { Environment } from '../types/index.js';
 
 /**
@@ -100,7 +100,7 @@ export class SasPayProvider implements MobileMoneyProvider {
   private collectBody(op: RailOperation) {
     return {
       amount: `${op.amount.toString()}.00`,
-      currency: op.currency,
+      currency: currencyOfNetwork(op.network) ?? op.currency,
       country: railCodes(op).country,
       network: railCodes(op).method,
       customer: customerOf(op),
@@ -141,7 +141,7 @@ export class SasPayProvider implements MobileMoneyProvider {
         '/payouts/initialize/',
         {
           amount: `${op.amount.toString()}.00`,
-          currency: op.currency,
+          currency: currencyOfNetwork(op.network) ?? op.currency,
           country: railCodes(op).country,
           method: railCodes(op).method,
           recipient: { msisdn: op.msisdn },

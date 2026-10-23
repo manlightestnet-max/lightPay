@@ -259,6 +259,12 @@ On commence avec les pays où SasPay a déjà fait des transferts réels :
 
 - Chaque pays s'active dans l'admin ; les autres pays CFA (Gabon, Sénégal, Bénin, Burkina) s'ajoutent ensuite sans
   code.
+- Fait (phase D, migration 030) : opérateurs du Cameroun (MTN, Orange), de Côte d'Ivoire (MTN, Moov ; Orange et Wave
+  fermés jusqu'à leurs écrans) et du Togo (T-Money, Flooz : codes SasPay à remplir). Admin → Réglages → Pays et
+  opérateurs (ouvrir un pays, activer un opérateur, corriger préfixes et codes). Numéros en forme internationale, monnaie
+  du pays envoyée au fournisseur (XOF en Côte d'Ivoire et au Togo), choix pays → opérateur → numéro dans Dépôt, Retrait
+  et la page de paiement ; route publique `GET /v1/checkout/public/rails`. Les pays restent fermés tant que l'admin
+  ne les ouvre pas.
 - Orange (OTP) et Wave (redirection) demandent leurs écrans d'attente : un pays peut ouvrir d'abord ses opérateurs
   « téléphone qui sonne » et le reste ensuite.
 
@@ -277,7 +283,7 @@ change visible. Seuls ces pays portent un risque de change.
 | **A — Socle** ✓ | Module `wallets` (porte d'entrée unique, `label` / `country` / `is_default`), registres `countries` et `rails`, interface fournisseur élargie. | Rien ne change pour les gens. |
 | **B — Réserves par pays + inspection** ✓ | Réserves par (fournisseur, pays) calculées depuis le transit, lecture automatique des soldes (SasPay, pawaPay), écart, disponible, minimum / seuil bas / niveau cible, alertes et compteur, écran par wallet fournisseur. | L'admin voit chaque wallet fournisseur. |
 | **C — Routage** ✓ | Règles, simulateur, frais comparés ; SasPay par défaut, pawaPay pour le Congo → Congo. | Moins de frais sur le Congo. |
-| **D — Pays de départ** | Cameroun, Côte d'Ivoire, Togo : dépôts et retraits, numéro international, choix du pays dans `flows.ts`. | Encaisser et retirer dans 4 pays. |
+| **D — Pays de départ** ✓ | Cameroun, Côte d'Ivoire, Togo : dépôts et retraits, numéro international, choix du pays dans `flows.ts`. | Encaisser et retirer dans 4 pays. |
 | **E — Rééquilibrage** | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |
 | **F — Plusieurs wallets à l'écran** | Compte, console, admin, API `wallet_id`, ouverture / fermeture. | Une personne gère plusieurs wallets. |
 | **G — Suite** | Écrans OTP et redirection (Orange, Wave), autres pays CFA, remboursements natifs pawaPay, puis hors CFA. | Activés dans l'admin. |

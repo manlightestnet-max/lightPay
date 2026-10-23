@@ -20,6 +20,7 @@ const PAY_CSS = `
 .opt:hover { border-color: var(--faint); }
 .opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .opt .op-logo { width: 26px; height: 26px; border-radius: 7px; }
+.pay-countries { margin-bottom: 10px; }
 .opt span:last-child { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .input-prefix input:-webkit-autofill { -webkit-box-shadow: 0 0 0 40px var(--card) inset; -webkit-text-fill-color: var(--text); }
 .pay-note { margin-top: 10px; text-align: center; font-size: 11px; color: var(--muted); letter-spacing: .03em; }
@@ -70,15 +71,14 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
 
     <div class="methods" id="methodsBox" hidden>
       <div class="label">Payer avec</div>
-      <div class="opts" role="group" aria-label="Payer avec">
-        <button class="opt" type="button" data-pick="MTN_MOMO_COG" aria-pressed="true"><span class="op-logo mtn" aria-hidden="true"></span><span>MTN MoMo</span></button>
-        <button class="opt" type="button" data-pick="AIRTEL_COG" aria-pressed="false"><span class="op-logo airtel" aria-hidden="true"></span><span>Airtel Money</span></button>
+      <div class="seg pay-countries" role="group" aria-label="Pays" id="payCountries" hidden></div>
+      <div class="opts" role="group" aria-label="Payer avec" id="payOpts">
         <button class="opt" type="button" data-pick="lightpay_wallet" aria-pressed="false"><span class="op-logo lp" aria-hidden="true"></span><span>Wallet</span></button>
       </div>
     </div>
 
     <div id="momo" hidden>
-      <div class="field"><label for="msisdn">Numéro qui paie</label><div class="input-prefix"><span>+242</span><input id="msisdn" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="16"></div></div>
+      <div class="field"><label for="msisdn">Numéro qui paie</label><div class="input-prefix"><span id="payDial">+242</span><input id="msisdn" inputmode="tel" autocomplete="tel-national" placeholder="06 512 44 81" maxlength="18"></div></div>
       <div class="fees" id="feeBox" hidden></div>
       <p class="pay-note">Vous validerez avec votre code secret sur le téléphone.</p>
     </div>
@@ -156,15 +156,17 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     PROVIDER_EXPIRED: 'La demande a expiré sans validation. Réessayez.',
   };
   const failText = (code, reason) => FAIL[code] || reason || (code && code.indexOf('PROVIDER_') === 0 ? 'L’opérateur a refusé ce paiement (' + code.slice(9).toLowerCase().replace(/_/g, ' ') + '). Réessayez ou changez de numéro.' : 'Le paiement a échoué. Réessayez.');
-  const NET_NAME = { MTN_MOMO_COG: 'MTN MoMo', AIRTEL_COG: 'Airtel Money' };
   // false: the person signed in on the app has no LightPay wallet, so only mobile money is offered.
   let payerHasWallet = null;
-  let session = null, method = 'mobile_money', network = 'MTN_MOMO_COG', poll = null, lastAttemptAt = null, paidWithWallet = false, walletBalance = null;
+  let session = null, method = 'mobile_money', network = null, country = RAILS.countries[0].code, poll = null, lastAttemptAt = null, paidWithWallet = false, walletBalance = null;
   let typed = null;
   try { typed = sessionStorage.getItem('lightpay.msisdn.' + id); } catch (e) {}
-  const fullPhone = (d) => '+242 ' + d.replace(/^(\\d{2})(\\d{3})(\\d{2})(\\d{2})$/, '$1 $2 $3 $4');
-  const phoneOf = (masked) => (typed && masked && masked.slice(-2) === typed.slice(-2) && masked.indexOf('+242 ' + typed.slice(0, 2)) === 0 ? fullPhone(typed) : masked || 'numéro indiqué');
-  const phoneOk = () => { const d = digits($('msisdn').value).replace(/^242/, ''); return /^0[4-6]\\d{7}$/.test(d) && networkOf(d) === network; };
+  const national = () => nationalOf($('msisdn').value, country);
+  // An international number ("242065124481") as people read it: "+242 06 512 44 81".
+  const fullPhone = (intl) => { const c = RAILS.countries.filter((x) => intl.indexOf(x.dial) === 0)[0]; return c ? intlNumber(intl.slice(c.dial.length), c.code) : '+' + intl; };
+  // The server only shows a masked number ("+242 06 ••• •• 81"): the one typed here is shown in full when it matches.
+  const phoneOf = (masked) => { const m = digits(masked || ''); return typed && m.length > 4 && typed.indexOf(m.slice(0, -2)) === 0 && typed.slice(-2) === m.slice(-2) ? fullPhone(typed) : masked || 'numéro indiqué'; };
+  const phoneOk = () => Boolean(network) && fitsNetwork(national(), network);
   let busy = false;
   const accountUrl = (hash) => (LP.ENV === 'sandbox' ? '/account?env=sandbox' : '/account') + (hash || '');
 
@@ -184,19 +186,40 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
   // One choice: an operator (mobile money) or the LightPay wallet.
   const picked = () => (method === 'mobile_money' ? network : 'lightpay_wallet');
   const sync = () => document.querySelectorAll('[data-pick]').forEach((o) => o.setAttribute('aria-pressed', String(o.dataset.pick === picked())));
-  document.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
+  function choose(pick) {
     const was = method;
-    if (b.dataset.pick === 'lightpay_wallet') method = 'lightpay_wallet';
+    if (pick === 'lightpay_wallet') method = 'lightpay_wallet';
     else {
-      method = 'mobile_money'; network = b.dataset.pick;
+      method = 'mobile_money'; network = pick;
       // Another operator than the number typed: the number goes, it cannot pay with this one.
-      const n = networkOf(digits($('msisdn').value).replace(/^242/, ''));
+      const n = networkOf(national(), country);
       if (n && n !== network) { $('msisdn').value = ''; setTimeout(() => $('msisdn').focus(), 0); }
     }
     sync();
     say('msg', '');
     if (method !== was) openMethod(); else renderFees();
-  }));
+  }
+  document.querySelector('[data-pick="lightpay_wallet"]').addEventListener('click', () => choose('lightpay_wallet'));
+  // The open countries (shown when several) and the operators of the chosen one, before the wallet card.
+  function renderRails() {
+    if (!RAILS.countries.some((c) => c.code === country)) country = RAILS.countries[0].code;
+    $('payCountries').replaceChildren.apply($('payCountries'), RAILS.countries.map((c) => el('button', { class: 'seg-opt', type: 'button', 'aria-pressed': String(c.code === country), text: c.name, on: { click: () => {
+      if (c.code === country) return;
+      country = c.code; $('msisdn').value = ''; network = null; method = 'mobile_money';
+      renderRails(); say('msg', '');
+      if (session) openMethod();
+    } } })));
+    const rails = railsIn(country);
+    if (!rails.some((r) => r.network === network)) network = rails.length ? rails[0].network : null;
+    document.querySelectorAll('#payOpts [data-rail]').forEach((o) => o.remove());
+    const walletCard = document.querySelector('#payOpts [data-pick="lightpay_wallet"]');
+    rails.forEach((r) => walletCard.before(el('button', { class: 'opt', type: 'button', 'data-pick': r.network, 'data-rail': 'true', 'aria-pressed': 'false', on: { click: () => choose(r.network) } }, [opLogo(r), el('span', { text: r.name })])));
+    const c = countryOf(country);
+    $('payDial').textContent = '+' + c.dial;
+    $('msisdn').placeholder = c.example;
+  }
+  renderRails();
+  loadRails().then(() => { renderRails(); if (session && $('methodsBox').hidden === false) openMethod(); });
 
   function renderFees() {
     const q = session && session.fees && session.fees[network];
@@ -255,6 +278,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     // Only the ways this session accepts are offered; each operator card shows its fees.
     $('methodsBox').hidden = false;
     document.querySelectorAll('[data-pick]').forEach((o) => { o.hidden = (o.dataset.pick === 'lightpay_wallet') !== (method === 'lightpay_wallet') && !both; });
+    $('payCountries').hidden = RAILS.countries.length < 2 || method !== 'mobile_money';
     sync();
     if (method === 'mobile_money') {
       $('wallet').hidden = true; $('payWallet').hidden = true;
@@ -316,7 +340,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     if (!paidWithWallet && a && a.status === 'SUCCEEDED') {
       rows.push(['Frais LightPay', LP.money(a.lightpay_fee, c)]);
       if (a.operator_fee) rows.push(['Frais opérateur', LP.money(a.operator_fee, c)]);
-      rows.push(['Payé avec', (NET_NAME[a.network] || 'Mobile money') + ' · ' + phoneOf(a.msisdn)]);
+      rows.push(['Payé avec', (railOf(a.network) ? railName(a.network) : 'Mobile money') + ' · ' + phoneOf(a.msisdn)]);
       if (a.charged) rows.push(['Total débité', LP.money(a.charged, c), true]);
     } else if (paidWithWallet) {
       rows.push(['Payé avec', 'Wallet LightPay'], ['Total débité', LP.money(s.amount, c), true]);
@@ -366,16 +390,16 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     $('waitText').textContent = text;
     screen('waiting');
   }
-  // The number picks its operator (06 MTN, 05/04 Airtel): the two can never disagree.
+  // The number picks its operator (its prefix): the two can never disagree.
   $('msisdn').addEventListener('input', () => {
     if (method !== 'mobile_money') return;
-    const n = networkOf(digits($('msisdn').value).replace(/^242/, ''));
+    const n = networkOf(national(), country);
     if (n && n !== network) { network = n; sync(); }
     renderFees();
   });
   $('payMomo').addEventListener('click', async () => {
     if (busy || $('payMomo').disabled || !phoneOk()) return;
-    const msisdn = digits($('msisdn').value).replace(/^242/, '');
+    const msisdn = countryOf(country).dial + national();
     const q = session.fees && session.fees[network];
     const c = session.currency, approx = q && q.estimated ? '≈ ' : '';
     busy = true;
@@ -383,7 +407,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
       title: session.kind === 'DEPOSIT' ? 'Vous déposez' : 'Vous payez',
       amount: q ? approx + LP.money(q.total, c) : LP.money(session.amount, c),
       rows: [
-        ['Depuis', NET_NAME[network] + ' · ' + fullPhone(msisdn)],
+        ['Depuis', railName(network) + ' · ' + fullPhone(msisdn)],
         [session.kind === 'DEPOSIT' ? 'Dépôt' : 'À ' + session.merchant, LP.money(session.amount, c)],
       ].concat(q ? [['Frais', approx + LP.money(String(Number(q.total) - Number(q.amount)), c)]] : []),
       note: 'Une demande arrive sur ce téléphone : validez-la avec votre code secret.',

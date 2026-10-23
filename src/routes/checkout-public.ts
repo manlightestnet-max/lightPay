@@ -8,6 +8,7 @@ import { pinOk, requireUser } from './me.js';
 import { accountPage, connectPage, consolePage, docsPage, hostedCsp, lightpaySdk, payPage } from '../pages/hosted.js';
 import { embedOriginFor } from '../db/developer.js';
 import { appLogo } from '../db/avatars.js';
+import { publicRegistry } from '../rails/registry.js';
 
 /** Per-IP brake on payment requests (each one rings a phone). */
 const hits = new Map<string, number[]>();
@@ -31,11 +32,18 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9_-]{16,40}$/;
  *   GET  /v1/checkout/public/authorize                validate an app authorization request
  *   POST /v1/checkout/public/sessions/:id/wallet      pay with a LightPay wallet (signed in + X-LightPay-Pin)
  *   GET  /v1/checkout/public/apps/:id/logo            an app's logo (public, cached)
+ *   GET  /v1/checkout/public/rails                    countries and operators open now (number format, prefixes)
  *   GET  /v1/checkout/public/sessions/:id             what the page shows (polled)
  *   POST /v1/checkout/public/sessions/:id/mobile-money   { msisdn, network }
  *   GET  /v1/checkout/public/sessions/:id/payer          signed in: has a LightPay wallet? (never opens one)
  */
 export async function checkoutPublicRoutes(fastify: FastifyInstance) {
+  // What the payment forms offer: open countries, their number format and operators (never a provider).
+  fastify.get('/v1/checkout/public/rails', async (request, reply) => {
+    reply.header('Cache-Control', 'public, max-age=60');
+    return { status: 'success', ...publicRegistry() };
+  });
+
   // An app's logo (Developer console > Logo). The address carries its version: cached for good.
   fastify.get('/v1/checkout/public/apps/:id/logo', async (request, reply) => {
     const logo = await appLogo(String((request.params as any).id)).catch(() => null);

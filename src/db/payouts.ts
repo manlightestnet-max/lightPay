@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import { query } from './pool.js';
 import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
-import { MobileNetwork, networkName, networkOfMsisdn, providerByName, providerFor, RailOperation, RailResult } from '../payments/mobile-money.js';
+import { numberFitsNetwork } from '../rails/registry.js';
+import { MobileNetwork, networkName, providerByName, providerFor, RailOperation, RailResult } from '../payments/mobile-money.js';
 import { lightpayFeeWallet, settlePayoutFee } from './fee-wallet.js';
 import { isPersonWallet, logActivity, maskPhone, reasonFor, updateActivity } from './activity.js';
 import { controlSettings } from '../payments/control-settings.js';
@@ -92,7 +93,7 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   const outflow = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, input.currency);
   const payoutId = `po_${crypto.randomBytes(18).toString('base64url')}`;
   // Never send to a number of another operator (the provider would fail or misroute it).
-  if (networkOfMsisdn(input.msisdn) !== input.network) throw new Error(`Ce numéro n’est pas un numéro ${networkName(input.network)}.`);
+  if (!numberFitsNetwork(input.msisdn, input.network)) throw new Error(`Ce numéro n’est pas un numéro ${networkName(input.network)}.`);
   const provider = input.provider ? providerByName(input.provider) : providerFor(env, input.network, 'payout');
   // The simulator pays nobody: real money never "leaves" through it (nothing is debited).
   if (env === 'production' && provider.name === 'simulator') throw new Error('Le mobile money est indisponible pour le moment. Réessayez plus tard.');

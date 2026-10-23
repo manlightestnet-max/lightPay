@@ -43,6 +43,7 @@ import { RESERVE_RANGES, ReserveSettingsError, loadReserveSettings, reserveSetti
 import { readProviderBalances } from '../payments/reserve-watch.js';
 import { KIND_OF, OPERATION_TYPES, OperationType, RoutingError, loadRoutingRules, route, routingRules, saveRoutingRules, validateRoutingRules } from '../rails/routing.js';
 import { allCountries, allRails } from '../rails/registry.js';
+import { RegistryError, registryForAdmin, updateCountry, updateRail } from '../rails/registry-admin.js';
 import { quote, refundBreakdown, withdrawalQuote } from '../payments/fees.js';
 import { PROVIDERS_OF } from '../payments/provider-settings.js';
 import { query } from '../db/pool.js';
@@ -61,6 +62,9 @@ import { query } from '../db/pool.js';
  *   GET  /v1/admin-console/routing              routing rules (ordered) + what they can name (providers, operators, countries, apps)
  *   PUT  /v1/admin-console/routing              [ …all rules ]   recent sign-in; applied at once, logged
  *   POST /v1/admin-console/routing/simulate     { type, network, destination?, app?, amount }   which rule and provider, fees at each
+ *   GET  /v1/admin-console/countries            every country and operator (both ledgers), providers' codes
+ *   PUT  /v1/admin-console/countries/:code      { enabled?, example? }   recent sign-in, logged
+ *   PUT  /v1/admin-console/rails/:method        { enabled?, name?, prefixes?, provider_codes? }   recent sign-in, logged
  *   GET  /v1/admin-console/users[?q=&offset=]   LightPay users · /users/:walletId
  *   GET  /v1/admin-console/apps                 apps · /apps/:id (attached users)
  *   GET  /v1/admin-console/transactions[?type=&app=&q=&before=] · /transactions/:id (ledger entries)
@@ -390,6 +394,33 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
           return { provider: name, configured, operator_fee: w.operator_fee, lightpay_fee: w.lightpay_fee, total: w.total, label: 'Débité du wallet' };
         });
         return { status: 'success', provider: decision.provider.name, rule: decision.rule, steps: decision.steps, fees };
+      });
+
+      // ---------------------------------------------------------- countries and operators (one list for both ledgers)
+      api.get('/countries', async () => ({ status: 'success', ...registryForAdmin() }));
+      api.put('/countries/:code', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const code = String((request.params as any).code).toUpperCase();
+        try {
+          const { before, after } = await updateCountry(code, (request.body ?? {}) as any);
+          await auditAction(envOf(request), adminOf(request), 'COUNTRY_UPDATE', code, null, { before, after });
+          return { status: 'success', ...registryForAdmin() };
+        } catch (e) {
+          if (e instanceof RegistryError) return reply.status(e.statusCode).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
+      });
+      api.put('/rails/:method', async (request, reply) => {
+        if (!recent(request, reply)) return;
+        const method = String((request.params as any).method);
+        try {
+          const { before, after } = await updateRail(method, (request.body ?? {}) as any);
+          await auditAction(envOf(request), adminOf(request), 'RAIL_UPDATE', method, null, { before, after });
+          return { status: 'success', ...registryForAdmin() };
+        } catch (e) {
+          if (e instanceof RegistryError) return reply.status(e.statusCode).send({ status: 'error', error: e.code, message: e.message });
+          throw e;
+        }
       });
 
       // ---------------------------------------------------------- delays and limits

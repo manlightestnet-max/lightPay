@@ -243,6 +243,7 @@ a.tx:active { background: var(--raised); }
 .op-logo { width: 22px; height: 22px; flex-shrink: 0; border-radius: 6px; background: center / cover no-repeat; }
 .op-logo.mtn { background-image: var(--mtn); }
 .op-logo.airtel { background-image: var(--airtel); }
+.op-logo.initial { background: var(--raised); color: var(--text); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 .op-logo.lp { background-image: var(--mark); background-size: 78%; background-color: var(--card); box-shadow: inset 0 0 0 1px var(--line-strong); }
 
 /* ---------- buttons ---------- */

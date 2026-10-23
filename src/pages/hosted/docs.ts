@@ -37,7 +37,7 @@ const sections = (api: string, checkout: string): Section[] => [
     group: 'Démarrer',
     title: 'Introduction',
     body: `
-<p class="lead">LightPay encaisse et verse de l’argent par mobile money (MTN MoMo, Airtel Money) au Congo-Brazzaville, en FCFA, avec un wallet pour chaque personne et un grand livre en partie double. Votre application l’utilise depuis son serveur, avec sa clé secrète.</p>
+<p class="lead">LightPay encaisse et verse de l’argent par mobile money (MTN MoMo, Airtel Money, Orange Money…) au Congo-Brazzaville et dans les autres pays qu’il ouvre, en FCFA, avec un wallet pour chaque personne et un grand livre en partie double. Votre application l’utilise depuis son serveur, avec sa clé secrète.</p>
 <h3>Deux façons d’encaisser</h3>
 <ul>
   <li><b>Vous vendez vous-même</b> (marchand direct) : vous créez une session de paiement sans <code>payee</code>, l’argent arrive sur le wallet de votre app.</li>
@@ -48,6 +48,22 @@ ${table(['Adresse', 'Rôle'], [
   [api, 'API (depuis votre serveur, clé secrète).'],
   [checkout, 'Pages de paiement et script <code>lightpay.js</code> (côté client).'],
 ])}`,
+  },
+  {
+    id: 'pays',
+    group: 'Démarrer',
+    title: 'Pays et opérateurs',
+    body: `
+<p>Les pays et les opérateurs ouverts se lisent à tout moment, sans clé : la page de paiement et le compte LightPay les proposent d’eux-mêmes (le pays, puis l’opérateur, puis le numéro).</p>
+${endpoint('GET', '/v1/checkout/public/rails', 'Pays ouverts (indicatif, format du numéro, monnaie) et leurs opérateurs (<code>network</code>, nom, préfixes).')}
+<p>Le franc CFA est une seule unité dans LightPay : 1 XOF = 1 XAF, sans frais de change. Une session reste en <code>XAF</code> ; un paiement depuis la Côte d’Ivoire ou le Togo est encaissé en XOF pour le même montant.</p>
+${table(['Pays', 'Indicatif', 'Opérateurs (network)'], [
+  ['Congo-Brazzaville', '+242', '<code>MTN_MOMO_COG</code>, <code>AIRTEL_COG</code>'],
+  ['Cameroun', '+237', '<code>MTN_MOMO_CMR</code>, <code>ORANGE_CMR</code>'],
+  ['Côte d’Ivoire', '+225', '<code>MTN_MOMO_CIV</code>, <code>MOOV_CIV</code>'],
+  ['Togo', '+228', '<code>TMONEY_TGO</code>, <code>MOOV_TGO</code>'],
+])}
+${note('Seuls les pays ouverts par LightPay acceptent des paiements : lisez la route ci-dessus plutôt que ce tableau. Un numéro s’écrit avec l’indicatif de son pays (<code>237691234567</code>) ; sans indicatif, il est lu dans le pays de l’opérateur choisi.')}`,
   },
   {
     id: 'cles',
@@ -191,7 +207,7 @@ ${endpoint('GET', '/v1/holds/:hold_id', 'État du séquestre.')}
 ${endpoint('POST', '/v1/holds/:hold_id/capture', 'Verse au vendeur.')}
 ${endpoint('POST', '/v1/holds/:hold_id/release', 'Rend à l’acheteur.')}
 ${endpoint('POST', '/v1/holds/:hold_id/dispute', 'Gèle le séquestre (<code>{ "reason": "…" }</code>) : seule une décision explicite le débloque ensuite (<code>resolve_dispute: true</code>).')}
-${endpoint('GET', '/v1/checkout/refund-quote?amount=', 'Ce qu’un acheteur mobile money récupérerait, opérateur par opérateur.')}`,
+${endpoint('GET', '/v1/checkout/refund-quote?amount=', 'Ce qu’un acheteur mobile money récupérerait, opérateur par opérateur (ceux des pays ouverts).')}`,
   },
   {
     id: 'connect',
@@ -259,6 +275,7 @@ ${endpoint('POST', '/v1/checkout/sessions', 'Créer une session de paiement')}
 ${endpoint('GET', '/v1/checkout/sessions/:id', 'Lire une session')}
 ${endpoint('POST', '/v1/checkout/sessions/:id/cancel', 'Annuler une session')}
 ${endpoint('GET', '/v1/checkout/refund-quote', 'Remboursement estimé')}
+${endpoint('GET', '/v1/checkout/public/rails', 'Pays et opérateurs ouverts (public)')}
 ${endpoint('GET', '/v1/holds/:hold_id', 'Lire un séquestre')}
 ${endpoint('POST', '/v1/holds/:hold_id/capture', 'Verser au vendeur')}
 ${endpoint('POST', '/v1/holds/:hold_id/release', 'Rendre à l’acheteur')}
