@@ -28,7 +28,7 @@ export function registryForAdmin() {
       rails: allRails()
         .filter((r) => r.country === c.code)
         .sort((a, b) => a.position - b.position)
-        .map((r) => ({ method: r.method, network: r.network, name: r.name, prefixes: r.prefixes, auth: r.auth, supported: SUPPORTED_AUTH.includes(r.auth), provider_codes: r.providerCodes, enabled: r.enabled })),
+        .map((r) => ({ method: r.method, network: r.network, name: r.name, prefixes: r.prefixes, auth: r.auth, supported: SUPPORTED_AUTH.includes(r.auth), provider_codes: r.providerCodes, instructions: r.instructions, enabled: r.enabled })),
     })),
     providers: CODE_PROVIDERS,
   };

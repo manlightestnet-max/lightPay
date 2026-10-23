@@ -40,13 +40,15 @@ export interface Rail {
   providerCodes: Record<string, string>;
   enabled: boolean;
   position: number;
+  /** What to do before paying when the operator asks for a one-time code ("composez #144*82#…"). */
+  instructions: string | null;
 }
 
 const BUILT_IN = {
   countries: [{ code: 'COG', iso2: 'CG', name: 'Congo-Brazzaville', dialCode: '242', currency: 'XAF', nationalPattern: /^0[4-6][0-9]{7}$/, example: '06 512 44 81', enabled: true }] as Country[],
   rails: [
-    { method: 'mtn_cg', country: 'COG', network: 'MTN_MOMO_COG', name: 'MTN MoMo', prefixes: ['06'], auth: 'push', providerCodes: { saspay: 'mtn_cg', pawapay: 'MTN_MOMO_COG' }, enabled: true, position: 1 },
-    { method: 'airtel_cg', country: 'COG', network: 'AIRTEL_COG', name: 'Airtel Money', prefixes: ['05', '04'], auth: 'push', providerCodes: { saspay: 'airtel_cg', pawapay: 'AIRTEL_COG' }, enabled: true, position: 2 },
+    { method: 'mtn_cg', country: 'COG', network: 'MTN_MOMO_COG', name: 'MTN MoMo', prefixes: ['06'], auth: 'push', providerCodes: { saspay: 'mtn_cg', pawapay: 'MTN_MOMO_COG' }, enabled: true, position: 1, instructions: null },
+    { method: 'airtel_cg', country: 'COG', network: 'AIRTEL_COG', name: 'Airtel Money', prefixes: ['05', '04'], auth: 'push', providerCodes: { saspay: 'airtel_cg', pawapay: 'AIRTEL_COG' }, enabled: true, position: 2, instructions: null },
   ] as Rail[],
 };
 
@@ -141,6 +143,8 @@ export function publicRegistry() {
       name: r.name,
       country: r.country,
       prefixes: r.prefixes,
+      auth: r.auth,
+      instructions: r.instructions,
       // Brand pictures LightPay ships; the others show their initial.
       logo: r.method.startsWith('mtn') ? 'mtn' : r.method.startsWith('airtel') ? 'airtel' : null,
     })),
@@ -188,6 +192,7 @@ const toRail = (r: any): Rail => ({
   providerCodes: r.provider_codes && typeof r.provider_codes === 'object' ? r.provider_codes : {},
   enabled: r.enabled === true,
   position: Number(r.position) || 0,
+  instructions: r.instructions ?? null,
 });
 
 export async function loadRegistry() {

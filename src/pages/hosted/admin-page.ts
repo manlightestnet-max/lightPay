@@ -1289,6 +1289,7 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
           save.disabled = false;
         });
         parts.push(detailPanel(r.name + ' · ' + r.network, [
+          r.instructions ? el('p', { class: 'small muted', text: 'Avant de payer : ' + r.instructions }) : null,
           field('Nom affiché', name),
           field('Préfixes du numéro national (vide : tout numéro du pays)', prefixes),
         ].concat(registry.providers.map((pr) => field('Code ' + provName(pr) + ' (vide : ne sert pas cet opérateur)', codes[pr]))).concat([

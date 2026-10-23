@@ -62,6 +62,7 @@ ${table(['Pays', 'Indicatif', 'Opérateurs (network)'], [
   ['Cameroun', '+237', '<code>MTN_MOMO_CMR</code>, <code>ORANGE_CMR</code>'],
   ['Côte d’Ivoire', '+225', '<code>MTN_MOMO_CIV</code>, <code>MOOV_CIV</code>'],
   ['Togo', '+228', '<code>TMONEY_TGO</code>, <code>MOOV_TGO</code>'],
+  ['Gabon', '+241', '<code>AIRTEL_GAB</code>, <code>MOOV_GAB</code>'],
 ])}
 ${note('Seuls les pays ouverts par LightPay acceptent des paiements : lisez la route ci-dessus plutôt que ce tableau. Un numéro s’écrit avec l’indicatif de son pays (<code>237691234567</code>) ; sans indicatif, il est lu dans le pays de l’opérateur choisi.')}`,
   },
