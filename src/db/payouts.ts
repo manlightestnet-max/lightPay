@@ -3,7 +3,7 @@ import { query } from './pool.js';
 import { LedgerEngine } from './ledger.js';
 import { Environment } from '../types/index.js';
 import { numberFitsNetwork } from '../rails/registry.js';
-import { transferForPayout } from '../payments/rebalance.js';
+import { releaseIfTransferEnded, transferForPayout } from '../payments/rebalance.js';
 import { MobileNetwork, networkName, providerByName, providerFor, RailOperation, RailResult } from '../payments/mobile-money.js';
 import { lightpayFeeWallet, settlePayoutFee } from './fee-wallet.js';
 import { isPersonWallet, logActivity, maskPhone, reasonFor, updateActivity } from './activity.js';
@@ -150,6 +150,10 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
       scheduled ? 'SCHEDULED' : 'PENDING', delayMinutes, input.routingRule ?? null, waitingTransfer],
     env
   );
+  // The transfer may have ended before this row existed (an instant answer): the payout must not wait a day for it.
+  if (row && waitingTransfer) {
+    await releaseIfTransferEnded(env, waitingTransfer).catch((err) => console.error('[PAYOUT] release after transfer failed', payoutId, err?.message));
+  }
   if (row && (await isPersonWallet(env, input.walletId))) {
     await logActivity(env, {
       walletId: input.walletId, kind: input.reason === 'WITHDRAWAL' ? 'WITHDRAWAL' : 'REFUND', direction: 'OUT', status: 'PENDING',

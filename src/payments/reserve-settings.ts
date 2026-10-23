@@ -20,12 +20,18 @@ export interface ReserveSettings {
   gap_alert: number;
   /** LightPay reads the providers' balances by itself every N minutes (0: only on demand). */
   auto_check_minutes: number;
-  /** A withdrawal to a country short of funds waits for a transfer from another wallet of its provider (SasPay). */
+  /**
+   * A withdrawal to a country short of funds waits for a transfer from another wallet of its provider (SasPay).
+   * Off by default, and only toward a wallet whose target level the admin has set: LightPay never moves provider
+   * money on its own before the admin asked for it.
+   */
   rebalance_payouts: boolean;
   /** A wallet under its low threshold (with a target) is refilled by itself, without waiting for a withdrawal. */
   rebalance_low: boolean;
   /** Added to a transfer to cover the provider's fee and rounding on the way (basis points: 50 = 0.5 %). */
   transfer_margin_bps: number;
+  /** No automatic transfer below this amount (a small transfer loses its fee and rounding: 2 FCFA out of 5). */
+  transfer_min: number;
   /** Per provider wallet, keyed "provider:COUNTRY" (saspay:COG). Missing = all zero. */
   wallets: Record<string, ReserveLevels>;
 }
@@ -33,9 +39,10 @@ export interface ReserveSettings {
 export const DEFAULT_RESERVE_SETTINGS: Readonly<ReserveSettings> = Object.freeze({
   gap_alert: 0,
   auto_check_minutes: 15,
-  rebalance_payouts: true,
+  rebalance_payouts: false,
   rebalance_low: false,
   transfer_margin_bps: 50,
+  transfer_min: 1_000,
   wallets: {},
 });
 export const NO_LEVELS: Readonly<ReserveLevels> = Object.freeze({ min: 0, low: 0, target: 0 });
@@ -45,6 +52,7 @@ export const RESERVE_RANGES = {
   gap_alert: [0, 100_000_000] as [number, number],
   auto_check_minutes: [0, 1_440] as [number, number],
   transfer_margin_bps: [0, 1_000] as [number, number],
+  transfer_min: [0, 100_000_000] as [number, number],
   level: [0, 10_000_000_000] as [number, number],
 };
 
@@ -69,12 +77,12 @@ const inRange = (n: number, [min, max]: [number, number]) => Number.isInteger(n)
 /** Whole numbers in range everywhere; per wallet min ≤ low ≤ target, unless the target is not set (0). */
 export function validateReserveSettings(input: unknown): ReserveSettings {
   const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
-  const out: ReserveSettings = { gap_alert: 0, auto_check_minutes: 0, rebalance_payouts: true, rebalance_low: false, transfer_margin_bps: 0, wallets: {} };
+  const out: ReserveSettings = { gap_alert: 0, auto_check_minutes: 0, rebalance_payouts: false, rebalance_low: false, transfer_margin_bps: 0, transfer_min: 0, wallets: {} };
   for (const k of ['rebalance_payouts', 'rebalance_low'] as const) {
     if (typeof raw[k] !== 'boolean') throw new ReserveSettingsError(`${k} : oui ou non.`);
     out[k] = raw[k] as boolean;
   }
-  for (const k of ['gap_alert', 'auto_check_minutes', 'transfer_margin_bps'] as const) {
+  for (const k of ['gap_alert', 'auto_check_minutes', 'transfer_margin_bps', 'transfer_min'] as const) {
     const n = whole(raw[k]);
     if (!inRange(n, RESERVE_RANGES[k])) throw new ReserveSettingsError(`Valeur invalide pour ${k} (${RESERVE_RANGES[k][0]} à ${RESERVE_RANGES[k][1]}).`);
     out[k] = n;

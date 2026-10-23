@@ -117,8 +117,9 @@ export async function transferSources(env: Environment, provider: string, to: st
 
 /**
  * Where to take money from, and how much, to bring a provider wallet back to its target level, or at least to cover
- * `need` (a withdrawal waiting). A margin (admin setting) covers the provider's fee and rounding on the way.
- * Null when nothing is missing or no other wallet can give enough.
+ * `need` (a withdrawal waiting). A margin (admin setting) covers the provider's fee and rounding on the way, and an
+ * automatic transfer is never smaller than the admin's minimum (a tiny transfer loses most of itself to the fee and the
+ * rounding). Null when nothing is missing or no other wallet can give enough.
  */
 export async function planTransfer(env: Environment, provider: string, to: string, need = 0n): Promise<TransferPlan | null> {
   const available = (await reserveAvailable(env, provider, to)) ?? 0n;
@@ -128,9 +129,11 @@ export async function planTransfer(env: Environment, provider: string, to: strin
   if (wanted <= 0n) return null;
   const marginBps = BigInt(reserveSettings(env).transfer_margin_bps);
   const withMargin = (x: bigint) => x + (x * marginBps + 9_999n) / 10_000n;
-  const [best] = (await transferSources(env, provider, to)).filter((c) => c.surplus > 0n);
+  const floor = BigInt(reserveSettings(env).transfer_min);
+  const [best] = (await transferSources(env, provider, to)).filter((c) => c.surplus > 0n && c.surplus >= floor);
   if (!best) return null;
-  const amount = withMargin(wanted) < best.surplus ? withMargin(wanted) : best.surplus;
+  const ask = max(withMargin(wanted), floor);
+  const amount = ask < best.surplus ? ask : best.surplus;
   // A withdrawal needs its whole amount: a smaller transfer would leave it stuck.
   if (short > 0n && amount < withMargin(short)) return null;
   return { from: best.country, amount, surplus: best.surplus };
@@ -245,11 +248,13 @@ const costsWallet = async (env: Environment) =>
   )[0].id as string;
 
 /**
- * What the transfer cost at the provider: sent − received + fee (taken from the receiving wallet). It left the
- * provider's wallets: booked out of the transit account, against the provider costs, in the receiving country.
+ * What the transfer cost at the provider: sent − received. SasPay's to_amount is what stays in the receiving wallet
+ * once its fee is taken (23 October: 5 XOF sent, +4 XAF then −1 fee in its dashboard, to_amount 3), so the fee is
+ * already inside the difference. It left the provider's wallets: booked out of the transit account, against the
+ * provider costs, in the receiving country.
  */
 async function bookCost(t: TransferRow): Promise<void> {
-  const cost = BigInt(t.amount) - BigInt(t.received ?? t.amount) + BigInt(t.fee ?? 0);
+  const cost = BigInt(t.amount) - BigInt(t.received ?? t.amount);
   if (cost <= 0n || t.cost_transaction_id) return;
   const env = t.environment;
   const transit = await LedgerEngine.getOrCreateGatewayInflow('mainapp', env, 'XAF');
@@ -269,6 +274,15 @@ async function bookCost(t: TransferRow): Promise<void> {
   });
   const txId = result?.transactionId ?? result?.transaction?.id ?? null;
   if (txId) await query(`UPDATE provider_transfers SET cost_transaction_id = $2 WHERE id = $1`, [t.id, txId], env);
+}
+
+/**
+ * A payout written after its transfer already ended (SasPay can answer COMPLETED at once, before the payout row
+ * exists): released now instead of waiting a day.
+ */
+export async function releaseIfTransferEnded(env: Environment, transferId: string): Promise<void> {
+  const [t] = await query(`SELECT status FROM provider_transfers WHERE id = $1`, [transferId], env);
+  if (t && t.status !== 'QUEUED' && t.status !== 'PENDING') await releaseWaiting(env, transferId);
 }
 
 /** The withdrawals and refunds waiting for this transfer leave once their own delay has passed. */
@@ -317,6 +331,8 @@ export async function resolveTransferByReference(reference: string): Promise<boo
 export async function transferForPayout(env: Environment, provider: string, network: string, total: bigint): Promise<string | null> {
   if (!reserveSettings(env).rebalance_payouts || !canTransfer(env, provider)) return null;
   const country = countryOfNetwork(network) ?? DEFAULT_COUNTRY;
+  // Only toward a wallet the admin manages (its target level set): never on its own initiative elsewhere.
+  if (levelsOf(env, provider, country).target <= 0) return null;
   const available = await reserveAvailable(env, provider, country);
   if (available === null || available >= total) return null;
   if (available + (await inFlight(env, provider, country, 'to')) >= total) {

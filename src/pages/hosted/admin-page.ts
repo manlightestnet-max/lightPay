@@ -654,9 +654,10 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     $('resSettings').replaceChildren(
       settingItem(['gap_alert', 'Écart toléré', 'Au-delà, la ligne passe en alerte (0 : le moindre écart)', 'fcfa', resRanges.gap_alert], RES_STORE),
       settingItem(['auto_check_minutes', 'Lecture automatique des soldes', 'LightPay lit les soldes chez les fournisseurs toutes les N minutes (0 : seulement sur demande)', 'min', resRanges.auto_check_minutes], RES_STORE),
-      toggleItem('rebalance_payouts', 'Retrait vers un pays à sec', 'Le retrait attend un transfert depuis un autre wallet du fournisseur (la personne voit « en cours »)', RES_STORE),
+      toggleItem('rebalance_payouts', 'Retrait vers un pays à sec', 'Le retrait attend un transfert depuis un autre wallet du fournisseur (la personne voit « en cours »). Seulement vers un wallet dont vous avez fixé le niveau cible', RES_STORE),
       toggleItem('rebalance_low', 'Remise à niveau automatique', 'Un wallet sous son seuil bas (avec un niveau cible) est rempli sans attendre un retrait', RES_STORE),
-      settingItem(['transfer_margin_bps', 'Marge d’un transfert', 'Ajoutée au montant pour couvrir les frais du fournisseur et les arrondis', 'pct', resRanges.transfer_margin_bps], RES_STORE));
+      settingItem(['transfer_margin_bps', 'Marge d’un transfert', 'Ajoutée au montant pour couvrir les frais du fournisseur et les arrondis', 'pct', resRanges.transfer_margin_bps], RES_STORE),
+      settingItem(['transfer_min', 'Transfert automatique minimum', 'Jamais moins : un petit transfert perd l’essentiel en frais et arrondi (5 envoyés, 3 arrivés)', 'fcfa', resRanges.transfer_min], RES_STORE));
   }
   const TR_STATUS = { QUEUED: ['warn', 'en file'], PENDING: ['warn', 'demandé'], SUCCEEDED: ['ok', 'arrivé'], FAILED: ['err', 'refusé'], CANCELLED: ['', 'annulé'] };
   const TR_REASON = { manual: 'à la main', low: 'sous le seuil bas', payout: 'pour un retrait' };

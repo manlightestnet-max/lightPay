@@ -87,8 +87,10 @@ Google seulement (Firebase Auth, redirection dans le même onglet ; fenêtre seu
   en `XAF` ; le fournisseur reçoit la monnaie du pays de l’opérateur. Envoi entre personnes : gratuit, même d’un pays à
   l’autre.
 - **Rééquilibrage** (`src/payments/rebalance.ts`) : LightPay déplace son propre argent entre les wallets pays de SasPay
-  (`wallet-transfers`, un à la fois, en file) ; un retrait vers un pays à sec attend son transfert ; le coût est écrit en
-  `SYSTEM_PROVIDER_COSTS`. Rien ne passe jamais de pawaPay à SasPay.
+  (`wallet-transfers`, un à la fois, en file) ; un retrait vers un pays à sec attend son transfert ; le coût (envoyé −
+  arrivé, le `to_amount` de SasPay est déjà net de ses frais) est écrit en `SYSTEM_PROVIDER_COSTS`. **Désactivé par
+  défaut**, seulement vers un wallet dont l’admin a fixé le niveau cible, jamais sous le « transfert automatique minimum ».
+  Rien ne passe jamais de pawaPay à SasPay.
 - **Marchand direct** : une session de paiement ou un débit sans `payee` paie le wallet de l’app elle-même, sans
   commission (`fee_amount` exige un vendeur). Le séquestre est alors facultatif (désactivé par défaut).
 - Frais et minimums : **uniquement depuis l’admin** (« Frais et minimums »), par environnement ;
