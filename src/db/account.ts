@@ -11,7 +11,9 @@ import { MobileNetwork, mobileNetworks, networkName } from '../payments/mobile-m
 import { countryOfNetwork, invalidNumberMessage, normalizeMsisdn, numberFitsNetwork } from '../rails/registry.js';
 import { sendPayout } from './payouts.js';
 import { failureOf, logActivity } from './activity.js';
-import { lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, withdrawalQuote } from '../payments/fees.js';
+import { FeeError, lightpayPayoutFee, minMobileMoneyAmount, minWithdrawalAmount, providerPayoutFee, swapBetween, withdrawalQuote } from '../payments/fees.js';
+import { ensureProviderRates } from '../payments/provider-rates.js';
+import { lightpayRevenueWallet } from './fee-wallet.js';
 import { maskMsisdn } from './checkout.js';
 import { guardMoney, guardWithdrawals } from '../security/lockdown.js';
 import { assertNotSuspended, recordWithdrawalAttempt } from './withdrawal-guard.js';
@@ -75,7 +77,10 @@ export async function selfDeposit(environment: Environment, user: LightPayUser, 
   return { session_id: id, checkout_path: `/pay/${id}` };
 }
 
-/** Send money to another LightPay user, found by e-mail. */
+/**
+ * Send money to another LightPay user, found by e-mail or @name. Free when the receiver's wallet is in the same
+ * country; otherwise the sender pays LightPay's swap fee on top (the receiver gets the whole amount).
+ */
 export async function sendMoney(environment: Environment, user: LightPayUser, input: { to: unknown; amount: unknown; note?: unknown; wallet_id?: unknown }, idempotencyKey: string) {
   await assertNotSuspended(environment, user.uid); // an account suspended for withdrawal attempts sends nothing either
   const from = await activeWallet(environment, user, input.wallet_id);
@@ -89,23 +94,28 @@ export async function sendMoney(environment: Environment, user: LightPayUser, in
     if (found.uid === user.uid) throw new ConnectError('Vous ne pouvez pas vous envoyer de l’argent.', 'SAME_WALLET');
     const shown = found.name || (found.username ? `@${found.username}` : to);
     const recipient = { id: found.walletId, metadata: { name: shown } };
+    const swap = swapBetween(environment, from.country, found.country, amount);
     const result = await LedgerEngine.executeTransaction({
       appId: 'mainapp',
       environment,
       idempotencyKey: ref,
       type: 'TRANSFER',
-      amount,
+      amount: amount + swap,
+      feeAmount: swap,
       currency: from.currency,
-      metadata: { kind: 'P2P', from_uid: user.uid, to_uid: found.uid, to_username: found.username, note },
+      metadata: { kind: 'P2P', from_uid: user.uid, to_uid: found.uid, to_username: found.username, note, ...(swap > 0n ? { swap_fee: swap.toString(), from_country: from.country, to_country: found.country } : {}) },
       postings: [
         { walletId: from.id, direction: 'DEBIT', amount, description: `Envoi à ${recipient.metadata?.name || to}${note ? ` · ${note}` : ''}` },
         { walletId: recipient.id, direction: 'CREDIT', amount, description: `Reçu de ${user.name || user.email}${note ? ` · ${note}` : ''}` },
+        ...(await swapPostings(environment, from.id, from.currency, swap, ref)),
       ],
     });
-    const common = { kind: 'TRANSFER' as const, status: 'SUCCEEDED' as const, amount, total: amount, currency: from.currency, refType: 'transfer', refId: ref, metadata: { note } };
-    await logActivity(environment, { ...common, walletId: from.id, direction: 'OUT', counterparty: recipient.metadata?.name || to });
-    await logActivity(environment, { ...common, walletId: recipient.id, direction: 'IN', counterparty: user.name || user.email || 'LightPay' });
-    return { transaction_id: txId(result), duplicate: result.duplicate, to: { name: found.name, username: found.username, email: found.email }, amount: amount.toString() };
+    if (!result.duplicate) {
+      const common = { kind: 'TRANSFER' as const, status: 'SUCCEEDED' as const, amount, currency: from.currency, refType: 'transfer', refId: ref };
+      await logActivity(environment, { ...common, fees: swap, total: amount + swap, metadata: { note, ...(swap > 0n ? { swap_fee: swap.toString() } : {}) }, walletId: from.id, direction: 'OUT', counterparty: recipient.metadata?.name || to });
+      await logActivity(environment, { ...common, total: amount, metadata: { note }, walletId: recipient.id, direction: 'IN', counterparty: user.name || user.email || 'LightPay' });
+    }
+    return { transaction_id: txId(result), duplicate: result.duplicate, to: { name: found.name, username: found.username, email: found.email }, amount: amount.toString(), swap_fee: swap.toString(), total: (amount + swap).toString() };
   } catch (err: any) {
     const f = failureOf(err);
     await logActivity(environment, {
@@ -116,7 +126,10 @@ export async function sendMoney(environment: Environment, user: LightPayUser, in
   }
 }
 
-/** Between two of the person's own wallets (same franc): instant and free, never another person's. */
+/**
+ * Between two of the person's own wallets (same franc), never another person's: instant, free inside a country; from
+ * one country to another the swap fee is paid on top (the other wallet gets the whole amount).
+ */
 export async function moveBetweenWallets(environment: Environment, user: LightPayUser, input: { from: unknown; to: unknown; amount: unknown }, idempotencyKey: string) {
   guardMoney();
   await assertNotSuspended(environment, user.uid);
@@ -126,25 +139,55 @@ export async function moveBetweenWallets(environment: Environment, user: LightPa
   if (from.id === to.id) throw new ConnectError('Choisissez deux wallets différents.', 'SAME_WALLET');
   if (from.currency !== to.currency) throw new ConnectError('Ces deux wallets n’ont pas la même monnaie.', 'CURRENCY_MISMATCH');
   const ref = `move:${user.uid}:${idempotencyKey}`;
+  const swap = swapBetween(environment, from.country, to.country, amount);
   const result = await LedgerEngine.executeTransaction({
     appId: 'mainapp',
     environment,
     idempotencyKey: ref,
     type: 'TRANSFER',
-    amount,
+    amount: amount + swap,
+    feeAmount: swap,
     currency: from.currency,
-    metadata: { kind: 'OWN_WALLETS', uid: user.uid, from_wallet: from.id, to_wallet: to.id },
+    metadata: { kind: 'OWN_WALLETS', uid: user.uid, from_wallet: from.id, to_wallet: to.id, ...(swap > 0n ? { swap_fee: swap.toString(), from_country: from.country, to_country: to.country } : {}) },
     postings: [
       { walletId: from.id, direction: 'DEBIT', amount, description: `Vers mon wallet « ${to.label} »` },
       { walletId: to.id, direction: 'CREDIT', amount, description: `Depuis mon wallet « ${from.label} »` },
+      ...(await swapPostings(environment, from.id, from.currency, swap, ref)),
     ],
   });
   if (!result.duplicate) {
-    const common = { kind: 'TRANSFER' as const, status: 'SUCCEEDED' as const, amount, total: amount, currency: from.currency, refType: 'move', refId: ref };
-    await logActivity(environment, { ...common, walletId: from.id, direction: 'OUT', counterparty: `Mon wallet « ${to.label} »` });
-    await logActivity(environment, { ...common, walletId: to.id, direction: 'IN', counterparty: `Mon wallet « ${from.label} »` });
+    const common = { kind: 'TRANSFER' as const, status: 'SUCCEEDED' as const, amount, currency: from.currency, refType: 'move', refId: ref };
+    await logActivity(environment, { ...common, fees: swap, total: amount + swap, metadata: swap > 0n ? { swap_fee: swap.toString() } : undefined, walletId: from.id, direction: 'OUT', counterparty: `Mon wallet « ${to.label} »` });
+    await logActivity(environment, { ...common, total: amount, walletId: to.id, direction: 'IN', counterparty: `Mon wallet « ${from.label} »` });
   }
-  return { transaction_id: txId(result), duplicate: result.duplicate, amount: amount.toString(), from: from.id, to: to.id };
+  return { transaction_id: txId(result), duplicate: result.duplicate, amount: amount.toString(), swap_fee: swap.toString(), total: (amount + swap).toString(), from: from.id, to: to.id };
+}
+
+/** The swap fee leaves the wallet as its own line and reaches LightPay's main wallet (« Frais LightPay - swap »). */
+async function swapPostings(environment: Environment, walletId: string, currency: string, swap: bigint, ref: string) {
+  if (swap <= 0n) return [];
+  return [
+    { walletId, direction: 'DEBIT' as const, amount: swap, description: 'Frais de swap (autre pays)' },
+    { walletId: await lightpayRevenueWallet(environment, currency), direction: 'CREDIT' as const, amount: swap, description: `Frais LightPay - swap - ${ref}` },
+  ];
+}
+
+/** What a move between two of my wallets costs, before doing it (the swap fee when their countries differ). */
+export async function quoteMove(environment: Environment, user: LightPayUser, input: { from: unknown; to: unknown; amount: unknown }) {
+  const amount = positive(input.amount);
+  const from = await activeWallet(environment, user, input.from);
+  const to = await activeWallet(environment, user, input.to);
+  const swap = swapBetween(environment, from.country, to.country, amount);
+  return { amount: amount.toString(), swap_fee: swap.toString(), total: (amount + swap).toString(), currency: from.currency };
+}
+
+/** What a send costs, before doing it: free inside a country, the swap fee when the receiver's wallet is elsewhere. */
+export async function quoteSend(environment: Environment, user: LightPayUser, input: { to: unknown; amount: unknown; wallet_id?: unknown }) {
+  const amount = positive(input.amount);
+  const from = await activeWallet(environment, user, input.wallet_id);
+  const found = await findRecipient(environment, String(input.to ?? '').trim().toLowerCase(), from.currency);
+  const swap = swapBetween(environment, from.country, found.country, amount);
+  return { amount: amount.toString(), swap_fee: swap.toString(), total: (amount + swap).toString(), currency: from.currency };
 }
 
 /** Withdraw available money to a mobile-money number. Locked money can never leave. */
@@ -176,11 +219,20 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
   if (!numberFitsNetwork(msisdn, network)) throw await refused(new ConnectError(`Ce numéro n’est pas un numéro ${networkName(network)}.`, 'NETWORK_MISMATCH'));
   const route = await routeOperation({ env: environment, type: 'withdrawal', network, destination: wallet.country, appId: 'mainapp', amount });
   const provider = route.provider.name;
-  const operatorFee = providerPayoutFee(environment, provider, amount);
+  await ensureProviderRates(environment);
+  let operatorFee: bigint;
+  try {
+    operatorFee = providerPayoutFee(environment, provider, network, amount);
+  } catch (err: any) {
+    throw await refused(err instanceof FeeError ? new ConnectError(err.message, err.code, 503) : err);
+  }
   const lightpayFee = lightpayPayoutFee(environment, amount);
-  if (BigInt(wallet.available_balance) < amount + operatorFee + lightpayFee) {
+  // The number is in another country than the wallet: the money changes country, the person pays the swap fee.
+  const swap = swapBetween(environment, wallet.country, countryOfNetwork(network), amount);
+  const total = amount + operatorFee + lightpayFee + swap;
+  if (BigInt(wallet.available_balance) < total) {
     throw await refused(new ConnectError(
-      `Solde insuffisant : ce retrait coûte ${amount + operatorFee + lightpayFee} FCFA frais compris (${operatorFee} opérateur + ${lightpayFee} LightPay).`,
+      `Solde insuffisant : ce retrait coûte ${total} FCFA frais compris (${operatorFee} opérateur + ${lightpayFee} LightPay${swap > 0n ? ` + ${swap} swap` : ''}).`,
       'INSUFFICIENT_FUNDS',
       402
     ));
@@ -194,7 +246,9 @@ export async function withdraw(environment: Environment, user: LightPayUser, inp
     network,
     amount,
     operatorFee,
-    lightpayFee,
+    // The swap fee follows LightPay's fee (pending until the send is confirmed, returned if it fails).
+    lightpayFee: lightpayFee + swap,
+    swapFee: swap,
     currency: wallet.currency,
     reason: 'WITHDRAWAL',
     reference: `withdraw:${user.uid}:${idempotencyKey}`,
@@ -213,7 +267,9 @@ const payoutView = (p: any) => ({
   release_at: p.status === 'SCHEDULED' && !p.waiting_transfer ? p.release_at : null,
   amount: String(p.amount),
   operator_fee: String(p.operator_fee ?? 0),
-  lightpay_fee: String(p.lightpay_fee ?? 0),
+  // lightpay_fee holds the swap fee too (same road): shown apart.
+  lightpay_fee: String(BigInt(p.lightpay_fee ?? 0) - BigInt(p.swap_fee ?? 0)),
+  swap_fee: String(p.swap_fee ?? 0),
   total: String(p.total_debited ?? p.amount),
   currency: p.currency,
   to: maskMsisdn(p.msisdn),
@@ -275,11 +331,16 @@ export async function closeAccount(user: LightPayUser) {
 }
 
 /** What a withdrawal will cost, before doing it (same computation and same routing as withdraw()). */
-export async function quoteWithdrawal(environment: Environment, user: LightPayUser, amountInput: unknown, networkInput: unknown) {
+export async function quoteWithdrawal(environment: Environment, user: LightPayUser, amountInput: unknown, networkInput: unknown, walletId?: unknown) {
   const amount = positive(amountInput);
   const network = String(networkInput ?? '') as MobileNetwork;
   if (!mobileNetworks().includes(network)) throw new ConnectError(`network: ${mobileNetworks().join(', ')}`, 'INVALID_NETWORK');
-  const wallet = await findDefaultWallet(environment, user.uid);
+  const wallet = walletId ? await walletOf(environment, user.uid, { id: String(walletId) }) : await findDefaultWallet(environment, user.uid);
   const route = await routeOperation({ env: environment, type: 'withdrawal', network, destination: wallet?.country, appId: 'mainapp', amount });
-  return withdrawalQuote(environment, amount, route.provider.name, 'XAF');
+  await ensureProviderRates(environment);
+  try {
+    return withdrawalQuote(environment, amount, route.provider.name, network, 'XAF', swapBetween(environment, wallet?.country, countryOfNetwork(network), amount));
+  } catch (err: any) {
+    throw err instanceof FeeError ? new ConnectError(err.message, err.code, 503) : err;
+  }
 }

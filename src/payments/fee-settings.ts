@@ -12,17 +12,19 @@ export interface FeeSettings {
   deposit_min: number;
   deposit_lightpay_fee_min: number;
   deposit_lightpay_fee_bps: number;
-  /** Operator fee shown before a deposit (estimate until the operator reports it). */
-  deposit_operator_fee_bps: number;
   withdrawal_min: number;
   withdrawal_lightpay_fee_min: number;
   withdrawal_lightpay_fee_bps: number;
-  withdrawal_operator_fee_bps: number;
-  withdrawal_operator_fee_min: number;
-  /** pawaPay: operator fee asked on top of a deposit (covers pawaPay's fee), and on a payout. */
+  /**
+   * pawaPay: operator fee asked on top of a deposit (covers pawaPay's fee), and on a payout. pawaPay has no prices
+   * API: these stay set by hand. SasPay's come from its live rates (./provider-rates.ts), never from here.
+   */
   pawapay_deposit_fee_bps: number;
   pawapay_payout_fee_bps: number;
-  /** Moving a wallet to another country (decided by the admin): LightPay's swap fee on its balance, and its minimum. */
+  /**
+   * LightPay's swap fee, whenever money changes country (./fees.ts swapFee): on the amount that crosses, and its
+   * minimum. Also taken on the balance of a wallet the admin moves to another country.
+   */
   swap_fee_bps: number;
   swap_fee_min: number;
 }
@@ -31,12 +33,9 @@ export const DEFAULT_FEE_SETTINGS: Readonly<FeeSettings> = Object.freeze({
   deposit_min: 1000,
   deposit_lightpay_fee_min: 5,
   deposit_lightpay_fee_bps: 0,
-  deposit_operator_fee_bps: 650,
   withdrawal_min: 200,
   withdrawal_lightpay_fee_min: 5,
   withdrawal_lightpay_fee_bps: 0,
-  withdrawal_operator_fee_bps: 400,
-  withdrawal_operator_fee_min: 0,
   pawapay_deposit_fee_bps: 0,
   pawapay_payout_fee_bps: 0,
   swap_fee_bps: 100,

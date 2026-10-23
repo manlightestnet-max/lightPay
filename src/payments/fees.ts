@@ -1,40 +1,56 @@
 import { Environment } from '../types/index.js';
+import { DEFAULT_COUNTRY } from '../rails/registry.js';
 import { feeSettings } from './fee-settings.js';
+import { knownProviderFee } from './provider-rates.js';
 
 /**
- * Fees and minimums, per ledger, from the admin's settings (./fee-settings.ts). Nothing here
- * comes from the environment: the admin console is the only place they change.
+ * Fees and minimums, per ledger. LightPay's own fees come from the admin's settings (./fee-settings.ts, « Frais et
+ * minimums »); the operator fees come from the provider's own prices. Nothing comes from the environment.
  *
  * Deposits and mobile-money payments
  *   LightPay fee   max(deposit_lightpay_fee_min, ceil(amount × deposit_lightpay_fee_bps / 10 000)),
  *                  added on top, paid by the payer
  *   Operator fee   charged on top, per provider:
- *                  SasPay   its own fee (ADD_ON), shown as an estimate (deposit_operator_fee_bps)
+ *                  SasPay   its live rate for this operator (./provider-rates.ts), shown as an estimate
  *                           until SasPay reports the exact amount debited
- *                  pawaPay  pawapay_deposit_fee_bps, asked on top by us (exact): it covers the
- *                           fee pawaPay takes out of our pawaPay balance
+ *                  pawaPay  pawapay_deposit_fee_bps (no prices API), asked on top by us (exact): it covers
+ *                           the fee pawaPay takes out of our pawaPay balance
  *   The payee (or the wallet being topped up) always receives the requested amount.
  *
  * Payouts (withdrawals, refunds)
- *   Operator fee   SasPay: max(withdrawal_operator_fee_min, amount × withdrawal_operator_fee_bps);
- *                  pawaPay: amount × pawapay_payout_fee_bps. Paid from our provider balance
+ *   Operator fee   SasPay: its live payout rate for this operator; pawaPay: amount × pawapay_payout_fee_bps.
+ *                  Paid from our provider balance. Without a SasPay price LightPay refuses (it would pay the fee)
  *   LightPay fee   max(withdrawal_lightpay_fee_min, amount × withdrawal_lightpay_fee_bps)
  *   The person receives exactly the amount asked; the wallet is debited amount + both fees.
  *   Refunds to a guest's phone carry the same two fees as a withdrawal (operator + LightPay), taken out
  *   of the refund itself: the guest gets the largest amount that, fees included, fits in what they paid.
+ *
+ * Swap (money that changes country): max(swap_fee_min, ceil(amount × swap_fee_bps / 10 000)), never inside a
+ * country. Paid on top by the person who moves their money (withdrawal, deposit, send, move between their own
+ * wallets); taken from what a seller of another country receives for a sale.
  */
 
 const ceilBps = (amount: bigint, bps: number) => (amount * BigInt(bps) + 9_999n) / 10_000n;
 const atLeast = (byRate: bigint, min: number) => (byRate > BigInt(min) ? byRate : BigInt(min));
+
+export class FeeError extends Error {
+  statusCode = 503;
+  constructor(message: string, public code = 'OPERATOR_PRICE_UNAVAILABLE') {
+    super(message);
+  }
+}
 
 export function lightpayCollectionFee(env: Environment, amount: bigint): bigint {
   const s = feeSettings(env);
   return atLeast(ceilBps(amount, s.deposit_lightpay_fee_bps), s.deposit_lightpay_fee_min);
 }
 
-/** Estimated operator fee for a provider, on the amount it is asked to collect. */
-export function providerFeeEstimate(env: Environment, provider: string, collected: bigint): bigint {
-  if (provider === 'saspay') return ceilBps(collected, feeSettings(env).deposit_operator_fee_bps);
+/**
+ * Operator fee for a provider, on the amount it is asked to collect through this operator. SasPay's is only shown
+ * (SasPay takes it from the payer and reports it): 0 while its price is unknown.
+ */
+export function providerFeeEstimate(env: Environment, provider: string, network: string, collected: bigint): bigint {
+  if (provider === 'saspay') return knownProviderFee(env, 'saspay', network, 'collection', collected) ?? 0n;
   if (provider === 'pawapay') return ceilBps(collected, feeSettings(env).pawapay_deposit_fee_bps);
   return 0n;
 }
@@ -46,6 +62,8 @@ export interface FeeQuote {
   amount: string;
   lightpay_fee: string;
   operator_fee: string;
+  /** LightPay's swap fee: the money changes country (0 inside a country). */
+  swap_fee: string;
   total: string;
   /** Smallest amount accepted by mobile money. */
   minimum: string;
@@ -53,14 +71,15 @@ export interface FeeQuote {
   estimated: boolean;
 }
 
-export function quote(env: Environment, amount: bigint, provider: string): FeeQuote {
+export function quote(env: Environment, amount: bigint, provider: string, network: string, swap = 0n): FeeQuote {
   const lightpay = lightpayCollectionFee(env, amount);
-  const operator = providerFeeEstimate(env, provider, amount + lightpay);
+  const operator = providerFeeEstimate(env, provider, network, amount + lightpay + swap);
   return {
     amount: amount.toString(),
     lightpay_fee: lightpay.toString(),
     operator_fee: operator.toString(),
-    total: (amount + lightpay + operator).toString(),
+    swap_fee: swap.toString(),
+    total: (amount + lightpay + swap + operator).toString(),
     minimum: minMobileMoneyAmount(env).toString(),
     // pawaPay's is exactly what we ask; SasPay's is only known once it reports it.
     estimated: provider === 'saspay' && operator > 0n,
@@ -77,12 +96,16 @@ export function lightpayPayoutFee(env: Environment, amount: bigint): bigint {
   return atLeast(ceilBps(amount, s.withdrawal_lightpay_fee_bps), s.withdrawal_lightpay_fee_min);
 }
 
-/** Operator fee on a payout of `amount` (what the phone receives). */
-export function providerPayoutFee(env: Environment, provider: string, amount: bigint): bigint {
+/**
+ * Operator fee on a payout of `amount` (what the phone receives) through this operator. SasPay's live price; refused
+ * when unknown (LightPay would pay the fee out of its own balance).
+ */
+export function providerPayoutFee(env: Environment, provider: string, network: string, amount: bigint): bigint {
   if (provider === 'pawapay') return ceilBps(amount, feeSettings(env).pawapay_payout_fee_bps);
   if (provider !== 'saspay') return 0n;
-  const s = feeSettings(env);
-  return atLeast(ceilBps(amount, s.withdrawal_operator_fee_bps), s.withdrawal_operator_fee_min);
+  const fee = knownProviderFee(env, 'saspay', network, 'payout', amount);
+  if (fee === null) throw new FeeError('Le tarif de l’opérateur est indisponible pour le moment. Réessayez dans quelques minutes.');
+  return fee;
 }
 
 export interface WithdrawalQuote {
@@ -90,6 +113,8 @@ export interface WithdrawalQuote {
   amount: string;
   operator_fee: string;
   lightpay_fee: string;
+  /** LightPay's swap fee: the number is in another country than the wallet (0 otherwise). */
+  swap_fee: string;
   /** What leaves the wallet. */
   total: string;
   minimum: string;
@@ -97,14 +122,15 @@ export interface WithdrawalQuote {
   estimated: boolean;
 }
 
-export function withdrawalQuote(env: Environment, amount: bigint, provider: string, currency: string): WithdrawalQuote {
-  const operator = providerPayoutFee(env, provider, amount);
+export function withdrawalQuote(env: Environment, amount: bigint, provider: string, network: string, currency: string, swap = 0n): WithdrawalQuote {
+  const operator = providerPayoutFee(env, provider, network, amount);
   const lightpay = lightpayPayoutFee(env, amount);
   return {
     amount: amount.toString(),
     operator_fee: operator.toString(),
     lightpay_fee: lightpay.toString(),
-    total: (amount + operator + lightpay).toString(),
+    swap_fee: swap.toString(),
+    total: (amount + operator + lightpay + swap).toString(),
     minimum: minWithdrawalAmount(env).toString(),
     currency,
     estimated: false,
@@ -116,8 +142,8 @@ export function withdrawalQuote(env: Environment, amount: bigint, provider: stri
  * (s + operator fee(s) + LightPay fee(s) ≤ total), or 0 when even the fees cannot be covered.
  * The cost is strictly increasing in s, so a binary search is exact.
  */
-export function refundSendable(env: Environment, total: bigint, provider: string): bigint {
-  const cost = (s: bigint) => s + providerPayoutFee(env, provider, s) + lightpayPayoutFee(env, s);
+export function refundSendable(env: Environment, total: bigint, provider: string, network: string): bigint {
+  const cost = (s: bigint) => s + providerPayoutFee(env, provider, network, s) + lightpayPayoutFee(env, s);
   let lo = 0n;
   let hi = total;
   while (lo < hi) {
@@ -139,18 +165,24 @@ export interface RefundBreakdown {
  * A refund of `total` to a guest: what is sent and the two fees. The few francs left over by
  * rounding count as operator fee, so sent + operator_fee + lightpay_fee is exactly `total`.
  */
-export function refundBreakdown(env: Environment, total: bigint, provider: string): RefundBreakdown {
-  const sent = refundSendable(env, total, provider);
+export function refundBreakdown(env: Environment, total: bigint, provider: string, network: string): RefundBreakdown {
+  const sent = refundSendable(env, total, provider, network);
   if (sent <= 0n) return { sent: 0n, operator_fee: 0n, lightpay_fee: 0n };
   const lightpay = lightpayPayoutFee(env, sent);
   return { sent, operator_fee: total - sent - lightpay, lightpay_fee: lightpay };
 }
 
-/** LightPay's fee to move a wallet of this balance to another country (never more than the balance). */
-export function swapFee(env: Environment, balance: bigint): bigint {
-  if (balance <= 0n) return 0n;
+/** LightPay's swap fee on an amount that changes country (never more than the amount). */
+export function swapFee(env: Environment, amount: bigint): bigint {
+  if (amount <= 0n) return 0n;
   const s = feeSettings(env);
-  const fee = (balance * BigInt(s.swap_fee_bps) + 9_999n) / 10_000n;
-  const withMin = fee > BigInt(s.swap_fee_min) ? fee : BigInt(s.swap_fee_min);
-  return withMin < balance ? withMin : balance;
+  const fee = atLeast(ceilBps(amount, s.swap_fee_bps), s.swap_fee_min);
+  return fee < amount ? fee : amount;
 }
+
+/** Two countries are the same one (a wallet or number without a country counts as Congo, like the routing). */
+export const sameCountry = (a?: string | null, b?: string | null) => (a || DEFAULT_COUNTRY) === (b || DEFAULT_COUNTRY);
+
+/** The swap fee when money goes from country `from` to country `to`: 0 inside a country. */
+export const swapBetween = (env: Environment, from: string | null | undefined, to: string | null | undefined, amount: bigint): bigint =>
+  sameCountry(from, to) ? 0n : swapFee(env, amount);

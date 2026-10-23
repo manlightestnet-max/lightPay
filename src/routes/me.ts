@@ -4,7 +4,8 @@ import { ConnectError, SCOPE_LABELS, approve, listUserConnections, revokeConnect
 import { closeWallet, findDefaultWallet, listWallets, openWallet, renameWallet, setDefaultWallet, userWallet, walletOf, WalletRow } from '../wallets/index.js';
 import { controlSettings } from '../payments/control-settings.js';
 import { cancelCountryRequest, chooseCountry, countryChangeQuote, mustChooseCountry, requestCountryChange } from '../wallets/country.js';
-import { countryByCode } from '../rails/registry.js';
+import { countryByCode, countryOfNetwork } from '../rails/registry.js';
+import { ensureProviderRates } from '../payments/provider-rates.js';
 
 /** The pending request of each wallet, or its last decision of the past week (shown on the wallet). */
 async function countryRequestsOf(env: Environment, wallets: WalletRow[]) {
@@ -33,8 +34,8 @@ const walletView = (w: WalletRow, requests?: Map<string, any>) => ({
   country_request: requests?.get(w.id) ?? null,
   created_at: w.created_at,
 });
-import { closeAccount, listWithdrawals, moveBetweenWallets, quoteWithdrawal, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
-import { minMobileMoneyAmount, minWithdrawalAmount, quote } from '../payments/fees.js';
+import { closeAccount, listWithdrawals, moveBetweenWallets, quoteMove, quoteSend, quoteWithdrawal, selfDeposit, sendMoney, updateConnection, withdraw } from '../db/account.js';
+import { minMobileMoneyAmount, minWithdrawalAmount, quote, swapBetween } from '../payments/fees.js';
 import { getActivity, listActivity } from '../db/activity.js';
 import { mobileNetworks } from '../payments/mobile-money.js';
 import { route as routeOperation } from '../rails/routing.js';
@@ -121,7 +122,9 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   PATCH  /v1/me/wallets/:id             { label }  rename
  *   POST   /v1/me/wallets/:id/default     receives what names no wallet (transfers to @username, connections…)
  *   DELETE /v1/me/wallets/:id             close (empty, nothing pending, not the default)
- *   POST   /v1/me/wallets/move            { from, to, amount }  between my wallets, free (X-LightPay-Pin)
+ *   POST   /v1/me/wallets/move            { from, to, amount }  between my wallets (X-LightPay-Pin): free in one country,
+ *                                          the swap fee on top from one country to another
+ *   GET    /v1/me/wallets/move/quote      ?from&to&amount -> swap fee, total debited
  *   PUT    /v1/me/country                 { country }  the first wallet's country, chosen once (choose_country in /v1/me)
  *   GET    /v1/me/wallets/:id/country-quote   what moving this wallet to another country would cost now (swap fee)
  *   POST   /v1/me/wallets/:id/country     { country, reason? }  ask to move it (decided by LightPay's admin) · DELETE cancels
@@ -133,12 +136,14 @@ const recent = (request: FastifyRequest, reply: FastifyReply) => {
  *   PATCH  /v1/me/connections/:id         remove permissions / change the charge limit
  *   POST   /v1/me/deposits                top up by mobile money -> hosted page        { amount, wallet_id? }
  *   POST   /v1/me/transfers               send to another LightPay user (X-LightPay-Pin)   { to, amount, note?, wallet_id? }
+ *                                          (the swap fee on top when the receiver's wallet is in another country)
+ *   GET    /v1/me/transfers/quote         ?to&amount&wallet_id -> swap fee, total debited
  *   POST   /v1/me/withdrawals             withdraw to mobile money (X-LightPay-Pin)    { amount, msisdn, network, wallet_id? }
  *   PUT    /v1/me/pin                     { pin, current_pin? }  choose / change the 6-digit code
  *                                          (forgotten: recent Google sign-in instead of current_pin)
  *   GET    /v1/me/withdrawals             my withdrawals
- *   GET    /v1/me/withdrawals/quote       ?amount&network -> amount received, fees, total debited
- *   GET    /v1/me/deposits/quote          ?amount -> what the phone pays, per operator
+ *   GET    /v1/me/withdrawals/quote       ?amount&network&wallet_id -> amount received, fees (operator, LightPay, swap), total debited
+ *   GET    /v1/me/deposits/quote          ?amount&wallet_id -> what the phone pays, per operator (swap fee from another country)
  *   DELETE /v1/me                         close my account (recent sign-in, everything at zero)
  *   PUT    /v1/me/username                { username }  my @username (required to use the wallet)
  *   GET    /v1/me/recipient               ?to=@name|e-mail -> who a transfer would reach (name, @username)
@@ -277,6 +282,13 @@ export async function meRoutes(fastify: FastifyInstance) {
       return fail(reply, err);
     }
   });
+  fastify.get('/wallets/move/quote', async (request, reply) => {
+    try {
+      return { status: 'success', quote: await quoteMove(envOf(request), request.lightpayUser!, request.query as any) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
   fastify.post('/wallets/move', async (request, reply) => {
     const key = idem(request, reply);
     if (!key || !(await pinOk(request, reply))) return;
@@ -334,6 +346,14 @@ export async function meRoutes(fastify: FastifyInstance) {
     if (!key) return;
     try {
       return { status: 'success', ...(await selfDeposit(envOf(request), request.lightpayUser!, (request.body as any)?.amount, key, (request.body as any)?.wallet_id)) };
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
+  fastify.get('/transfers/quote', async (request, reply) => {
+    try {
+      return { status: 'success', quote: await quoteSend(envOf(request), request.lightpayUser!, request.query as any) };
     } catch (err) {
       return fail(reply, err);
     }
@@ -459,7 +479,7 @@ export async function meRoutes(fastify: FastifyInstance) {
   fastify.get('/withdrawals/quote', async (request, reply) => {
     const q = request.query as any;
     try {
-      return { status: 'success', quote: await quoteWithdrawal(envOf(request), request.lightpayUser!, q.amount, q.network) };
+      return { status: 'success', quote: await quoteWithdrawal(envOf(request), request.lightpayUser!, q.amount, q.network, q.wallet_id) };
     } catch (err) {
       return fail(reply, err);
     }
@@ -470,9 +490,14 @@ export async function meRoutes(fastify: FastifyInstance) {
     if (!/^\d{1,12}$/.test(raw) || BigInt(raw) <= 0n) return reply.status(400).send({ error: 'INVALID_AMOUNT', message: 'Montant invalide.' });
     const amount = BigInt(raw);
     const env = envOf(request);
-    const wallet = request.lightpayUser ? await findDefaultWallet(env, request.lightpayUser.uid) : null;
+    // The wallet being topped up (the one named, the default one otherwise): a number of another country adds the swap fee.
+    const walletId = String((request.query as any).wallet_id ?? '');
+    const wallet = request.lightpayUser
+      ? walletId ? await walletOf(env, request.lightpayUser.uid, { id: walletId }).catch(() => null) : await findDefaultWallet(env, request.lightpayUser.uid)
+      : null;
+    await ensureProviderRates(env);
     const quotes = await Promise.all(
-      mobileNetworks().map(async (n) => [n, quote(env, amount, (await routeOperation({ env, type: 'deposit', network: n, destination: wallet?.country, appId: 'mainapp', amount })).provider.name)])
+      mobileNetworks().map(async (n) => [n, quote(env, amount, (await routeOperation({ env, type: 'deposit', network: n, destination: wallet?.country, appId: 'mainapp', amount })).provider.name, n, swapBetween(env, wallet?.country, countryOfNetwork(n), amount))])
     );
     return { status: 'success', quotes: Object.fromEntries(quotes) };
   });

@@ -60,7 +60,10 @@ export interface SendPayoutInput {
   /** Provider fee, paid on top from our provider balance (covered by the wallet debit). */
   operatorFee?: bigint;
   /** LightPay's fee (credited to LIGHTPAY_FEES). */
+  /** LightPay's fee; includes the swap fee when there is one (same road: pending, returned on failure). */
   lightpayFee?: bigint;
+  /** The part of lightpayFee that is the swap fee (the money changes country). */
+  swapFee?: bigint;
   currency: string;
   reason: PayoutRow['reason'];
   /** Idempotency of the whole payout (e.g. withdraw:<uid>:<key>, refund:<hold id>). */
@@ -100,7 +103,8 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   if (env === 'production' && provider.name === 'simulator') throw new Error('Le mobile money est indisponible pour le moment. Réessayez plus tard.');
   const operatorFee = input.operatorFee ?? 0n;
   const lightpayFee = input.lightpayFee ?? 0n;
-  if (input.amount <= 0n || operatorFee < 0n || lightpayFee < 0n) throw new Error('Invalid payout amounts');
+  const swapFee = input.swapFee ?? 0n;
+  if (input.amount <= 0n || operatorFee < 0n || lightpayFee < 0n || swapFee < 0n || swapFee > lightpayFee) throw new Error('Invalid payout amounts');
   const total = input.amount + operatorFee + lightpayFee;
   const feeWallet = lightpayFee > 0n ? await lightpayFeeWallet(env, input.currency) : null;
   const debit = await LedgerEngine.executeTransaction({
@@ -114,6 +118,7 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
     metadata: {
       ...(input.metadata ?? {}), payout: payoutId, reason: input.reason, network: input.network, provider: provider.name,
       sent: input.amount.toString(), operator_fee: operatorFee.toString(), lightpay_fee: lightpayFee.toString(),
+      ...(swapFee > 0n ? { swap_fee: swapFee.toString() } : {}),
     },
     allowGuestDebit: input.allowGuestDebit,
     skipQuotas: input.reason === 'GUEST_REFUND',
@@ -141,13 +146,13 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
   });
   const scheduled = delayMinutes > 0 || withdrawalsClosed() || waitingTransfer !== null;
   const [row] = await query(
-    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited, release_at, routing_rule, waiting_transfer)
+    `INSERT INTO payouts (id, environment, wallet_id, provider, network, msisdn, amount, currency, reason, status, transaction_id, reference, operator_fee, lightpay_fee, total_debited, release_at, routing_rule, waiting_transfer, swap_fee)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15::varchar, $10, $11, $12, $13, $14,
-             CASE WHEN $18::varchar IS NOT NULL THEN NOW() + interval '1 day' WHEN $15::varchar = 'SCHEDULED' THEN NOW() + make_interval(mins => $16::int) END, $17, $18)
+             CASE WHEN $18::varchar IS NOT NULL THEN NOW() + interval '1 day' WHEN $15::varchar = 'SCHEDULED' THEN NOW() + make_interval(mins => $16::int) END, $17, $18, $19)
      ON CONFLICT DO NOTHING RETURNING *`,
     [payoutId, env, input.walletId, provider.name, input.network, input.msisdn, input.amount.toString(), input.currency, input.reason,
       (debit as any).transactionId ?? (debit as any).transaction?.id ?? null, input.reference, operatorFee.toString(), lightpayFee.toString(), total.toString(),
-      scheduled ? 'SCHEDULED' : 'PENDING', delayMinutes, input.routingRule ?? null, waitingTransfer],
+      scheduled ? 'SCHEDULED' : 'PENDING', delayMinutes, input.routingRule ?? null, waitingTransfer, swapFee.toString()],
     env
   );
   // The transfer may have ended before this row existed (an instant answer): the payout must not wait a day for it.
@@ -159,6 +164,7 @@ export async function sendPayout(input: SendPayoutInput): Promise<PayoutRow> {
       walletId: input.walletId, kind: input.reason === 'WITHDRAWAL' ? 'WITHDRAWAL' : 'REFUND', direction: 'OUT', status: 'PENDING',
       amount: input.amount, fees: operatorFee + lightpayFee, total, currency: input.currency,
       counterparty: `${networkName(input.network)} · ${maskPhone(input.msisdn)}`, refType: 'payout', refId: payoutId,
+      metadata: swapFee > 0n ? { swap_fee: swapFee.toString() } : undefined,
     });
   }
   // Waiting: the sweeper sends it at release_at (dispatchDuePayouts).
@@ -343,7 +349,7 @@ export async function cancelWaitingPayout(env: Environment, id: string): Promise
   }
 }
 
-const ADMIN_COLUMNS = `p.id, p.status, p.reason, p.amount::text, p.operator_fee::text, p.lightpay_fee::text, p.total_debited::text, p.currency, p.network, p.msisdn, p.provider,
+const ADMIN_COLUMNS = `p.id, p.status, p.reason, p.amount::text, p.operator_fee::text, p.lightpay_fee::text, p.swap_fee::text, p.total_debited::text, p.currency, p.network, p.msisdn, p.provider,
   p.failure_code, p.reference, p.created_at, p.updated_at, p.release_at, p.hold_kind, p.hold_reason, p.held_by, p.held_at, p.waiting_transfer,
   w.account_type AS owner_type, w.metadata->>'name' AS owner_name, w.metadata->>'email' AS owner_email`;
 const adminView = (r: any) => ({ ...r, msisdn: maskPhone(r.msisdn) });

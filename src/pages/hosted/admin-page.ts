@@ -345,7 +345,7 @@ ${page('fees', 'Frais et minimums', `
   <div class="grid-2">
     ${panel('Dépôts et paiements', '<ul class="fee-list" id="feeDep"></ul>')}
     ${panel('Retraits', '<ul class="fee-list" id="feeWd"></ul>')}
-    ${panel('Changement de pays (swap)', '<ul class="fee-list" id="feeSwap"></ul>')}
+    ${panel('Swap (l’argent change de pays)', '<ul class="fee-list" id="feeSwap"></ul>')}
   </div>
   ${panel('Calculateur', `
     <div class="calc-top">
@@ -359,7 +359,7 @@ ${page('fees', 'Frais et minimums', `
   ${panel('Tarifs réels des fournisseurs', '<div id="ratesTable"></div>', {
     flush: true,
     actions: '<button class="btn btn-secondary btn-sm" type="button" id="ratesRefresh">' + iconSvg('refresh') + 'Actualiser</button>',
-    foot: '<span id="ratesFoot">Ce que le fournisseur nous prend en ce moment, lu sur son API (SasPay). Les frais payés par les personnes restent ceux réglés ci-dessus.</span>',
+    foot: '<span id="ratesFoot">Ce que le fournisseur prend en ce moment, lu sur son API (SasPay) toutes les 5 minutes : ce sont les frais opérateur que paient les personnes. pawaPay n’a pas d’API de tarifs : ses frais se règlent ci-dessus.</span>',
   })}
   <p class="hint">Cliquez une valeur pour la modifier : appliquée tout de suite, à cet environnement seulement, et inscrite au journal admin.</p>
 `)}
@@ -968,16 +968,18 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       ['Payé par le téléphone', b.paid ? money(b.paid) : 'en attente de l’opérateur'],
       ['Frais opérateur', b.operator_fee ? money(b.operator_fee) : '—'],
       ['Frais LightPay', money(b.lightpay_fee)],
+    ].concat(Number(b.swap_fee) > 0 ? [['Frais de swap', money(b.swap_fee)]] : []).concat([
       ['Arrivé sur le wallet', money(b.received), true],
       ['Via', via],
-    ];
+    ]);
     return [
       ['Débité du wallet', money(b.debited)],
       ['Frais LightPay', money(b.lightpay_fee)],
+    ].concat(Number(b.swap_fee) > 0 ? [['Frais de swap', money(b.swap_fee)]] : []).concat([
       ['Frais opérateur', money(b.operator_fee)],
       ['Reçu sur le téléphone', money(b.sent), true],
       ['Via', via],
-    ];
+    ]);
   }
   async function enterMove(id) {
     crumbs('Mouvements', 'Détail');
@@ -1158,15 +1160,17 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     await guarded(async () => {
       const r = await LP.api('POST', '/v1/admin-console/routing/simulate', { type: $('simType').value, network: $('simNetwork').value, destination: $('simDest').value || undefined, app: $('simApp').value || undefined, amount: amount });
       const steps = items(r.steps.map((st) => ({ title: st.name, sub: st.skipped ? 'passée : ' + st.skipped : 'choisie', end: st.skipped ? '—' : provName(r.provider) })), 'Aucune règle : le fournisseur par défaut sert.');
-      const configured = r.fees.filter((f) => f.configured);
+      const configured = r.fees.filter((f) => f.configured && f.operator_fee !== null);
       const cheapest = configured.length ? configured.reduce((a, b) => (Number(b.operator_fee) < Number(a.operator_fee) ? b : a)) : null;
       const feeHost = el('div', {});
-      table(feeHost, [{ label: 'Fournisseur' }, { label: 'Frais opérateur', cls: 'num' }, { label: 'Pris en vrai', cls: 'num' }, { label: 'Frais LightPay', cls: 'num' }, { label: r.fees[0] ? r.fees[0].label : 'Total', cls: 'num' }],
+      // Operator fee: the provider's live price (pawaPay: the rate set in « Frais et minimums »); « — » without a price.
+      table(feeHost, [{ label: 'Fournisseur' }, { label: 'Frais opérateur', cls: 'num' }, { label: 'Frais LightPay', cls: 'num' }, { label: 'Frais de swap', cls: 'num' }, { label: r.fees[0] ? r.fees[0].label : 'Total', cls: 'num' }],
         r.fees.map((f) => ({ cells: [
-          cell(provName(f.provider), (f.provider === r.provider ? 'choisi' : '') + (cheapest && f.provider === cheapest.provider ? (f.provider === r.provider ? ' · ' : '') + 'le moins cher' : '') + (f.configured ? '' : 'clés absentes')),
-          money(f.operator_fee),
-          f.real_operator_fee === null || f.real_operator_fee === undefined ? '—' : el('span', { class: Number(f.real_operator_fee) > Number(f.operator_fee) ? 'err-text' : '', text: money(f.real_operator_fee) }),
-          money(f.lightpay_fee), money(f.total),
+          cell(provName(f.provider), (f.provider === r.provider ? 'choisi' : '') + (cheapest && f.provider === cheapest.provider ? (f.provider === r.provider ? ' · ' : '') + 'le moins cher' : '') + (f.configured ? '' : 'clés absentes') + (f.error ? ' · tarif indisponible' : '')),
+          f.operator_fee === null ? '—' : money(f.operator_fee),
+          f.lightpay_fee === null ? '—' : money(f.lightpay_fee),
+          money(f.swap_fee || 0),
+          f.total === null ? '—' : money(f.total),
         ] })),
         'Aucun fournisseur sur cet environnement.');
       $('simResult').replaceChildren(
@@ -1423,8 +1427,9 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
 
   // ---------------------------------------------------------------- fees and minimums
   // Read as values; a click on one turns it into a field (Enter saves, Échap cancels). Operator
-  // fees are per provider: the one serving this environment is preselected. The calculator uses
-  // the same formulas as the server (fees.ts).
+  // fees are per provider: SasPay's are its live prices (never typed here), pawaPay's are set here
+  // (no prices API). The one serving this environment is preselected. The calculator uses the same
+  // formulas as the server (fees.ts).
   const FEE_KEYS = {
     deposit: [
       ['deposit_min', 'Montant minimum', 'Plus petit dépôt ou paiement accepté', 'fcfa'],
@@ -1432,8 +1437,8 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       ['deposit_lightpay_fee_min', 'Frais LightPay minimum', 'Le plus grand des deux s’applique', 'fcfa'],
     ],
     swap: [
-      ['swap_fee_bps', 'Frais de changement de pays', 'Pris sur le solde du wallet quand vous acceptez la demande', 'pct'],
-      ['swap_fee_min', 'Frais minimum', 'Le plus grand des deux s’applique (jamais plus que le solde)', 'fcfa'],
+      ['swap_fee_bps', 'Frais de swap', 'Retrait vers un autre pays, dépôt depuis un autre pays, envoi ou déplacement vers un wallet d’un autre pays (en plus), vente à un acheteur d’un autre pays (retiré au vendeur), changement de pays d’un wallet (sur son solde). Jamais dans un même pays', 'pct'],
+      ['swap_fee_min', 'Frais de swap minimum', 'Le plus grand des deux s’applique (jamais plus que le montant)', 'fcfa'],
     ],
     withdrawal: [
       ['withdrawal_min', 'Montant minimum', 'Plus petit retrait accepté', 'fcfa'],
@@ -1446,14 +1451,20 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       deposit: [['pawapay_deposit_fee_bps', 'Frais opérateur pawaPay', 'Demandés au payeur : couvrent la commission pawaPay', 'pct']],
       withdrawal: [['pawapay_payout_fee_bps', 'Frais opérateur pawaPay', 'Débités du wallet : couvrent la commission pawaPay', 'pct']],
     },
+    // SasPay's own prices, read from its API per operator: nothing to set (« Tarifs réels des fournisseurs »).
+    saspay: { deposit: [], withdrawal: [] },
+  };
+  const OPERATOR_INFO = {
     saspay: {
-      deposit: [['deposit_operator_fee_bps', 'Frais opérateur SasPay (estimés)', 'Affichés avant le paiement, SasPay donne le montant exact', 'pct']],
-      withdrawal: [
-        ['withdrawal_operator_fee_bps', 'Frais opérateur SasPay', 'Ce que SasPay prend sur chaque envoi', 'pct'],
-        ['withdrawal_operator_fee_min', 'Frais opérateur SasPay minimum', 'Le plus grand des deux s’applique', 'fcfa'],
-      ],
+      deposit: ['Frais opérateur SasPay', 'Le tarif réel de SasPay pour l’opérateur choisi, lu en direct (Tarifs réels ci-dessous)'],
+      withdrawal: ['Frais opérateur SasPay', 'Le tarif réel de SasPay pour l’opérateur choisi, lu en direct (Tarifs réels ci-dessous)'],
     },
   };
+  // A fee LightPay does not set: its line says where it comes from.
+  const infoItem = (def) => el('li', { class: 'fee-item' }, [
+    el('span', { class: 'fee-main' }, [el('span', { class: 'fee-label', text: def[0] }), el('span', { class: 'fee-help', text: def[1] })]),
+    el('span', { class: 'fee-val', text: 'Tarif réel' }),
+  ]);
   let feeSet = null, feeProv = 'pawapay', calcKind = 'deposit', feeActive = null;
   const pctText = (bps) => String(bps / 100).replace('.', ',');
   const shown = (v, unit) => (unit === 'pct' ? pctText(v) + ' %' : money(v));
@@ -1524,8 +1535,9 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       b.replaceChildren(PROVIDER[b.dataset.prov.toUpperCase()] || b.dataset.prov);
       if (feeActive && (feeActive.collection === b.dataset.prov || feeActive.payout === b.dataset.prov)) b.append(el('span', { class: 'on-dot', title: 'Actif' }));
     });
-    $('feeDep').replaceChildren.apply($('feeDep'), FEE_KEYS.deposit.concat(OPERATOR_KEYS[feeProv].deposit).map(feeItem));
-    $('feeWd').replaceChildren.apply($('feeWd'), FEE_KEYS.withdrawal.concat(OPERATOR_KEYS[feeProv].withdrawal).map(feeItem));
+    const info = OPERATOR_INFO[feeProv];
+    $('feeDep').replaceChildren.apply($('feeDep'), FEE_KEYS.deposit.concat(OPERATOR_KEYS[feeProv].deposit).map(feeItem).concat(info ? [infoItem(info.deposit)] : []));
+    $('feeWd').replaceChildren.apply($('feeWd'), FEE_KEYS.withdrawal.concat(OPERATOR_KEYS[feeProv].withdrawal).map(feeItem).concat(info ? [infoItem(info.withdrawal)] : []));
     $('feeSwap').replaceChildren.apply($('feeSwap'), FEE_KEYS.swap.map(feeItem));
     renderCalc();
   }
@@ -1536,15 +1548,18 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
     const s = feeSet, a = Number(String($('calcAmount').value).replace(/\\D/g, '')) || 0;
     document.querySelectorAll('[data-kind]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === calcKind)));
     let cells;
+    // SasPay's operator fee depends on the operator (its live price): the simulator in « Routage » gives it exactly.
+    const sas = feeProv === 'saspay';
+    const swap = a > 0 ? Math.min(a, Math.max(s.swap_fee_min, ceilBps(a, s.swap_fee_bps))) : 0;
     if (calcKind === 'deposit') {
       const lp = Math.max(s.deposit_lightpay_fee_min, ceilBps(a, s.deposit_lightpay_fee_bps));
-      const op = ceilBps(a + lp, feeProv === 'pawapay' ? s.pawapay_deposit_fee_bps : s.deposit_operator_fee_bps);
-      cells = [['Le client paie', money(a + lp + op), true], ['Arrive sur le wallet', money(a)], ['LightPay gagne', money(lp)], ['Opérateur' + (feeProv === 'saspay' ? ' (estimé)' : ''), money(op)]];
+      const op = sas ? null : ceilBps(a + lp, s.pawapay_deposit_fee_bps);
+      cells = [['Le client paie', money(a + lp + (op || 0)) + (sas ? ' + opérateur' : ''), true], ['Arrive sur le wallet', money(a)], ['LightPay gagne', money(lp)], ['Opérateur', sas ? 'tarif réel SasPay' : money(op)], ['Swap, depuis un autre pays', '+ ' + money(swap)]];
       if (a && a < s.deposit_min) cells.push(['Refusé', 'Sous le minimum (' + money(s.deposit_min) + ')']);
     } else {
       const lp = Math.max(s.withdrawal_lightpay_fee_min, ceilBps(a, s.withdrawal_lightpay_fee_bps));
-      const op = feeProv === 'pawapay' ? ceilBps(a, s.pawapay_payout_fee_bps) : Math.max(s.withdrawal_operator_fee_min, ceilBps(a, s.withdrawal_operator_fee_bps));
-      cells = [['Débité du wallet', money(a + lp + op), true], ['Reçu sur le téléphone', money(a)], ['LightPay gagne', money(lp)], ['Opérateur', money(op)]];
+      const op = sas ? null : ceilBps(a, s.pawapay_payout_fee_bps);
+      cells = [['Débité du wallet', money(a + lp + (op || 0)) + (sas ? ' + opérateur' : ''), true], ['Reçu sur le téléphone', money(a)], ['LightPay gagne', money(lp)], ['Opérateur', sas ? 'tarif réel SasPay' : money(op)], ['Swap, vers un autre pays', '+ ' + money(swap)]];
       if (a && a < s.withdrawal_min) cells.push(['Refusé', 'Sous le minimum (' + money(s.withdrawal_min) + ')']);
     }
     $('calcRows').replaceChildren.apply($('calcRows'), cells.map((c) => el('div', { class: 'calc-cell' + (c[2] ? ' main' : '') }, [el('span', { text: c[0] }), el('b', { text: c[1] })])));
@@ -1692,9 +1707,13 @@ ${page('audit', 'Journal admin', '<div class="list-card" id="auditTable"></div>'
       const list = [
         ['État', (PAY_STATUS[p.status] || ['', p.status])[1]],
         ['Compte', payOwner(p) + (p.owner_email && p.owner_type !== 'GUEST' ? ' · ' + p.owner_email : '')],
-        ['Reçu sur le téléphone', money(p.amount)], ['Frais opérateur', money(p.operator_fee)], ['Frais LightPay', money(p.lightpay_fee)], ['Débité du wallet', money(p.total_debited), true],
+        ['Reçu sur le téléphone', money(p.amount)], ['Frais opérateur', money(p.operator_fee)],
+        // lightpay_fee holds the swap fee too (same road): shown apart.
+        ['Frais LightPay', money(Number(p.lightpay_fee) - Number(p.swap_fee || 0))],
+      ].concat(Number(p.swap_fee) > 0 ? [['Frais de swap', money(p.swap_fee)]] : []).concat([
+        ['Débité du wallet', money(p.total_debited), true],
         ['Vers', p.msisdn + ' · ' + p.network], ['Demandé le', fmtDateTime(p.created_at)],
-      ];
+      ]);
       if (p.status === 'SCHEDULED' && p.waiting_transfer) list.push(['Part', 'à l’arrivée du transfert ' + p.waiting_transfer + ' (au plus tard ' + fmtDateTime(p.release_at) + ')']);
       else if (p.status === 'SCHEDULED') list.push(['Part', fmtDateTime(p.release_at) + ' (' + until(p.release_at) + ')']);
       if (p.status === 'SUCCEEDED') list.push(['Arrivé le', fmtDateTime(p.updated_at)], ['Temps total', dur(Math.round((new Date(p.updated_at) - new Date(p.created_at)) / 1000))]);

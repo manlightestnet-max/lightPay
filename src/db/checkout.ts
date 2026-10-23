@@ -11,7 +11,8 @@ import { lightpayRevenueWallet } from './fee-wallet.js';
 import { appName, failureOf, logActivity, logDirectSale, reasonFor, updateActivity } from './activity.js';
 import { appLogoUrl } from './avatars.js';
 import { enforceAppQuotas } from '../middleware/quota-enforcer.js';
-import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundBreakdown } from '../payments/fees.js';
+import { FeeQuote, lightpayCollectionFee, minMobileMoneyAmount, providerPayoutFee, quote, refundBreakdown, swapBetween } from '../payments/fees.js';
+import { ensureProviderRates } from '../payments/provider-rates.js';
 import { dispatchWebhook } from '../webhooks/dispatch.js';
 import { LightPayUser } from '../security/user-token.js';
 import { guardMoney } from '../security/lockdown.js';
@@ -217,9 +218,20 @@ export async function cancelSession(id: string, appId: string) {
 /** What the payer will pay by mobile money through each network, with the provider the rules pick for it. */
 async function feesByNetwork(session: CheckoutSession) {
   const destination = await payeeCountry(session);
-  const pairs = await Promise.all(mobileNetworks().map(async (n) => [n, quote(session.environment, BigInt(session.amount), (await routeOf(session, n, destination)).provider.name)]));
+  await ensureProviderRates(session.environment);
+  const amount = BigInt(session.amount);
+  const pairs = await Promise.all(
+    mobileNetworks().map(async (n) => [n, quote(session.environment, amount, (await routeOf(session, n, destination)).provider.name, n, depositSwap(session, destination, n))])
+  );
   return Object.fromEntries(pairs) as Record<MobileNetwork, FeeQuote>;
 }
+
+/**
+ * A top-up from a number of another country than the wallet: the money changes country, the payer pays the swap fee
+ * on top (like LightPay's fee). A payment never: there the seller pays it on the sale.
+ */
+const depositSwap = (session: CheckoutSession, walletCountry: string | null, network: string): bigint =>
+  session.kind === 'DEPOSIT' ? swapBetween(session.environment, walletCountry, countryOfNetwork(network), BigInt(session.amount)) : 0n;
 
 export async function publicView(id: string) {
   const session = await getSession(id);
@@ -229,7 +241,7 @@ export async function publicView(id: string) {
   const [payee] = await query(`SELECT metadata FROM wallets WHERE id = $1`, [session.payee_wallet_id], environment);
   const payeeName = payee?.metadata?.name ?? payee?.metadata?.display_name ?? null;
   const [attempt] = await query(
-    `SELECT status, failure_code, network, msisdn, created_at, amount, lightpay_fee, provider_fee, charged_amount FROM collection_attempts WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    `SELECT status, failure_code, network, msisdn, created_at, amount, lightpay_fee, swap_fee, provider_fee, charged_amount FROM collection_attempts WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [session.id],
     environment
   );
@@ -260,7 +272,9 @@ export async function publicView(id: string) {
           network: attempt.network,
           msisdn: maskMsisdn(attempt.msisdn),
           at: attempt.created_at,
-          lightpay_fee: String(attempt.lightpay_fee),
+          // lightpay_fee holds the swap fee too (same road): shown apart.
+          lightpay_fee: String(BigInt(attempt.lightpay_fee ?? 0) - BigInt(attempt.swap_fee ?? 0)),
+          swap_fee: String(attempt.swap_fee ?? 0),
           operator_fee: attempt.provider_fee === null ? null : String(attempt.provider_fee),
           charged: attempt.charged_amount === null ? null : String(attempt.charged_amount),
         }
@@ -326,15 +340,17 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   if (environment === 'production' && provider.name === 'simulator') {
     throw new CheckoutError('Le mobile money est indisponible pour le moment. Réessayez plus tard.', 'PROVIDER_NOT_CONFIGURED', 503);
   }
-  const lightpayFee = lightpayCollectionFee(environment, BigInt(session.amount));
+  // LightPay's fee, with the swap fee of a top-up from another country (it follows the same road: the main wallet).
+  const swap = depositSwap(session, await payeeCountry(session), network);
+  const lightpayFee = lightpayCollectionFee(environment, BigInt(session.amount)) + swap;
   let attempt: Attempt;
   try {
     attempt = (
       await query(
-        `INSERT INTO collection_attempts (id, session_id, environment, provider, network, msisdn, amount, currency, lightpay_fee, routing_rule)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-        // The provider collects the amount + LightPay's fee; the operator fee comes on top.
-        [newId('ca_'), session.id, environment, provider.name, network, msisdn, (BigInt(session.amount) + lightpayFee).toString(), session.currency, lightpayFee.toString(), route.rule?.id ?? null],
+        `INSERT INTO collection_attempts (id, session_id, environment, provider, network, msisdn, amount, currency, lightpay_fee, routing_rule, swap_fee)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        // The provider collects the amount + LightPay's fee (swap included); the operator fee comes on top.
+        [newId('ca_'), session.id, environment, provider.name, network, msisdn, (BigInt(session.amount) + lightpayFee).toString(), session.currency, lightpayFee.toString(), route.rule?.id ?? null, swap.toString()],
         environment
       )
     )[0];
@@ -345,11 +361,11 @@ export async function startMobileMoney(id: string, msisdnInput: string, network:
   await query(`UPDATE checkout_sessions SET status = 'PROCESSING', updated_at = NOW() WHERE id = $1 AND status = 'OPEN'`, [session.id], environment);
 
   // Journal: a top-up line for the person, or a payment line for the paying number (guest).
-  const via = `${network === 'AIRTEL_COG' ? 'Airtel Money' : 'MTN MoMo'} · ${maskMsisdn(msisdn)}`;
+  const via = `${networkName(network)} · ${maskMsisdn(msisdn)}`;
   if (session.kind === 'DEPOSIT') {
     await logActivity(environment, {
       walletId: session.payee_wallet_id, kind: 'DEPOSIT', direction: 'IN', status: 'PENDING', amount: session.amount, fees: lightpayFee,
-      currency: session.currency, counterparty: via, refType: 'collection', refId: attempt.id, metadata: { session: session.id },
+      currency: session.currency, counterparty: via, refType: 'collection', refId: attempt.id, metadata: { session: session.id, ...(swap > 0n ? { swap_fee: swap.toString() } : {}) },
     });
   } else {
     const guest = await guestWallet(environment, msisdn, session.currency);
@@ -522,9 +538,11 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
     ],
   });
 
-  // 2. The guest pays the payee: locked (escrow) or directly available.
+  // 2. The guest pays the payee: locked (escrow) or directly available. A number of another country than the
+  //    seller's wallet: the money changes country, the seller pays the swap fee on the sale.
   let holdId: string | null = null;
   let paymentTx: string | null = null;
+  const swap = await saleSwap(session, countryOfNetwork(attempt.network), amount, fee);
   if (session.escrow) {
     const held = await Escrow.create({
       appId: session.app_id,
@@ -534,6 +552,7 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
       beneficiaryWalletId: session.payee_wallet_id,
       amount,
       feeAmount: fee,
+      swapFee: swap.fee,
       currency: attempt.currency,
       reference: session.reference ?? session.id,
       metadata: { checkout_session: session.id },
@@ -558,12 +577,12 @@ async function completeCollection(attempt: Attempt, providerReference?: string) 
       skipQuotas: true,
       postings: [
         { walletId: payer.id, direction: 'DEBIT', amount },
-        ...salePostings(session.payee_wallet_id, merchant, amount, fee, await appName(env, session.app_id), session.reference ?? session.id),
+        ...salePostings(session.payee_wallet_id, merchant, amount, fee, await appName(env, session.app_id), session.reference ?? session.id, swap),
       ],
     });
     paymentTx = (paid as any).transactionId ?? (paid as any).transaction?.id ?? null;
     await logDirectSale(env, {
-      payeeWalletId: session.payee_wallet_id, appId: session.app_id, amount, fee, currency: attempt.currency,
+      payeeWalletId: session.payee_wallet_id, appId: session.app_id, amount, fee, swap: swap.fee, currency: attempt.currency,
       refType: 'sale', refId: session.id, reference: session.reference, metadata: { session: session.id },
     });
   }
@@ -612,7 +631,7 @@ async function closeSession(
  * A direct sale on the payee's statement: the full amount in, then the app's commission out as its
  * own line (credit first on the same wallet: postings keep this order).
  */
-const salePostings = (payee: string, appWallet: string, amount: bigint, fee: bigint, app: string, ref: string) => [
+const salePostings = (payee: string, appWallet: string, amount: bigint, fee: bigint, app: string, ref: string, swap?: { fee: bigint; wallet: string | null; id: string }) => [
   { walletId: payee, direction: 'CREDIT' as const, amount, description: `Vente · Réf ${ref}` },
   ...(fee > 0n
     ? [
@@ -620,7 +639,24 @@ const salePostings = (payee: string, appWallet: string, amount: bigint, fee: big
         { walletId: appWallet, direction: 'CREDIT' as const, amount: fee, description: `Commission · Réf ${ref}` },
       ]
     : []),
+  // The buyer paid from another country: LightPay's swap fee comes off the sale.
+  ...(swap && swap.fee > 0n && swap.wallet
+    ? [
+        { walletId: payee, direction: 'DEBIT' as const, amount: swap.fee, description: `Frais de swap (acheteur d’un autre pays) · Réf ${ref}` },
+        { walletId: swap.wallet, direction: 'CREDIT' as const, amount: swap.fee, description: `Frais LightPay - swap - ${swap.id}` },
+      ]
+    : []),
 ];
+
+/**
+ * The swap fee a seller pays on a sale when the buyer pays from another country (never more than what is left once the
+ * app's commission is taken), and LightPay's main wallet that receives it.
+ */
+async function saleSwap(session: CheckoutSession, buyerCountry: string | null | undefined, amount: bigint, fee: bigint) {
+  const wanted = swapBetween(session.environment, buyerCountry, await payeeCountry(session), amount);
+  const swap = wanted < amount - fee ? wanted : amount - fee;
+  return { fee: swap, wallet: swap > 0n ? await lightpayRevenueWallet(session.environment, session.currency) : null, id: session.id };
+}
 
 export async function merchantWallet(appId: string, environment: Environment, currency: string): Promise<string> {
   const wallet = await getOrCreateWallet(environment, appId, appId, 'MERCHANT', currency, { role: 'merchant_root' });
@@ -649,7 +685,8 @@ export async function refundGuestPayer(hold: HoldRecord) {
   const total = BigInt(hold.amount);
   const route = await routeOperation({ env, type: 'refund', network, destination: payer.country, appId: hold.app_id, amount: total });
   const provider = route.provider.name;
-  const { sent: sendable, operator_fee: operatorFee, lightpay_fee: lightpayFee } = refundBreakdown(env, total, provider);
+  await ensureProviderRates(env);
+  const { sent: sendable, operator_fee: operatorFee, lightpay_fee: lightpayFee } = refundBreakdown(env, total, provider, network);
   if (sendable <= 0n) {
     // Nothing can be sent without losing money: the amount stays in the guest wallet (bound to
     // this number) and the app is told, so it can settle with the customer another way.
@@ -661,7 +698,7 @@ export async function refundGuestPayer(hold: HoldRecord) {
       to: maskMsisdn(msisdn),
       network,
       failure_code: 'REFUND_BELOW_FEES',
-      operator_fee: providerPayoutFee(env, provider, 1n).toString(),
+      operator_fee: providerPayoutFee(env, provider, network, 1n).toString(),
     });
     return { status: 'FAILED', failure_code: 'REFUND_BELOW_FEES', amount: '0', operator_fee: '0', total: hold.amount, to: maskMsisdn(msisdn), network };
   }
@@ -732,13 +769,15 @@ export async function payWithWallet(id: string, user: LightPayUser) {
 
   const amount = BigInt(session.amount);
   const fee = BigInt(session.fee_amount);
+  // A buyer whose wallet is in another country than the seller's: the seller pays the swap fee on the sale.
+  const swap = await saleSwap(session, payer.country, amount, fee);
   let holdId: string | null = null;
   let paymentTx: string | null = null;
   try {
     if (session.escrow) {
       const held = await Escrow.create({
         appId: session.app_id, environment: env, idempotencyKey: `hold:${session.id}`,
-        payerWalletId: payer.id, beneficiaryWalletId: session.payee_wallet_id, amount, feeAmount: fee,
+        payerWalletId: payer.id, beneficiaryWalletId: session.payee_wallet_id, amount, feeAmount: fee, swapFee: swap.fee,
         currency: session.currency, reference: session.reference ?? session.id, metadata: { checkout_session: session.id },
       });
       holdId = held.hold?.id ?? null;
@@ -750,7 +789,7 @@ export async function payWithWallet(id: string, user: LightPayUser) {
         currency: session.currency, reference: session.reference ?? session.id, metadata: { checkout_session: session.id },
         postings: [
           { walletId: payer.id, direction: 'DEBIT', amount },
-          ...salePostings(session.payee_wallet_id, merchant, amount, fee, await appName(env, session.app_id), session.reference ?? session.id),
+          ...salePostings(session.payee_wallet_id, merchant, amount, fee, await appName(env, session.app_id), session.reference ?? session.id, swap),
         ],
       });
       paymentTx = (paid as any).transactionId ?? (paid as any).transaction?.id ?? null;
@@ -770,7 +809,7 @@ export async function payWithWallet(id: string, user: LightPayUser) {
   await journal('SUCCEEDED');
   if (!session.escrow) {
     await logDirectSale(env, {
-      payeeWalletId: session.payee_wallet_id, appId: session.app_id, amount, fee, currency: session.currency,
+      payeeWalletId: session.payee_wallet_id, appId: session.app_id, amount, fee, swap: swap.fee, currency: session.currency,
       refType: 'sale', refId: session.id, reference: session.reference, metadata: { session: session.id },
     });
   }

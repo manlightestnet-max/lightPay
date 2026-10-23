@@ -169,7 +169,7 @@ export async function appName(environment: Environment, appId: string): Promise<
  */
 export async function logDirectSale(
   environment: Environment,
-  s: { payeeWalletId: string; appId: string; amount: bigint; fee: bigint; currency: string; refType: string; refId: string; reference?: string | null; metadata?: Record<string, any> }
+  s: { payeeWalletId: string; appId: string; amount: bigint; fee: bigint; swap?: bigint; currency: string; refType: string; refId: string; reference?: string | null; metadata?: Record<string, any> }
 ): Promise<void> {
   if (!(await isPersonWallet(environment, s.payeeWalletId))) return;
   const app = await appName(environment, s.appId);
@@ -184,6 +184,22 @@ export async function logDirectSale(
       metadata: { reference: s.reference ?? undefined, sale_amount: s.amount.toString() },
     });
   }
+  if (s.swap && s.swap > 0n) {
+    await logSwapOnSale(environment, { walletId: s.payeeWalletId, swap: s.swap, saleAmount: s.amount, currency: s.currency, refType: `${s.refType}_swap`, refId: s.refId, reference: s.reference });
+  }
+}
+
+/** LightPay's swap fee taken from a sale paid from another country: its own line on the seller's statement. */
+export async function logSwapOnSale(
+  environment: Environment,
+  s: { walletId: string; swap: bigint; saleAmount: bigint | string; currency: string; refType: string; refId: string; reference?: string | null }
+): Promise<void> {
+  if (s.swap <= 0n || !(await isPersonWallet(environment, s.walletId))) return;
+  await logActivity(environment, {
+    walletId: s.walletId, kind: 'COMMISSION', direction: 'OUT', status: 'SUCCEEDED', amount: s.swap, total: s.swap,
+    currency: s.currency, counterparty: 'LightPay', refType: s.refType, refId: s.refId,
+    metadata: { reference: s.reference ?? undefined, sale_amount: s.saleAmount.toString(), swap: true },
+  });
 }
 
 /** "242065124481" -> "+242 06 ••• •• 81" (the country's dial code). */

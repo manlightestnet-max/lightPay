@@ -2,14 +2,17 @@ import { PoolClient } from 'pg';
 import { LedgerEngine } from './ledger.js';
 import { query } from './pool.js';
 import { Environment, HoldStatus } from '../types/index.js';
-import { appName, isPersonWallet, logActivity, updateActivity } from './activity.js';
+import { appName, isPersonWallet, logActivity, logSwapOnSale, updateActivity } from './activity.js';
+import { lightpayRevenueWallet } from './fee-wallet.js';
+import { swapBetween } from '../payments/fees.js';
 
 /**
  * ESCROW — money that has changed hands but is not yet usable.
  *
  *   hold     payer.AVAILABLE  --amount-->  beneficiary.LOCKED        (order paid)
- *   capture  beneficiary.LOCKED --amount-fee--> beneficiary.AVAILABLE (order validated)
+ *   capture  beneficiary.LOCKED --amount-fee-swap--> beneficiary.AVAILABLE (order validated)
  *                               --fee-->        fee wallet AVAILABLE
+ *                               --swap-->       LightPay's main wallet (buyer and seller in two countries)
  *   release  beneficiary.LOCKED --amount--> payer.AVAILABLE          (order cancelled / refunded)
  *   dispute  status only: frozen until an explicit resolution (capture or release)
  *
@@ -65,7 +68,15 @@ export interface CreateHoldParams extends Base {
   allowGuestDebit?: boolean;
   /** Internal checkout only: the collection that funded this hold already counted. */
   skipQuotas?: boolean;
+  /**
+   * LightPay's swap fee taken from the seller at capture (the buyer pays from another country). Computed from the two
+   * wallets' countries when not given; the checkout gives it for a guest (the country of the number that paid).
+   */
+  swapFee?: bigint;
 }
+
+const countryOfWallet = async (environment: Environment, walletId: string): Promise<string | null> =>
+  (await query(`SELECT country FROM wallets WHERE id = $1`, [walletId], environment))[0]?.country ?? null;
 
 const lockHold = async (client: PoolClient, appId: string, environment: Environment, holdId: string): Promise<HoldRecord> => {
   const rows = await client.query('SELECT * FROM holds WHERE id = $1 AND app_id = $2 AND environment = $3 FOR UPDATE', [
@@ -100,6 +111,9 @@ export class Escrow {
     if (p.amount <= 0n) throw new EscrowError('Amount must be greater than zero', 'INVALID_AMOUNT');
     if (fee < 0n || fee >= p.amount) throw new EscrowError('Fee must be non-negative and less than amount', 'INVALID_FEE');
     if (p.payerWalletId === p.beneficiaryWalletId) throw new EscrowError('Payer and beneficiary must differ', 'SAME_WALLET');
+    const swapWanted = p.swapFee ?? swapBetween(p.environment, await countryOfWallet(p.environment, p.payerWalletId), await countryOfWallet(p.environment, p.beneficiaryWalletId), p.amount);
+    const swap = swapWanted < p.amount - fee ? swapWanted : p.amount - fee;
+    const metadata = swap > 0n ? { ...(p.metadata ?? {}), swap_fee: swap.toString() } : p.metadata;
 
     let holdId: string | undefined;
     const result = await LedgerEngine.executeTransaction({
@@ -113,7 +127,7 @@ export class Escrow {
       feeAmount: fee,
       currency: p.currency,
       reference: p.reference,
-      metadata: p.metadata,
+      metadata,
       postings: [
         { walletId: p.payerWalletId, direction: 'DEBIT', amount: p.amount, description: `Escrow payment - Ref: ${p.reference ?? 'N/A'}` },
         {
@@ -138,7 +152,7 @@ export class Escrow {
             p.currency ?? 'CREDIT',
             p.reason ?? null,
             p.reference ?? null,
-            JSON.stringify(p.metadata ?? {}),
+            JSON.stringify(metadata ?? {}),
             p.expiresAt ?? null,
             transactionId,
           ]
@@ -178,6 +192,8 @@ export class Escrow {
     if (!snapshot) throw new EscrowError('Hold not found', 'HOLD_NOT_FOUND', 404);
     const amount = BigInt(snapshot.amount);
     const fee = BigInt(snapshot.fee_amount);
+    // Written when the buyer paid from another country: comes off the sale at capture, nothing on a release.
+    const swap = kind === 'capture' ? BigInt(snapshot.metadata?.swap_fee ?? 0) : 0n;
     const ref = snapshot.reference ?? snapshot.id;
 
     if (kind === 'capture' && fee > 0n && !p.feeWalletId) {
@@ -197,6 +213,12 @@ export class Escrow {
               ? [
                   { walletId: snapshot.wallet_id, direction: 'DEBIT' as const, amount: fee, description: `Commission ${app} · Réf ${ref}` },
                   { walletId: p.feeWalletId!, direction: 'CREDIT' as const, amount: fee, description: `Commission · Réf ${ref}` },
+                ]
+              : []),
+            ...(swap > 0n
+              ? [
+                  { walletId: snapshot.wallet_id, direction: 'DEBIT' as const, amount: swap, description: `Frais de swap (acheteur d’un autre pays) · Réf ${ref}` },
+                  { walletId: await lightpayRevenueWallet(p.environment, snapshot.currency), direction: 'CREDIT' as const, amount: swap, description: `Frais LightPay - swap - ${snapshot.id}` },
                 ]
               : []),
           ]
@@ -239,6 +261,9 @@ export class Escrow {
             currency: settled.currency, counterparty: app, refType: 'hold_commission', refId: settled.id,
             metadata: { reference: settled.reference, sale_amount: settled.amount },
           });
+        }
+        if (swap > 0n) {
+          await logSwapOnSale(p.environment, { walletId: settled.wallet_id, swap, saleAmount: settled.amount, currency: settled.currency, refType: 'hold_swap', refId: settled.id, reference: settled.reference });
         }
       } else {
         await updateActivity(p.environment, 'hold', settled.id, {

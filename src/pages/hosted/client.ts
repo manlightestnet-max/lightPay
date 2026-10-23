@@ -407,7 +407,9 @@ export const CLIENT = (env: string) => `
   // deposit paid 1 066 from the phone shows +1 000, never more than what reached the wallet).
   const walletAmount = (a) => (a.direction !== 'IN' && a.total && Number(a.total) > Number(a.amount) ? a.total : a.amount);
   function amountRows(a) {
-    const c = a.currency, fees = a.fees && a.fees !== '0' ? [['Frais', LP.money(a.fees, c)]] : [];
+    // The swap fee (the money changed country) is its own line, out of the other fees.
+    const c = a.currency, swap = Number((a.metadata && a.metadata.swap_fee) || 0), rest = Number(a.fees || 0) - swap;
+    const fees = (rest > 0 ? [['Frais', LP.money(rest, c)]] : []).concat(swap > 0 ? [['Frais de swap (autre pays)', LP.money(swap, c)]] : []);
     const more = a.total && a.total !== a.amount;
     if (a.direction !== 'IN') {
       if (!more) return [['Montant', LP.money(a.amount, c)]].concat(fees);

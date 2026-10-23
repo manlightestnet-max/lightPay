@@ -56,7 +56,7 @@ ${table(['Adresse', 'Rôle'], [
     body: `
 <p>Les pays et les opérateurs ouverts se lisent à tout moment, sans clé : la page de paiement et le compte LightPay les proposent d’eux-mêmes (le pays, puis l’opérateur, puis le numéro).</p>
 ${endpoint('GET', '/v1/checkout/public/rails', 'Pays ouverts (indicatif, format du numéro, monnaie) et leurs opérateurs (<code>network</code>, nom, préfixes).')}
-<p>Le franc CFA est une seule unité dans LightPay : 1 XOF = 1 XAF, sans frais de change. Une session reste en <code>XAF</code> ; un paiement depuis la Côte d’Ivoire ou le Togo est encaissé en XOF pour le même montant.</p>
+<p>Le franc CFA est une seule unité dans LightPay : 1 XOF = 1 XAF, sans taux de change. Une session reste en <code>XAF</code> ; un paiement depuis la Côte d’Ivoire ou le Togo est encaissé en XOF pour le même montant. Quand l’argent change de pays, des frais de swap s’appliquent (voir <a href="#frais">Frais</a>).</p>
 ${table(['Pays', 'Indicatif', 'Opérateurs (network)'], [
   ['Congo-Brazzaville', '+242', '<code>MTN_MOMO_COG</code>, <code>AIRTEL_COG</code>'],
   ['Cameroun', '+237', '<code>MTN_MOMO_CMR</code>, <code>ORANGE_CMR</code>'],
@@ -243,8 +243,9 @@ ${note('Au-dessus de la limite choisie par la personne, le débit est refusé (<
     body: `
 <p>Les frais sont réglés par LightPay et peuvent changer : lisez-les par l’API plutôt que de les écrire en dur.</p>
 <ul>
-  <li><b>Paiement et dépôt par mobile money</b> : les frais de LightPay et de l’opérateur s’ajoutent au montant, payés par la personne. Vous recevez le montant demandé. Les frais d’opérateur dépendent du pays et de l’opérateur : la page de paiement les affiche pour chacun avant que la personne paie.</li>
+  <li><b>Paiement et dépôt par mobile money</b> : les frais de LightPay et de l’opérateur s’ajoutent au montant, payés par la personne. Vous recevez le montant demandé. Les frais d’opérateur sont le tarif de l’opérateur, qui dépend du pays et de l’opérateur : la page de paiement les affiche pour chacun avant que la personne paie.</li>
   <li><b>Paiement par wallet LightPay</b> : sans frais pour la personne.</li>
+  <li><b>Paiement depuis un autre pays</b> : quand l’acheteur paie depuis un autre pays que celui du wallet du vendeur, des frais de swap sont retirés de ce que reçoit le vendeur (avec un séquestre, à la validation ; rien si l’acheteur est remboursé). Dans un même pays, jamais.</li>
   <li><b>Remboursement vers un numéro</b> : il coûte comme un retrait (opérateur + LightPay), déduit du remboursement.</li>
 </ul>`,
   },

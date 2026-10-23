@@ -28,6 +28,7 @@ import { refreshProviderSettings } from './payments/provider-settings.js';
 import { refreshRegistry } from './rails/registry.js';
 import { refreshReserveSettings } from './payments/reserve-settings.js';
 import { startReserveWatch } from './payments/reserve-watch.js';
+import { startProviderRatesWatch } from './payments/provider-rates.js';
 import { refreshRoutingRules } from './rails/routing.js';
 import { sweepTransfers } from './payments/rebalance.js';
 import { loadTemplates } from './notify/templates.js';
@@ -392,6 +393,7 @@ async function start() {
     await refreshRegistry();
     await refreshReserveSettings();
     startReserveWatch();
+    startProviderRatesWatch();
     await refreshRoutingRules();
     await refreshControlSettings();
     // Texts of the automatic messages, as the admin wrote them (Administration > Messages).

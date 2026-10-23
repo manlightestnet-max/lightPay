@@ -41,13 +41,13 @@ import { fromTemplate } from '../notify/catalog.js';
 import { sendTest } from '../notify/index.js';
 import { RESERVE_RANGES, ReserveSettingsError, loadReserveSettings, reserveSettings, saveReserveSettings, validateReserveSettings } from '../payments/reserve-settings.js';
 import { readProviderBalances } from '../payments/reserve-watch.js';
-import { providerRates, realProviderFee } from '../payments/provider-rates.js';
+import { ensureProviderRates, providerRates } from '../payments/provider-rates.js';
 import { CountryRequestError, approveCountryRequest, countPendingCountryRequests, getCountryRequest, listCountryRequests, rejectCountryRequest } from '../wallets/country.js';
 import { RebalanceError, cancelTransfer, canTransfer, getTransfer, listTransfers, planTransfer, requestTransfer, transferSources } from '../payments/rebalance.js';
 import { KIND_OF, OPERATION_TYPES, OperationType, RoutingError, loadRoutingRules, route, routingRules, saveRoutingRules, validateRoutingRules } from '../rails/routing.js';
-import { allCountries, allRails } from '../rails/registry.js';
+import { allCountries, allRails, countryOfNetwork } from '../rails/registry.js';
 import { RegistryError, registryForAdmin, updateCountry, updateRail } from '../rails/registry-admin.js';
-import { quote, refundBreakdown, withdrawalQuote } from '../payments/fees.js';
+import { quote, refundBreakdown, swapBetween, withdrawalQuote } from '../payments/fees.js';
 import { PROVIDERS_OF } from '../payments/provider-settings.js';
 import { query } from '../db/pool.js';
 
@@ -443,20 +443,26 @@ export async function adminConsoleRoutes(fastify: FastifyInstance) {
         if (!raw || BigInt(raw) <= 0n) return reply.status(400).send({ status: 'error', error: 'BAD_AMOUNT', message: 'Montant en FCFA entiers.' });
         const amount = BigInt(raw);
         const decision = await route({ env, type, network, destination: b.destination || null, appId: b.app || null, amount });
+        await ensureProviderRates(env);
         const fees = await Promise.all(PROVIDERS_OF[env].map(async (name) => {
           const configured = providerByName(name).configured(env);
-          // What the provider really charges (its live price), beside the fee set in « Frais et minimums ».
-          const real = (on: bigint) => realProviderFee(env, name, network, KIND_OF[type], on).then((f) => (f === null ? null : f.toString())).catch(() => null);
-          if (KIND_OF[type] === 'collection') {
-            const q = quote(env, amount, name);
-            return { provider: name, configured, operator_fee: q.operator_fee, real_operator_fee: await real(amount + BigInt(q.lightpay_fee)), lightpay_fee: q.lightpay_fee, total: q.total, label: 'Le client paie' };
+          // The operator fee is the provider's live price (pawaPay: the rate set by hand); the swap fee when the wallet's
+          // country (destination) is not the operator's. Without a price, the provider shows « — ».
+          const swap = type === 'deposit' || type === 'withdrawal' ? swapBetween(env, b.destination || null, countryOfNetwork(network), amount) : 0n;
+          try {
+            if (KIND_OF[type] === 'collection') {
+              const q = quote(env, amount, name, network, swap);
+              return { provider: name, configured, operator_fee: q.operator_fee, lightpay_fee: q.lightpay_fee, swap_fee: q.swap_fee, total: q.total, label: 'Le client paie' };
+            }
+            if (type === 'refund') {
+              const r = refundBreakdown(env, amount, name, network);
+              return { provider: name, configured, operator_fee: r.operator_fee.toString(), lightpay_fee: r.lightpay_fee.toString(), swap_fee: '0', total: r.sent.toString(), label: 'Rendu au client' };
+            }
+            const w = withdrawalQuote(env, amount, name, network, 'XAF', swap);
+            return { provider: name, configured, operator_fee: w.operator_fee, lightpay_fee: w.lightpay_fee, swap_fee: w.swap_fee, total: w.total, label: 'Débité du wallet' };
+          } catch (err: any) {
+            return { provider: name, configured, operator_fee: null, lightpay_fee: null, swap_fee: swap.toString(), total: null, label: KIND_OF[type] === 'collection' ? 'Le client paie' : 'Débité du wallet', error: err?.message };
           }
-          if (type === 'refund') {
-            const r = refundBreakdown(env, amount, name);
-            return { provider: name, configured, operator_fee: r.operator_fee.toString(), real_operator_fee: await real(r.sent), lightpay_fee: r.lightpay_fee.toString(), total: r.sent.toString(), label: 'Rendu au client' };
-          }
-          const w = withdrawalQuote(env, amount, name, 'XAF');
-          return { provider: name, configured, operator_fee: w.operator_fee, real_operator_fee: await real(amount), lightpay_fee: w.lightpay_fee, total: w.total, label: 'Débité du wallet' };
         }));
         return { status: 'success', provider: decision.provider.name, rule: decision.rule, steps: decision.steps, fees };
       });

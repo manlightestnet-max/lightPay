@@ -6,6 +6,8 @@ import { Environment } from '../types/index.js';
 import { LightPayUser } from '../security/user-token.js';
 import { isReservedAppId } from '../security/app-identity.js';
 import { appName, failureOf, logActivity, logDirectSale } from './activity.js';
+import { lightpayRevenueWallet } from './fee-wallet.js';
+import { swapBetween } from '../payments/fees.js';
 import { appLogoUrl } from './avatars.js';
 import { userWallet } from '../wallets/index.js';
 
@@ -327,17 +329,24 @@ async function chargeUnjournaled(appId: string, environment: Environment, connec
     });
   }
   const fee = input.feeAmount;
+  // A seller in another country than the person: LightPay's swap fee comes off what the seller receives.
+  const countries = await query(`SELECT id, country FROM wallets WHERE id = ANY($1::uuid[])`, [[payer.wallet_id, payee.wallet_id]], environment);
+  const countryOf = (id: string) => countries.find((w: any) => w.id === id)?.country ?? null;
+  const swapWanted = swapBetween(environment, countryOf(payer.wallet_id), countryOf(payee.wallet_id), input.amount);
+  const swap = swapWanted < input.amount - fee ? swapWanted : input.amount - fee;
   const result = await LedgerEngine.executeTransaction({
-    appId, environment, idempotencyKey, type: 'PAYMENT', amount: input.amount, feeAmount: fee, currency, reference: input.reference, metadata,
+    appId, environment, idempotencyKey, type: 'PAYMENT', amount: input.amount, feeAmount: fee + swap, currency, reference: input.reference,
+    metadata: swap > 0n ? { ...metadata, swap_fee: swap.toString() } : metadata,
     postings: [
       { walletId: payer.wallet_id, direction: 'DEBIT', amount: input.amount, description: input.description },
-      { walletId: payee.wallet_id, direction: 'CREDIT', amount: input.amount - fee, description: input.description },
+      { walletId: payee.wallet_id, direction: 'CREDIT', amount: input.amount - fee - swap, description: input.description },
       ...(fee > 0n ? [{ walletId: merchant.id, direction: 'CREDIT' as const, amount: fee, description: 'Platform fee' }] : []),
+      ...(swap > 0n ? [{ walletId: await lightpayRevenueWallet(environment, currency), direction: 'CREDIT' as const, amount: swap, description: `Frais LightPay - swap - ${appId}:${idempotencyKey}` }] : []),
     ],
   });
   // The seller sees the sale (and the app's commission) on their statement (an app selling for itself has no seller).
   if (payee.id) await logDirectSale(environment, {
-    payeeWalletId: payee.wallet_id, appId, amount: input.amount, fee, currency,
+    payeeWalletId: payee.wallet_id, appId, amount: input.amount, fee, swap, currency,
     refType: 'charge_sale', refId: `${appId}:${idempotencyKey}`, reference: input.reference, metadata: { description: input.description },
   });
   return result;

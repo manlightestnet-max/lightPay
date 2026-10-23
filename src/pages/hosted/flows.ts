@@ -72,6 +72,8 @@ export const FLOWS_SCRIPT = `
   // ---------------------------------------------------------------- which wallet (shown only when the person has several)
   // The wallet an action was started from (its own screen), else the default one. Ids: <p>WalletField, <p>Wallets.
   let flowWallet = null;
+  // The swap fee line of a quote, only when the money changes country.
+  const swapRow = (q) => (q && Number(q.swap_fee) > 0 ? [['Frais de swap (autre pays)', LP.money(q.swap_fee, q.currency || cur())]] : []);
   const myWallets = () => (me && me.wallets ? me.wallets.filter((w) => w.status === 'ACTIVE') : []);
   function walletPicker(p, changed, opts) {
     const o = opts || {};
@@ -152,7 +154,8 @@ export const FLOWS_SCRIPT = `
   // to the phone straight away (no second payment page, no second choice).
   let depQuotes = null, depBusy = false, depState = null, depResult = null;
   const dep = railPicker('dep', () => renderDepFees());
-  const depW = walletPicker('dep', () => {});
+  // Another wallet can be in another country: the swap fee may change, the quote is asked again.
+  const depW = walletPicker('dep', () => loadDepQuote());
   // Entering the deposit form: the wallets and minimums as they are now.
   function enterDeposit() {
     depW.render(true); say('depMsg', ''); renderDepFees(); focusAmount('depAmount');
@@ -173,9 +176,10 @@ export const FLOWS_SCRIPT = `
     feeRows($('depFees'), [
       ['Dépôt', LP.money(q.amount, cur())],
       ['Frais LightPay', LP.money(q.lightpay_fee, cur())],
+    ].concat(swapRow(q)).concat([
       ['Frais opérateur', approx + LP.money(q.operator_fee, cur())],
       ['Total à payer', approx + LP.money(q.total, cur()), true],
-    ]);
+    ]));
     $('depFees').hidden = false;
     say('depMsg', '');
     $('depGo').textContent = 'Déposer ' + approx + LP.money(q.total, cur());
@@ -184,7 +188,7 @@ export const FLOWS_SCRIPT = `
   const loadDepQuote = debounce(async () => {
     const amount = amountDigits($('depAmount').value);
     if (!amount) { depQuotes = null; renderDepFees(); return; }
-    try { depQuotes = (await LP.api('GET', '/v1/me/deposits/quote?amount=' + amount)).quotes; renderDepFees(); }
+    try { depQuotes = (await LP.api('GET', '/v1/me/deposits/quote?amount=' + amount + (depW.id() ? '&wallet_id=' + encodeURIComponent(depW.id()) : ''))).quotes; renderDepFees(); }
     catch (e) { if (e.signIn) signIn(); else $('depFees').hidden = true; }
   }, 300);
   $('depAmount').addEventListener('input', () => {
@@ -279,7 +283,7 @@ export const FLOWS_SCRIPT = `
   let sendState = null, sendResult = null, sendBusy = false;
   // The amount takes the keyboard as soon as its screen opens (after the slide, so it does not jump).
   const focusAmount = (id) => setTimeout(() => { const i = $(id); if (i && !i.closest('[hidden]')) i.focus(); }, 320);
-  const sendW = walletPicker('send', () => { $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(sendW.balance(), cur()); sendCheck(); });
+  const sendW = walletPicker('send', () => { $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(sendW.balance(), cur()); sendCheck(); loadSendQuote(); });
   function enterSend() {
     sendW.render(true);
     $('sendAvail').textContent = 'FCFA · disponible ' + LP.money(sendW.balance(), cur());
@@ -287,7 +291,20 @@ export const FLOWS_SCRIPT = `
     sendCheck();
     focusAmount($('sendTo').value ? 'sendAmount' : 'sendTo');
   }
-  let sendWho = null, sendWhoSeq = 0;
+  let sendWho = null, sendWhoSeq = 0, sendQuote = null, sendQuoteSeq = 0;
+  // Free inside a country; the swap fee when the receiver's wallet is in another one: asked once both are known.
+  const sendKey = () => [$('sendTo').value.trim(), amountDigits($('sendAmount').value), sendW.id() || ''].join('|');
+  const loadSendQuote = debounce(async () => {
+    const seq = ++sendQuoteSeq, key = sendKey();
+    const amount = amountDigits($('sendAmount').value);
+    if (!sendWho || !amount) { sendQuote = null; return sendCheck(); }
+    try {
+      const r = await LP.api('GET', '/v1/me/transfers/quote?to=' + encodeURIComponent($('sendTo').value.trim()) + '&amount=' + amount + (sendW.id() ? '&wallet_id=' + encodeURIComponent(sendW.id()) : ''));
+      if (seq !== sendQuoteSeq) return;
+      sendQuote = Object.assign({ key: key }, r.quote);
+    } catch (e) { if (e.signIn) return signIn(); sendQuote = null; }
+    if (seq === sendQuoteSeq) sendCheck();
+  }, 300);
   const lookupRecipient = debounce(async () => {
     const to = $('sendTo').value.trim();
     const seq = ++sendWhoSeq;
@@ -302,23 +319,28 @@ export const FLOWS_SCRIPT = `
       if (seq !== sendWhoSeq) return;
       if (e.signIn) return signIn();
       $('sendWho').textContent = 'Aucun compte LightPay trouvé.';
-    } finally { if (seq === sendWhoSeq) sendCheck(); }
+    } finally { if (seq === sendWhoSeq) { sendCheck(); loadSendQuote(); } }
   }, 350);
   $('sendTo').addEventListener('input', lookupRecipient);
   // The button stays off until the form is complete: nothing to correct after the tap.
   function sendCheck() {
     const amount = Number(amountDigits($('sendAmount').value));
-    $('sendAvail').classList.toggle('below', amount > sendW.balance());
-    $('sendNext').disabled = !sendWho || !amount || amount > sendW.balance();
+    const q = sendQuote && sendQuote.key === sendKey() ? sendQuote : null;
+    const total = q ? Number(q.total) : amount;
+    $('sendAvail').classList.toggle('below', total > sendW.balance());
+    $('sendNext').disabled = !sendWho || !amount || !q || total > sendW.balance();
   }
-  $('sendAmount').addEventListener('input', sendCheck);
+  $('sendAmount').addEventListener('input', () => { sendCheck(); loadSendQuote(); });
   $('sendNext').addEventListener('click', async () => {
     if (sendBusy || $('sendNext').disabled) return;
     const amount = Number(amountDigits($('sendAmount').value));
     const w = sendWho || {};
     const who = [w.name, w.username ? '@' + w.username : ''].filter(Boolean).join(' · ') || $('sendTo').value.trim();
     const note = $('sendNote').value.trim();
-    const rows = [['À', who]].concat(sendW.several() ? [['Depuis', sendW.full()]] : []).concat([['Frais', 'Aucun']]).concat(note ? [['Message', note]] : []).concat([['Solde après envoi', LP.money(sendW.balance() - amount, cur()), true]]);
+    const q = sendQuote;
+    const swap = Number(q.swap_fee);
+    const fees = swap > 0 ? [['Frais de swap (autre pays)', LP.money(swap, cur())], ['Total débité', LP.money(q.total, cur()), true]] : [['Frais', 'Aucun']];
+    const rows = [['À', who]].concat(sendW.several() ? [['Depuis', sendW.full()]] : []).concat(fees).concat(note ? [['Message', note]] : []).concat([['Solde après envoi', LP.money(sendW.balance() - Number(q.total), cur()), swap === 0]]);
     sendBusy = true;
     const next = { to: $('sendTo').value.trim(), who: w, amount: String(amount), note: note, wallet: sendW.id(), key: LP.uuid() };
     // « Envoyer » opens the code step; the transfer leaves once, with the 6th digit.
@@ -334,7 +356,7 @@ export const FLOWS_SCRIPT = `
       if (done.error) throw done.error;
       const r = done.result;
       sendResult = r.transfer;
-      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = ''; $('sendWho').textContent = ''; sendWho = null; sendCheck();
+      $('sendTo').value = ''; $('sendAmount').value = ''; $('sendNote').value = ''; $('sendWho').textContent = ''; sendWho = null; sendQuote = null; sendCheck();
       await loadMe().catch(() => {});
       enterSendDone();
     });
@@ -354,7 +376,8 @@ export const FLOWS_SCRIPT = `
   let wdQuote = null, wdState = null, wdResult = null, wdSeq = 0, wdBusy = false, wdQuotedNet = null;
   // Another operator can mean another fee: the quote is asked again when the operator changes.
   const wd = railPicker('wd', () => { if (wd.st.network !== wdQuotedNet) loadWdQuote(); else wdCheck(); });
-  const wdW = walletPicker('wd', () => { wdAvailText(); wdCheck(); });
+  // Another wallet can be in another country than the number: the swap fee may change, the quote is asked again.
+  const wdW = walletPicker('wd', () => { wdAvailText(); wdQuotedNet = null; loadWdQuote(); wdCheck(); });
   function wdCheck() {
     const q = wdQuote;
     $('wdNext').disabled = true;
@@ -373,9 +396,10 @@ export const FLOWS_SCRIPT = `
     feeRows($('wdFees'), [
       ['Vous recevez', LP.money(q.amount, q.currency)],
       ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
+    ].concat(swapRow(q)).concat([
       ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
       ['Total débité de votre wallet', LP.money(q.total, q.currency), true],
-    ]);
+    ]));
     $('wdFees').hidden = false;
   }
   const loadWdQuote = debounce(async () => {
@@ -383,7 +407,7 @@ export const FLOWS_SCRIPT = `
     const seq = ++wdSeq, network = wd.st.network;
     if (!amount || !network) { wdQuote = null; wdQuotedNet = null; renderWdFees(); wdCheck(); say('wdMsg', ''); return; }
     try {
-      const r = await LP.api('GET', '/v1/me/withdrawals/quote?amount=' + amount + '&network=' + encodeURIComponent(network));
+      const r = await LP.api('GET', '/v1/me/withdrawals/quote?amount=' + amount + '&network=' + encodeURIComponent(network) + (wdW.id() ? '&wallet_id=' + encodeURIComponent(wdW.id()) : ''));
       if (seq !== wdSeq) return;
       wdQuote = r.quote; wdQuotedNet = network; renderWdFees(); wdCheck();
     } catch (e) { if (e.signIn) signIn(); }
@@ -425,6 +449,7 @@ export const FLOWS_SCRIPT = `
         ['Vers', wd.label()],
       ].concat(wdW.several() ? [['Depuis', wdW.full()]] : []).concat([
         ['Frais opérateur', LP.money(q.operator_fee, q.currency)],
+      ]).concat(swapRow(q)).concat([
         ['Frais LightPay', LP.money(q.lightpay_fee, q.currency)],
         ['Total débité', LP.money(q.total, q.currency), true],
         ['Solde après retrait', LP.money(wdW.balance() - Number(q.total), q.currency)],
@@ -478,19 +503,34 @@ export const FLOWS_SCRIPT = `
   }
 
 
-  // ---------------------------------------------------------------- between my wallets (free, instant, with the code)
-  let moveState = null, moveResult = null, moveBusy = false;
-  const moveFrom = walletPicker('moveFrom', () => { moveTo.render(); moveCheck(); }, { always: true });
-  const moveTo = walletPicker('moveTo', () => moveCheck(), { always: true, exclude: () => moveFrom.id() });
+  // ---------------------------------------------------------------- between my wallets (instant, with the code)
+  // Free inside a country; from one country to another the swap fee is paid on top.
+  let moveState = null, moveResult = null, moveBusy = false, moveQuote = null, moveQuoteSeq = 0;
+  const moveFrom = walletPicker('moveFrom', () => { moveTo.render(); moveCheck(); loadMoveQuote(); }, { always: true });
+  const moveTo = walletPicker('moveTo', () => { moveCheck(); loadMoveQuote(); }, { always: true, exclude: () => moveFrom.id() });
+  const moveKey = () => [moveFrom.id() || '', moveTo.id() || '', amountDigits($('moveAmount').value)].join('|');
+  const loadMoveQuote = debounce(async () => {
+    const seq = ++moveQuoteSeq, key = moveKey();
+    const amount = amountDigits($('moveAmount').value);
+    if (!moveFrom.id() || !moveTo.id() || !amount) { moveQuote = null; return moveCheck(); }
+    try {
+      const r = await LP.api('GET', '/v1/me/wallets/move/quote?from=' + encodeURIComponent(moveFrom.id()) + '&to=' + encodeURIComponent(moveTo.id()) + '&amount=' + amount);
+      if (seq !== moveQuoteSeq) return;
+      moveQuote = Object.assign({ key: key }, r.quote);
+    } catch (e) { if (e.signIn) return signIn(); moveQuote = null; }
+    if (seq === moveQuoteSeq) moveCheck();
+  }, 300);
   function moveCheck() {
     const amount = Number(amountDigits($('moveAmount').value));
+    const q = moveQuote && moveQuote.key === moveKey() ? moveQuote : null;
+    const total = q ? Number(q.total) : amount;
     $('moveAvail').textContent = 'FCFA · disponible ' + LP.money(moveFrom.balance(), cur());
-    $('moveAvail').classList.toggle('below', amount > moveFrom.balance());
-    $('moveNext').disabled = !moveFrom.id() || !moveTo.id() || !amount || amount > moveFrom.balance();
+    $('moveAvail').classList.toggle('below', total > moveFrom.balance());
+    $('moveNext').disabled = !moveFrom.id() || !moveTo.id() || !amount || !q || total > moveFrom.balance();
   }
-  $('moveAmount').addEventListener('input', moveCheck);
+  $('moveAmount').addEventListener('input', () => { moveCheck(); loadMoveQuote(); });
   function enterMove() {
-    moveFrom.render(true); moveTo.render(true); moveCheck();
+    moveFrom.render(true); moveTo.render(true); moveCheck(); loadMoveQuote();
     say('moveMsg', myWallets().length < 2 ? 'Ouvrez un deuxième wallet pour déplacer de l’argent entre vos wallets.' : '');
     focusAmount('moveAmount');
   }
@@ -498,10 +538,13 @@ export const FLOWS_SCRIPT = `
     if (moveBusy || $('moveNext').disabled) return;
     const amount = String(Number(amountDigits($('moveAmount').value)));
     const next = { from: moveFrom.id(), to: moveTo.id(), fromLabel: moveFrom.label(), toLabel: moveTo.label(), fromFull: moveFrom.full(), toFull: moveTo.full(), amount: amount, key: LP.uuid() };
+    const swap = Number(moveQuote.swap_fee);
     moveBusy = true;
     const done = await confirmSheet({
       title: 'Vous déplacez', amount: LP.money(amount, cur()),
-      rows: [['Depuis', next.fromFull], ['Vers', next.toFull], ['Frais', 'Aucun']],
+      rows: [['Depuis', next.fromFull], ['Vers', next.toFull]].concat(swap > 0
+        ? [['Frais de swap (autre pays)', LP.money(swap, cur())], ['Total débité', LP.money(moveQuote.total, cur()), true]]
+        : [['Frais', 'Aucun']]),
       confirm: 'Déplacer',
       pin: (code) => LP.api('POST', '/v1/me/wallets/move', { from: next.from, to: next.to, amount: next.amount }, next.key, code),
     });
@@ -511,7 +554,7 @@ export const FLOWS_SCRIPT = `
     await operate('move', async () => {
       if (done.error) throw done.error;
       moveResult = done.result.move;
-      $('moveAmount').value = '';
+      $('moveAmount').value = ''; moveQuote = null;
       await loadMe().catch(() => {});
       enterMoveDone();
     });

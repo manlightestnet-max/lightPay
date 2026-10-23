@@ -98,11 +98,11 @@ Fait (phase A, migration 027) :
 | Opération | Wallet |
 |---|---|
 | Dépôt | Celui choisi ; opérateurs de n'importe quel pays ouvert (son pays par défaut en premier). |
-| Envoyer à @nom | Débite le wallet choisi, crédite le défaut du destinataire. **Gratuit, quel que soit le pays.** |
+| Envoyer à @nom | Débite le wallet choisi, crédite le défaut du destinataire. Gratuit dans un même pays ; **frais de swap en plus si le wallet du destinataire est dans un autre pays.** |
 | Payer (page de paiement, Connect) | Le wallet choisi, parmi ceux qui ont assez. |
 | Connexion d'une app | Le wallet choisi au consentement (`connections.wallet_id` existe déjà). |
 | Retirer | **Un retrait = un wallet = un seul envoi, en entier** ; vers un numéro de n'importe quel pays ouvert. |
-| Entre mes wallets | Instantané, gratuit. |
+| Entre mes wallets | Instantané, gratuit dans un même pays ; frais de swap en plus entre deux pays. |
 
 - Jamais de retrait partiel ni de complément pris dans un autre wallet : pour retirer plus, la personne regroupe
   d'abord elle-même.
@@ -300,8 +300,9 @@ change visible. Seuls ces pays portent un risque de change.
 | **E — Rééquilibrage** ✓ | `transfer` SasPay, file d'attente, retrait qui attend son transfert, rééquilibrage automatique. | **L'exemple du § 3.1 marche de bout en bout.** |
 | **F — Plusieurs wallets à l'écran** ✓ | Compte, console, admin, API `wallet_id`, ouverture / fermeture. | Une personne gère plusieurs wallets. |
 | **Pays choisi par la personne** ✓ | Écran « Votre pays » obligatoire pour le premier wallet (plus de Congo imposé), demande de changement de pays sur chaque wallet, décision dans l'admin (Contrôle → Changements de pays) avec les frais de swap de « Frais et minimums » (1 % par défaut) pris à l'acceptation. | Chacun est dans son pays ; LightPay valide les déménagements. |
-| **Tarifs en direct** ✓ | `rates()` des fournisseurs (SasPay `/pricing/my-rates/`), tableau « Tarifs réels » dans Frais et minimums, tarif sur chaque opérateur, colonne « Pris en vrai » dans le simulateur. | L'admin voit où il perd de l'argent. |
-| **G — Suite** | Écrans OTP (Orange CI, Burkina : code composé avant de payer, instructions déjà dans le registre) et redirection (Wave : `payment_url` puis retour), frais opérateur **par pays** dans Frais et minimums (aidés par les tarifs en direct), autres pays CFA (Sénégal, Bénin, Burkina, Mali, Niger), Djamo, remboursements natifs pawaPay, puis hors CFA. | Activés dans l'admin. |
+| **Tarifs en direct** ✓ | `rates()` des fournisseurs (SasPay `/pricing/my-rates/`), tableau « Tarifs réels » dans Frais et minimums, tarif sur chaque opérateur. | L'admin voit où il perd de l'argent. |
+| **Frais réels et swap** ✓ | Frais opérateur = tarif réel du fournisseur (SasPay, relu toutes les 5 min, par opérateur ; pawaPay réglé à la main, pas d'API) : les réglages manuels SasPay disparaissent. Frais de swap seulement quand l'argent change de pays : retrait, dépôt, envoi, déplacement (payés en plus), vente depuis un autre pays (retirés au vendeur). Devis et écrans montrent « Frais de swap ». | Les frais suivent le fournisseur ; passer d'un pays à l'autre se paie. |
+| **G — Suite** | Écrans OTP (Orange CI, Burkina : code composé avant de payer, instructions déjà dans le registre) et redirection (Wave : `payment_url` puis retour), frais pawaPay par opérateur, autres pays CFA (Sénégal, Bénin, Burkina, Mali, Niger), Djamo, remboursements natifs pawaPay, puis hors CFA. | Activés dans l'admin. |
 
 `/docs` est mise à jour à chaque phase ; chaque phase garde la compatibilité.
 
@@ -313,7 +314,7 @@ change visible. Seuls ces pays portent un risque de change.
   compte. Opérateurs du Togo confirmés par notre compte : `togocel`, `moov_tg` (et `mixx_tg`, sans tarif).
 - **Tarifs SasPay de notre compte** (23 octobre, encaissement / envoi) : Congo 5,7 % / 2,2–3,2 % + 50 ; Cameroun
   3,5 % / 2,2–2,5 % + 50 ; Côte d'Ivoire 3,9 % / 3,2 % + 50 ; Togo 4,1 % / 3,2 % + 50 ; Gabon ~5 % / 1–1,5 % + 700.
-  Les frais opérateur réglés dans l'admin sont encore par fournisseur, pas par pays : à corriger avant d'ouvrir un pays.
+  Ce sont désormais les frais opérateur appliqués (par opérateur, lus en direct).
 - **Numérotation** : préfixes du Cameroun et du Gabon écrits de mémoire, à confirmer (modifiables dans l'admin).
 - **pawaPay** : grille de frais par opérateur au Congo (pas d'API de tarifs, pour écrire les règles).
 - **Non technique** : cadre légal de chaque pays de départ (monnaie électronique, anti-blanchiment, transferts

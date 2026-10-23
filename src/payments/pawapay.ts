@@ -129,7 +129,7 @@ export class PawaPayProvider implements MobileMoneyProvider {
 
   async requestCollection(op: RailOperation): Promise<RailResult> {
     // The payer covers pawaPay's fee: asked on top, exactly the operator fee quoted to them.
-    const fee = providerFeeEstimate(op.environment, this.name, op.amount);
+    const fee = providerFeeEstimate(op.environment, this.name, op.network, op.amount);
     return this.initiate(op, '/v2/deposits', {
       depositId: pawaPayId(op.id),
       payer: { type: 'MMO', accountDetails: { phoneNumber: op.msisdn, provider: providerCode('pawapay', op.network) ?? op.network } },

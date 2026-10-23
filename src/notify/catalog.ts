@@ -68,7 +68,7 @@ const fromLightPay = (a: ActivityRow) => who(a) === 'LightPay';
  *   PAYMENT     Paiement à Boutique · réf. CMD-12
  *   CHARGE      Débit automatique par Boutique
  *   SALE        Vente sur Boutique · réf. CMD-12
- *   COMMISSION  Commission de Boutique sur une vente de 18 000 FCFA
+ *   COMMISSION  Commission de Boutique sur une vente de 18 000 FCFA | Frais de swap sur une vente de 18 000 FCFA (autre pays)
  *   REFUND      Remboursement de votre achat chez Boutique · réf. CMD-12 | Remboursement envoyé vers MTN MoMo · +242 …
  */
 export function describeActivity(a: ActivityRow): string {
@@ -88,6 +88,9 @@ export function describeActivity(a: ActivityRow): string {
     case 'SALE':
       return `Vente sur ${w || 'une app connectée'}${ref(a)}`;
     case 'COMMISSION':
+      if (a.metadata?.swap) {
+        return a.metadata?.sale_amount ? `Frais de swap sur une vente de ${money(a.metadata.sale_amount, a.currency)} (acheteur d’un autre pays)` : 'Frais de swap sur une vente (acheteur d’un autre pays)';
+      }
       return a.metadata?.sale_amount
         ? `Commission de ${w || 'l’app'} sur une vente de ${money(a.metadata.sale_amount, a.currency)}`
         : `Commission de ${w || 'l’app'} sur une vente`;
@@ -166,6 +169,8 @@ export function activityMessage(a: ActivityRow, previous: string | null): Messag
       return null;
 
     case 'COMMISSION':
+      // The swap fee shows in the statement only: the sale's own message already told the seller.
+      if (a.metadata?.swap) return null;
       if (now === 'SUCCEEDED') return ev('commission.taken', vars('l’app', '', '−'));
       return null;
 

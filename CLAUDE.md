@@ -84,8 +84,13 @@ Google seulement (Firebase Auth, redirection dans le même onglet ; fenêtre seu
   pas (rien n’a bougé chez lui). Les soldes réels sont lus par API (SasPay, pawaPay) ou relevés à la main
   (`provider_balance_checks`, une note, aucun argent ne bouge) : l’écart, le disponible et les alertes s’affichent.
 - **Un seul franc** : XAF et XOF sont la même unité dans LightPay (1 pour 1, parité fixe avec l’euro), les soldes restent
-  en `XAF` ; le fournisseur reçoit la monnaie du pays de l’opérateur. Envoi entre personnes : gratuit, même d’un pays à
-  l’autre.
+  en `XAF` ; le fournisseur reçoit la monnaie du pays de l’opérateur.
+- **Frais de swap : seulement quand l’argent change de pays**, jamais dans un même pays (`swapFee` / `swapBetween`,
+  `src/payments/fees.ts`, réglés dans « Frais et minimums »). Payés en plus par la personne : retrait d’un wallet du pays A
+  vers un numéro du pays B, dépôt depuis un numéro d’un autre pays, envoi à quelqu’un dont le wallet est dans un autre
+  pays, déplacement entre ses wallets de deux pays. Retirés au vendeur : vente payée depuis un autre pays (direct, séquestre
+  à la capture, débit Connect). Ils vont au wallet main (« Frais LightPay - swap - … ») ; sur un retrait ou un dépôt ils
+  font partie de `lightpay_fee` (même chemin, rendus si l’envoi échoue) et `swap_fee` dit combien.
 - **Rééquilibrage** (`src/payments/rebalance.ts`) : LightPay déplace son propre argent entre les wallets pays de SasPay
   (`wallet-transfers`, un à la fois, en file) ; un retrait vers un pays à sec attend son transfert ; le coût (envoyé −
   arrivé, le `to_amount` de SasPay est déjà net de ses frais) est écrit en `SYSTEM_PROVIDER_COSTS`. **Désactivé par
@@ -105,8 +110,10 @@ Google seulement (Firebase Auth, redirection dans le même onglet ; fenêtre seu
 - **Pays et opérateurs : uniquement depuis l’admin** (« Pays et opérateurs », registre `src/rails/registry.ts`, tables
   `countries` et `rails`) : ouvrir un pays, activer un opérateur, ses préfixes et les codes de chaque fournisseur. Un
   opérateur à code OTP ou à page de redirection reste éteint tant que son écran n’existe pas.
-- **Tarifs réels des fournisseurs** (admin, `src/payments/provider-rates.ts`) : lus en direct, pour comparer ; les
-  personnes paient toujours les frais réglés dans « Frais et minimums ».
+- **Frais opérateur = le tarif réel du fournisseur** (`src/payments/provider-rates.ts`, relu toutes les 5 min) : SasPay
+  par son API, par opérateur ; jamais saisis à la main (un retrait SasPay sans tarif connu est refusé, jamais deviné).
+  pawaPay n’a pas d’API de tarifs : ses frais restent réglés dans « Frais et minimums ». Les frais LightPay (dépôt,
+  retrait) et le swap se règlent dans « Frais et minimums ».
 - Un dépôt sans validation est fermé après 5 min ; un succès tardif est quand même crédité.
 
 ## Façon de travailler

@@ -70,7 +70,7 @@ export async function findRecipient(environment: Environment, toRaw: unknown, cu
   let row: any;
   if (byEmail) {
     [row] = await query(
-      `SELECT id, owner_id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND is_default AND lower(metadata->>'email') = $3 LIMIT 1`,
+      `SELECT id, owner_id, metadata, country FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND is_default AND lower(metadata->>'email') = $3 LIMIT 1`,
       [environment, currency, to],
       environment
     );
@@ -78,7 +78,7 @@ export async function findRecipient(environment: Environment, toRaw: unknown, cu
     const uid = await uidOfUsername(to);
     if (uid) {
       [row] = await query(
-        `SELECT id, owner_id, metadata FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND is_default AND owner_id = $3 LIMIT 1`,
+        `SELECT id, owner_id, metadata, country FROM wallets WHERE app_id = 'mainapp' AND account_type = 'USER' AND environment = $1 AND currency = $2 AND status = 'ACTIVE' AND is_default AND owner_id = $3 LIMIT 1`,
         [environment, currency, ownerOf(uid)],
         environment
       );
@@ -90,6 +90,8 @@ export async function findRecipient(environment: Environment, toRaw: unknown, cu
   const uid = uidOfOwner(row.owner_id) ?? '';
   return {
     walletId: row.id as string,
+    /** The country of the wallet that receives (a send to another country carries the swap fee). */
+    country: (row.country as string | null) ?? null,
     uid,
     name: (row.metadata?.name as string | undefined) || null,
     picture: photoOf(row.metadata),

@@ -214,7 +214,7 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
       await Promise.all(
         mobileNetworks().map(async (network) => {
           const provider = (await routeOperation({ env: environment, type: 'refund', network, appId: context(request).appId, amount })).provider.name;
-          const b = refundBreakdown(environment, amount, provider);
+          const b = refundBreakdown(environment, amount, provider, network);
           return [network, { sent: b.sent.toString(), operator_fee: b.operator_fee.toString(), lightpay_fee: b.lightpay_fee.toString(), fees: (amount - b.sent).toString() }];
         })
       )

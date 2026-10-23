@@ -229,9 +229,10 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     feeRows($('feeBox'), [
       [session.kind === 'DEPOSIT' ? 'Dépôt' : 'Montant', LP.money(q.amount, c)],
       ['Frais LightPay', LP.money(q.lightpay_fee, c)],
+    ].concat(Number(q.swap_fee) > 0 ? [['Frais de swap (autre pays)', LP.money(q.swap_fee, c)]] : []).concat([
       ['Frais opérateur' + (q.estimated ? ' (estimés)' : ''), approx + LP.money(q.operator_fee, c)],
       ['Total', approx + LP.money(q.total, c), true],
-    ]);
+    ]));
     $('feeBox').hidden = false;
     const tooSmall = Number(q.amount) < Number(q.minimum);
     $('payMomo').disabled = tooSmall || !phoneOk();
@@ -339,6 +340,7 @@ export const payPage = (nonce: string, sessionId: string, env: string, mode: { e
     const rows = [[s.kind === 'DEPOSIT' ? 'Dépôt' : 'Montant', LP.money(s.amount, c)]];
     if (!paidWithWallet && a && a.status === 'SUCCEEDED') {
       rows.push(['Frais LightPay', LP.money(a.lightpay_fee, c)]);
+      if (Number(a.swap_fee) > 0) rows.push(['Frais de swap (autre pays)', LP.money(a.swap_fee, c)]);
       if (a.operator_fee) rows.push(['Frais opérateur', LP.money(a.operator_fee, c)]);
       rows.push(['Payé avec', (railOf(a.network) ? railName(a.network) : 'Mobile money') + ' · ' + phoneOf(a.msisdn)]);
       if (a.charged) rows.push(['Total débité', LP.money(a.charged, c), true]);
